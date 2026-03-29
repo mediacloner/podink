@@ -1,0 +1,59 @@
+# React Native
+node_modules/
+.expo/
+.expo-shared/
+dist/
+npm-debug.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+
+# iOS
+ios/Pods/
+ios/build/
+ios/*.xcworkspace
+ios/DerivedData/
+
+# Android
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/captures/
+android/keystores/
+
+# Metro
+.metro-health-check*
+metro.config.js.map
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+*.log
+yarn-error.log*
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Jest
+coverage/
+
+# Buck
+buck-out/
+\.buckd/
+*.keystore
+!debug.keystore
