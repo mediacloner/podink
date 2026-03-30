@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, LayoutAnimation, UIManager, Platform, ActivityIndicator } from 'react-native';
-import Icon from 'react-native-vector-icons/Feather';
+import { Feather as Icon } from '@expo/vector-icons';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-const EpisodeItem = ({ episode, onPress, onDownload, onTranscribe, onDelete, isTranscribing }) => {
+const EpisodeItem = ({ episode, onPress, onDownload, onTranscribe, onDelete, isTranscribing, transcribeProgress }) => {
     const [expanded, setExpanded] = useState(false);
 
     const toggleExpand = () => {
@@ -35,7 +35,7 @@ const EpisodeItem = ({ episode, onPress, onDownload, onTranscribe, onDelete, isT
                             <Text style={styles.downloadedBadge}>Downloaded</Text>
                         </View>
                         <View style={styles.btnRow}>
-                            {!episode.has_transcript ? (
+                            {onTranscribe && !episode.has_transcript ? (
                                <TouchableOpacity
                                    style={[styles.actionBtn, styles.transcribeBtn, isTranscribing && styles.disabledBtn]}
                                    onPress={() => onTranscribe(episode)}
@@ -46,7 +46,11 @@ const EpisodeItem = ({ episode, onPress, onDownload, onTranscribe, onDelete, isT
                                    ) : (
                                        <Icon name="file-text" size={14} color="#fff" style={styles.iconSpaced} />
                                    )}
-                                   <Text style={styles.btnText}>{isTranscribing ? 'Working...' : 'Transcribe'}</Text>
+                                   <Text style={styles.btnText}>
+                                       {isTranscribing
+                                           ? (transcribeProgress > 0 ? `${transcribeProgress}%` : 'Converting...')
+                                           : 'Transcribe'}
+                                   </Text>
                                </TouchableOpacity>
                             ) : (
                                <View style={styles.transcriptBadge}>

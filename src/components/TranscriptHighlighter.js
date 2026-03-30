@@ -1,54 +1,217 @@
-import React, { useRef, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import React, { useRef, useEffect, useCallback, useMemo } from 'react';
+import {
+    View,
+    Text,
+    FlatList,
+    StyleSheet,
+    Dimensions,
+} from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, interpolateColor } from 'react-native-reanimated';
 import { useProgress } from 'react-native-track-player';
 
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const CENTER_OFFSET = SCREEN_HEIGHT * 0.35;
+const ANIMATION_DURATION = 250;
+
+// Colour constants
+const COLOR_FUTURE = '#303030';   // dark, barely visible
+const COLOR_SPOKEN = '#888888';   // medium grey
+const COLOR_ACTIVE  = '#ffffff';  // bright white
+
 const TranscriptHighlighter = ({ segments }) => {
-    const { position } = useProgress(); // Position in seconds
-    const scrollViewRef = useRef(null);
+    const { position } = useProgress(80); // poll every 80ms
+    const flatListRef      = useRef(null);
+    const wordYPositions   = useRef({});
+    const lastActiveIndex  = useRef(-1);
 
-    // Filter to find the active segment based on current playback position
-    const activeIndex = segments.findIndex(
-        (seg) => position * 1000 >= seg.start && position * 1000 <= seg.end
-    );
+    // position from RNTP is seconds → ms
+    const posMs = position * 1000;
 
-    // Auto-scroll logic (basic approach)
-    useEffect(() => {
-        if (activeIndex > -1 && scrollViewRef.current) {
-             // Rough scrolling estimation per line, usually requires measuring for precision
-            scrollViewRef.current.scrollTo({ y: activeIndex * 40, animated: true });
+    // 1. Group individual words into sentences/paragraphs (chunks) to avoid rendering 5000 views at once
+    const chunks = useMemo(() => {
+        if (!segments || segments.length === 0) return [];
+        const result = [];
+        let currentChunk = [];
+        let chunkStartMs = 0;
+
+        segments.forEach((seg, i) => {
+            if (currentChunk.length === 0) {
+                chunkStartMs = seg.start_time ?? seg.start ?? 0;
+            }
+            currentChunk.push({ ...seg, globalIndex: i });
+
+            const text = seg.text.trim();
+            // Break chunk if we hit a sentence end, or chunk gets too large (e.g., > 30 words)
+            const isEndOfSentence = text.endsWith('.') || text.endsWith('?') || text.endsWith('!');
+            if (isEndOfSentence || currentChunk.length >= 35 || i === segments.length - 1) {
+                result.push({
+                    id: `chunk-${result.length}`,
+                    words: currentChunk,
+                    startMs: chunkStartMs,
+                    chunkIndex: result.length,
+                });
+                currentChunk = [];
+            }
+        });
+        return result;
+    }, [segments]);
+
+    // Find the current active word index & which chunk it belongs to
+    // Walk forward until we find a segment whose START is in the future
+    let activeIndex = -1;
+    let activeChunkIndex = 0;
+    
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        let foundInChunk = false;
+        for (let j = 0; j < chunk.words.length; j++) {
+            const w = chunk.words[j];
+            const startMs = w.start_time ?? w.start ?? 0;
+            if (posMs >= startMs) {
+                activeIndex = w.globalIndex;
+                activeChunkIndex = i;
+                foundInChunk = true;
+            } else {
+                break; // Because words are sequential, if we pass posMs we found it
+            }
         }
-    }, [activeIndex]);
+        if (!foundInChunk && posMs < chunk.startMs) {
+            break; // Stop looking in future chunks
+        }
+    }
+
+    const lastActiveChunk = useRef(-1);
+
+    // Smooth scroll to keep active chunk near centre
+    const scrollToActive = useCallback((chunkIdx) => {
+        if (flatListRef.current && chunkIdx >= 0 && chunkIdx < chunks.length) {
+            flatListRef.current.scrollToIndex({
+                index: chunkIdx,
+                animated: true,
+                viewPosition: 0.35, // 0 = top, 0.5 = center, 0.35 = slightly above center
+            });
+        }
+    }, [chunks.length]);
+
+    // Only scroll when the active CHUNK changes
+    useEffect(() => {
+        if (activeChunkIndex !== lastActiveChunk.current) {
+            lastActiveChunk.current = activeChunkIndex;
+            if (activeChunkIndex > -1) {
+                scrollToActive(activeChunkIndex);
+            }
+        }
+    }, [activeChunkIndex, scrollToActive]);
 
     if (!segments || segments.length === 0) {
         return (
-            <View style={styles.container}>
-                 <Text style={styles.placeholder}>No Transcript Available</Text>
+            <View style={styles.empty}>
+                <Text style={styles.placeholder}>No Transcript Available</Text>
             </View>
         );
     }
 
+    const renderChunk = ({ item }) => {
+        return (
+            <View style={styles.sentenceWrap}>
+                {item.words.map((w) => (
+                    <Word key={w.globalIndex} word={w} activeIndex={activeIndex} />
+                ))}
+            </View>
+        );
+    };
+
     return (
-        <ScrollView style={styles.container} ref={scrollViewRef}>
-            {segments.map((segment, index) => {
-                const isActive = index === activeIndex;
-                return (
-                    <Text 
-                        key={index}
-                        style={[styles.text, isActive && styles.activeText]}
-                    >
-                        {segment.text}
-                    </Text>
-                );
-            })}
-        </ScrollView>
+        <FlatList
+            ref={flatListRef}
+            data={chunks}
+            keyExtractor={item => item.id}
+            renderItem={renderChunk}
+            style={styles.container}
+            contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator={false}
+            scrollEventThrottle={16}
+            ListHeaderComponent={<View style={{ height: CENTER_OFFSET }} />}
+            ListFooterComponent={<View style={{ height: SCREEN_HEIGHT * 0.5 }} />}
+            onScrollToIndexFailed={(info) => {
+                const wait = new Promise(resolve => setTimeout(resolve, 500));
+                wait.then(() => {
+                    if (flatListRef.current) {
+                        flatListRef.current.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.35 });
+                    }
+                });
+            }}
+        />
+    );
+};
+
+// Extracted Word component using react-native-reanimated for 60fps native fading
+const Word = ({ word, activeIndex }) => {
+    // Determine state: 0 = future, 1 = spoken, 2 = active
+    const targetState = word.globalIndex < activeIndex ? 1 : word.globalIndex === activeIndex ? 2 : 0;
+    const animState = useSharedValue(targetState);
+
+    useEffect(() => {
+        animState.value = withTiming(targetState, { duration: ANIMATION_DURATION });
+    }, [targetState, animState]);
+
+    const animatedStyle = useAnimatedStyle(() => {
+        return {
+            color: interpolateColor(
+                animState.value,
+                [0, 1, 2],
+                [COLOR_FUTURE, COLOR_SPOKEN, COLOR_ACTIVE]
+            ),
+        };
+    });
+
+    return (
+        <Animated.Text
+            style={[
+                styles.wordText,
+                animatedStyle,
+                targetState === 2 && styles.activeWeight,
+            ]}
+        >
+            {word.text}
+        </Animated.Text>
     );
 };
 
 const styles = StyleSheet.create({
-    container: { flex: 1, padding: 20 },
-    text: { fontSize: 24, color: '#666', marginBottom: 15, lineHeight: 32 },
-    activeText: { color: '#fff', fontWeight: 'bold' },
-    placeholder: { fontSize: 16, color: '#aaa', textAlign: 'center', marginTop: 50 }
+    container: {
+        flex: 1,
+        backgroundColor: '#0a0a0a',
+    },
+    contentContainer: {
+        paddingHorizontal: 24,
+    },
+    empty: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#0a0a0a',
+    },
+    placeholder: {
+        fontSize: 16,
+        color: '#555',
+        textAlign: 'center',
+    },
+    sentenceWrap: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'flex-start',
+        marginBottom: 16,
+    },
+    wordText: {
+        fontSize: 22,
+        lineHeight: 34,
+        marginRight: 1, 
+        fontWeight: '500',
+    },
+    activeWeight: {
+        fontWeight: '800',
+    }
 });
 
 export default TranscriptHighlighter;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
-import RNFS from 'react-native-fs';
+import { File, Paths } from 'expo-file-system';
 import { downloadAudioFile } from '../services/downloadService';
 
 const MODEL_FILE_NAME = 'ggml-tiny.bin';
@@ -15,12 +15,11 @@ const SettingsScreen = () => {
         checkModelStatus();
     }, []);
 
-    const getModelPath = () => `${RNFS.DocumentDirectoryPath}/${MODEL_FILE_NAME}`;
+    const getModelFile = () => new File(Paths.document, MODEL_FILE_NAME);
 
-    const checkModelStatus = async () => {
-        const path = getModelPath();
-        const exists = await RNFS.exists(path);
-        setIsModelDownloaded(exists);
+    const checkModelStatus = () => {
+        const file = getModelFile();
+        setIsModelDownloaded(file.exists);
     };
 
     const handleDownloadModel = async () => {
@@ -44,13 +43,12 @@ const SettingsScreen = () => {
     const handleDeleteModel = async () => {
         Alert.alert("Delete AI Model", "Are you sure you want to remove the ~75MB Whisper model from your device? Transcriptions will be disabled until you download it again.", [
             { text: "Cancel", style: "cancel" },
-            { text: "Delete", style: "destructive", onPress: async () => {
-                const path = getModelPath();
-                const exists = await RNFS.exists(path);
-                if (exists) {
-                    await RNFS.unlink(path);
-                    setIsModelDownloaded(false);
+            { text: "Delete", style: "destructive", onPress: () => {
+                const file = getModelFile();
+                if (file.exists) {
+                    file.delete();
                 }
+                setIsModelDownloaded(false);
             }}
         ]);
     };

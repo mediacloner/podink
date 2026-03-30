@@ -13,7 +13,7 @@ import DownloadedTimeline from './screens/DownloadedTimeline';
 import PlayerScreen from './screens/PlayerScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import PodcastsScreen from './screens/PodcastsScreen';
-import Icon from 'react-native-vector-icons/Feather';
+import { Feather as Icon } from '@expo/vector-icons';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();

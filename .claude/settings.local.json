@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/*.js /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/*.config.js)",
+      "Bash(/tmp/check_imports.txt:*)",
+      "Read(//tmp/**)",
+      "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink -not -path */node_modules/* -not -path */.git/* -not -path */build/* -not -path */.claude/* -type f)",
+      "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/android -name *.log -newer /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/android/app/build.gradle)",
+      "Bash(./gradlew app:assembleDebug -x lint -x test --configure-on-demand --build-cache -PreactNativeArchitectures=arm64-v8a)",
+      "Bash(npm install:*)",
+      "Bash(npx patch-package:*)",
+      "Bash(npm exec:*)",
+      "Bash(python3:*)",
+      "Bash(./gradlew clean:*)",
+      "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/android/app/src/main/java -name *.java -o -name *.kt)",
+      "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/.gradle ~/.gradle -name HeadlessJsTaskService*)",
+      "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/android -name *.aar)",
+      "Bash(node:*)",
+      "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/react-native -name HeadlessJsTaskService*)",
+      "Bash(grep -n \"transcribe\\\\|transcribeFile\\\\|transcribeData\" /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/src/*.ts)",
+      "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn -name dr_mp3* -o -name dr_wav* -o -name *.cpp -name *audio*)"
+    ]
+  }
+}

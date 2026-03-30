@@ -1,20 +1,29 @@
-import TrackPlayer, { Event, State } from 'react-native-track-player';
+import TrackPlayer, { Capability, AppKilledPlaybackBehavior } from 'react-native-track-player';
 
 export const setupPlayer = async () => {
     try {
-        await TrackPlayer.setupPlayer();
+        await TrackPlayer.setupPlayer({
+            // Route audio to Bluetooth A2DP / headphones (not just phone speaker)
+            android: {
+                audioContentType: 'music',
+            },
+        });
         await TrackPlayer.updateOptions({
             capabilities: [
-                TrackPlayer.CAPABILITY_PLAY,
-                TrackPlayer.CAPABILITY_PAUSE,
-                TrackPlayer.CAPABILITY_SKIP_TO_NEXT,
-                TrackPlayer.CAPABILITY_SKIP_TO_PREVIOUS,
-                TrackPlayer.CAPABILITY_STOP,
+                Capability.Play,
+                Capability.Pause,
+                Capability.SkipToNext,
+                Capability.SkipToPrevious,
+                Capability.Stop,
             ],
             compactCapabilities: [
-                TrackPlayer.CAPABILITY_PLAY,
-                TrackPlayer.CAPABILITY_PAUSE,
-            ]
+                Capability.Play,
+                Capability.Pause,
+            ],
+            // Stop audio when user force-closes the app from the recent apps tray
+            android: {
+                appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
+            },
         });
         console.log('Player initialized');
     } catch (e) {
@@ -22,9 +31,10 @@ export const setupPlayer = async () => {
     }
 };
 
-export const loadEpisodeTrack = async (episode) => {
+export const loadEpisodeTrack = async (episode, autoPlay = true) => {
     // Determine whether to use local or remote path
-    const url = episode.is_downloaded && episode.local_audio_path ? `file://${episode.local_audio_path}` : episode.audio_url;
+    // local_audio_path is already a file:// URI from expo-file-system
+    const url = episode.is_downloaded && episode.local_audio_path ? episode.local_audio_path : episode.audio_url;
 
     const track = {
         id: episode.id,
@@ -35,5 +45,5 @@ export const loadEpisodeTrack = async (episode) => {
 
     await TrackPlayer.reset();
     await TrackPlayer.add(track);
-    await TrackPlayer.play();
+    if (autoPlay) await TrackPlayer.play();
 };
