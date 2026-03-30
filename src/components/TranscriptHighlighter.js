@@ -11,7 +11,7 @@ import { useProgress } from 'react-native-track-player';
 
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const CENTER_OFFSET = SCREEN_HEIGHT * 0.35;
-const ANIMATION_DURATION = 250;
+const ANIMATION_DURATION = 125;
 
 // Colour constants
 const COLOR_FUTURE = '#303030';   // dark, barely visible
@@ -25,7 +25,9 @@ const TranscriptHighlighter = ({ segments }) => {
     const lastActiveIndex  = useRef(-1);
 
     // position from RNTP is seconds → ms
-    const posMs = position * 1000;
+    // We add a +150ms offset to look slightly into the future. 
+    // This allows the animation to start early and be fully bright *exactly* as the word is spoken.
+    const posMs = (position * 1000) + 150;
 
     // 1. Group individual words into sentences/paragraphs (chunks) to avoid rendering 5000 views at once
     const chunks = useMemo(() => {
@@ -33,25 +35,48 @@ const TranscriptHighlighter = ({ segments }) => {
         const result = [];
         let currentChunk = [];
         let chunkStartMs = 0;
+        let globalWordIndex = 0;
 
         segments.forEach((seg, i) => {
-            if (currentChunk.length === 0) {
-                chunkStartMs = seg.start_time ?? seg.start ?? 0;
-            }
-            currentChunk.push({ ...seg, globalIndex: i });
+            const rawText = seg.text.trim();
+            if (!rawText) return;
 
-            const text = seg.text.trim();
-            // Break chunk if we hit a sentence end, or chunk gets too large (e.g., > 30 words)
-            const isEndOfSentence = text.endsWith('.') || text.endsWith('?') || text.endsWith('!');
-            if (isEndOfSentence || currentChunk.length >= 35 || i === segments.length - 1) {
-                result.push({
-                    id: `chunk-${result.length}`,
-                    words: currentChunk,
-                    startMs: chunkStartMs,
-                    chunkIndex: result.length,
+            const startMs = seg.start_time ?? seg.start ?? 0;
+            // Best effort to find end time, default to start + 2 seconds if missing to allow safe interpolation
+            const endMs = seg.end_time ?? seg.end ?? (startMs + 2000);
+
+            // Force split the segment into exact words to guarantee a true word-by-word effect,
+            // even if the transcription API grouped multiple words into a single segment.
+            const individualWords = rawText.split(/\s+/);
+            const timePerWord = (endMs - startMs) / Math.max(1, individualWords.length);
+
+            individualWords.forEach((wordText, wordIdx) => {
+                if (currentChunk.length === 0) {
+                    chunkStartMs = startMs + (wordIdx * timePerWord);
+                }
+
+                // Attach trailing space back to the word for rendering
+                const isLastWord = wordIdx === individualWords.length - 1;
+                const displayText = wordText + (isLastWord ? ' ' : ' ');
+
+                currentChunk.push({
+                    text: displayText,
+                    startMs: startMs + (wordIdx * timePerWord),
+                    globalIndex: globalWordIndex++
                 });
-                currentChunk = [];
-            }
+
+                // Break the paragraph chunk if we hit a sentence end, or the paragraph is getting large
+                const isEndOfSentence = wordText.endsWith('.') || wordText.endsWith('?') || wordText.endsWith('!');
+                if (isEndOfSentence || currentChunk.length >= 35 || (i === segments.length - 1 && isLastWord)) {
+                    result.push({
+                        id: `chunk-${result.length}`,
+                        words: currentChunk,
+                        startMs: chunkStartMs,
+                        chunkIndex: result.length,
+                    });
+                    currentChunk = [];
+                }
+            });
         });
         return result;
     }, [segments]);
@@ -66,8 +91,7 @@ const TranscriptHighlighter = ({ segments }) => {
         let foundInChunk = false;
         for (let j = 0; j < chunk.words.length; j++) {
             const w = chunk.words[j];
-            const startMs = w.start_time ?? w.start ?? 0;
-            if (posMs >= startMs) {
+            if (posMs >= w.startMs) {
                 activeIndex = w.globalIndex;
                 activeChunkIndex = i;
                 foundInChunk = true;
@@ -111,20 +135,15 @@ const TranscriptHighlighter = ({ segments }) => {
         );
     }
 
-    const renderChunk = ({ item }) => {
-        return (
-            <View style={styles.sentenceWrap}>
-                {item.words.map((w) => (
-                    <Word key={w.globalIndex} word={w} activeIndex={activeIndex} />
-                ))}
-            </View>
-        );
-    };
+    const renderChunk = useCallback(({ item }) => {
+        return <Chunk item={item} activeIndex={activeIndex} />;
+    }, [activeIndex]);
 
     return (
         <FlatList
             ref={flatListRef}
             data={chunks}
+            extraData={activeIndex}
             keyExtractor={item => item.id}
             renderItem={renderChunk}
             style={styles.container}
@@ -145,8 +164,40 @@ const TranscriptHighlighter = ({ segments }) => {
     );
 };
 
+// Extracted Chunk component that only re-renders if the activeIndex crosses its boundary
+const Chunk = React.memo(({ item, activeIndex }) => {
+    return (
+        <View style={styles.sentenceWrap}>
+            {item.words.map((w) => (
+                <Word key={w.globalIndex} word={w} activeIndex={activeIndex} />
+            ))}
+        </View>
+    );
+}, (prevProps, nextProps) => {
+    if (prevProps.item !== nextProps.item) return false;
+    
+    // Only check activeIndex boundaries to prevent re-renders when the tracker is far away
+    const words = prevProps.item.words;
+    if (!words || words.length === 0) return true;
+    
+    const chunkStart = words[0].globalIndex;
+    const chunkEnd = words[words.length - 1].globalIndex;
+    const prevActive = prevProps.activeIndex;
+    const nextActive = nextProps.activeIndex;
+    
+    // If the tracker is past this chunk in both renders, it's already 'spoken' (state=1)
+    if (prevActive > chunkEnd && nextActive > chunkEnd) return true;
+    // If the tracker is before this chunk in both renders, it's fully in the 'future' (state=0)
+    if (prevActive < chunkStart && nextActive < chunkStart) return true;
+    // Exactly the same tracker index -> no change
+    if (prevActive === nextActive) return true;
+    
+    // Otherwise, the activeIndex entered, moved inside, or left the chunk -> must re-render!
+    return false;
+});
+
 // Extracted Word component using react-native-reanimated for 60fps native fading
-const Word = ({ word, activeIndex }) => {
+const Word = React.memo(({ word, activeIndex }) => {
     // Determine state: 0 = future, 1 = spoken, 2 = active
     const targetState = word.globalIndex < activeIndex ? 1 : word.globalIndex === activeIndex ? 2 : 0;
     const animState = useSharedValue(targetState);
@@ -176,7 +227,12 @@ const Word = ({ word, activeIndex }) => {
             {word.text}
         </Animated.Text>
     );
-};
+}, (prevProps, nextProps) => {
+    if (prevProps.word !== nextProps.word) return false;
+    // Only re-render if its specific target state changes
+    const getTarget = (idx) => prevProps.word.globalIndex < idx ? 1 : prevProps.word.globalIndex === idx ? 2 : 0;
+    return getTarget(prevProps.activeIndex) === getTarget(nextProps.activeIndex);
+});
 
 const styles = StyleSheet.create({
     container: {
@@ -201,12 +257,12 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         flexWrap: 'wrap',
         alignItems: 'flex-start',
-        marginBottom: 16,
+        marginBottom: 10,
     },
     wordText: {
         fontSize: 22,
-        lineHeight: 34,
-        marginRight: 1, 
+        lineHeight: 28,
+        marginRight: 0, // Space is directly appended to wordText now
         fontWeight: '500',
     },
     activeWeight: {
