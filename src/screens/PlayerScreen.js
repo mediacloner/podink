@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, StyleSheet, Text, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TrackPlayer, { useProgress } from 'react-native-track-player';
 import PlayerControls from '../components/PlayerControls';
 import TranscriptHighlighter from '../components/TranscriptHighlighter';
@@ -10,6 +11,7 @@ const PlayerScreen = ({ route }) => {
     const { episode } = route.params;
     const [segments, setSegments] = useState([]);
     const [loadingStatus, setLoadingStatus] = useState(''); // '' = ready
+    const insets = useSafeAreaInsets();
     const positionSaveInterval = useRef(null);
     useProgress(); // keep hook alive for TrackPlayer context
 
@@ -77,7 +79,7 @@ const PlayerScreen = ({ route }) => {
             </View>
 
             {/* Player controls */}
-            <View style={styles.controlsArea}>
+            <View style={[styles.controlsArea, { paddingBottom: Math.max(insets.bottom + 10, 30) }]}>
                 <PlayerControls />
             </View>
         </View>
@@ -132,8 +134,7 @@ const styles = StyleSheet.create({
         fontSize: 13,
     },
     controlsArea: {
-        paddingVertical: 20,
-        paddingBottom: 30,
+        paddingTop: 20,
         backgroundColor: '#111',
         alignItems: 'center',
         borderTopWidth: 1,

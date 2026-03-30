@@ -1,12 +1,22 @@
 import { initWhisper } from 'whisper.rn';
 import { NativeEventEmitter, NativeModules } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureWhisperModel } from './downloadService';
 
 let whisperContext = null;
 
-export const initializeWhisper = async (modelType = 'tiny') => {
+export const initializeWhisper = async () => {
     // Check if context is already initialized
     if (whisperContext) return whisperContext;
+
+    // Load preferred model from settings, default to 'base'
+    let modelType = 'base';
+    try {
+        const saved = await AsyncStorage.getItem('@whisper_model');
+        if (saved) modelType = saved;
+    } catch (e) {
+        console.error('Failed to load preferred model', e);
+    }
 
     // Download or find the model locally
     const modelFilePath = await ensureWhisperModel(modelType);

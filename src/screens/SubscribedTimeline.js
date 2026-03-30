@@ -35,9 +35,10 @@ const SubscribedTimeline = ({ navigation }) => {
             return;
         }
         if (!episode.audio_url) return;
-        
-        const filename = `episode_${episode.id}.mp3`;
-        
+        // Sanitize the ID to remove any slashes or URL components from the RSS GUID 
+        // to prevent FileSystem.downloadAsync from rejecting the filepath
+        const safeId = episode.id.toString().replace(/[^a-zA-Z0-9]/g, '_');
+        const filename = `episode_${safeId}.mp3`;
         try {
             const localPath = await downloadAudioFile(episode.audio_url, filename);
             await updateEpisodeLocalPath(episode.id, localPath);
