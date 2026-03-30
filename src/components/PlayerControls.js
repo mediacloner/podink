@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
-import TrackPlayer, { usePlaybackState, useProgress } from 'react-native-track-player';
+import TrackPlayer, { usePlaybackState, useProgress, State } from 'react-native-track-player';
 import Slider from '@react-native-community/slider';
-import Icon from 'react-native-vector-icons/Feather';
+import { Feather as Icon } from '@expo/vector-icons';
 
 const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -11,10 +11,10 @@ const formatTime = (seconds) => {
 };
 
 const PlayerControls = () => {
-    const playbackState = usePlaybackState();
+    const { state: playbackState } = usePlaybackState();
     const { position, duration } = useProgress();
     const [rate, setRate] = React.useState(1);
-    
+
     const cycleRate = async () => {
         const nextRate = rate === 1 ? 1.25 : rate === 1.25 ? 1.5 : rate === 1.5 ? 2 : 1;
         await TrackPlayer.setRate(nextRate);
@@ -22,9 +22,10 @@ const PlayerControls = () => {
     };
 
     const togglePlayback = async () => {
-        const currentTrack = await TrackPlayer.getCurrentTrack();
+        if (!playbackState) return; // still initialising
+        const currentTrack = await TrackPlayer.getActiveTrackIndex();
         if (currentTrack != null) {
-            if (playbackState === TrackPlayer.STATE_PLAYING) {
+            if (playbackState === State.Playing) {
                 await TrackPlayer.pause();
             } else {
                 await TrackPlayer.play();
@@ -65,7 +66,7 @@ const PlayerControls = () => {
                 </TouchableOpacity>
 
                 <TouchableOpacity onPress={togglePlayback} style={styles.playButton}>
-                    <Icon name={playbackState === TrackPlayer.STATE_PLAYING ? 'pause' : 'play'} size={32} color="#000" />
+                    <Icon name={playbackState === State.Playing ? 'pause' : 'play'} size={32} color="#000" />
                 </TouchableOpacity>
 
                 <TouchableOpacity onPress={skipForward} style={styles.iconButton}>

@@ -10,6 +10,7 @@ import { deleteAudioFile } from '../services/downloadService';
 const DownloadedTimeline = ({ navigation }) => {
     const [episodes, setEpisodes] = useState([]);
     const [isTranscribing, setIsTranscribing] = useState(null); // holds episode id being transcribed
+    const [transcribeProgress, setTranscribeProgress] = useState(0);
     const isFocused = useIsFocused();
 
     useEffect(() => {
@@ -24,8 +25,9 @@ const DownloadedTimeline = ({ navigation }) => {
     const handleTranscribe = async (episode) => {
         if (!episode.local_audio_path) return;
         setIsTranscribing(episode.id);
+        setTranscribeProgress(0);
         try {
-            const segments = await transcribeAudio(episode.local_audio_path);
+            const segments = await transcribeAudio(episode.local_audio_path, (p) => setTranscribeProgress(p));
             await saveTranscripts(episode.id, segments);
             loadData();
         } catch(e) {
@@ -61,12 +63,13 @@ const DownloadedTimeline = ({ navigation }) => {
                     </View>
                 }
                 renderItem={({ item }) => (
-                    <EpisodeItem 
+                    <EpisodeItem
                         episode={item}
                         onPress={(ep) => navigation.navigate('Player', { episode: ep })}
                         onTranscribe={handleTranscribe}
                         onDelete={handleDelete}
                         isTranscribing={isTranscribing === item.id}
+                        transcribeProgress={isTranscribing === item.id ? transcribeProgress : 0}
                     />
                 )}
             />

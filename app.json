@@ -1,4 +1,22 @@
 {
-  "name": "podink",
-  "displayName": "Podink App"
+  "expo": {
+    "name": "Podink",
+    "slug": "podink",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "platforms": ["ios", "android"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.podink.app"
+    },
+    "android": {
+      "package": "com.podink.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#121212"
+      }
+    },
+    "plugins": [
+      "expo-sqlite"
+    ]
+  }
 }

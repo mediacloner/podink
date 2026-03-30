@@ -1,52 +1,51 @@
-import { whisper } from 'whisper.rn';
+import { initWhisper } from 'whisper.rn';
+import { NativeEventEmitter, NativeModules } from 'react-native';
 import { ensureWhisperModel } from './downloadService';
-import { convertToWav } from './ffmpegService';
-import RNFS from 'react-native-fs';
 
 let whisperContext = null;
 
-export const initWhisper = async (modelType = 'tiny') => {
+export const initializeWhisper = async (modelType = 'tiny') => {
     // Check if context is already initialized
     if (whisperContext) return whisperContext;
 
     // Download or find the model locally
     const modelFilePath = await ensureWhisperModel(modelType);
 
-    // Initialize whisper context with default OS params
-    whisperContext = await whisper.initContext({
-        filePath: modelFilePath,
+    // Initialize whisper context (0.5.5 API)
+    whisperContext = await initWhisper({
+        filePath: modelFilePath.replace('file://', ''),
     });
     
     return whisperContext;
 };
 
-export const transcribeAudio = async (audioFilePath) => {
-    const context = await initWhisper();
+export const transcribeAudio = async (audioFilePath, onProgress) => {
+    const context = await initializeWhisper();
 
-    // The file needs to be 16kHz WAV. Let's create a temporary file path
-    const tempWavPath = `${RNFS.CachesDirectoryPath}/temp_transcribe.wav`;
-    
-    console.log("Starting FFmpeg Conversion...");
-    const conversionResult = await convertToWav(audioFilePath, tempWavPath);
+    let subscription;
+    if (onProgress) {
+        const emitter = new NativeEventEmitter(NativeModules.RNWhisper);
+        subscription = emitter.addListener('@RNWhisperTranscribeProgress', ({ progress }) => {
+            onProgress(progress);
+        });
+    }
 
+    const nativePath = audioFilePath.replace('file://', '');
     console.log("Starting Transcription...");
-    const transcriptionResult = await whisperContext.transcribe(conversionResult, {
-        language: 'en',
-        maxLen: 1, // 1 token per segment for accurate timing sync? Let's use default chunk sizes first
-        tokenTimestamps: true,
-    });
-
-    console.log("Transcription Complete!");
-    
-    // Attempt to map result segments securely
-    const formattedSegments = (transcriptionResult.result || []).map((seg) => ({
-        start: seg.t0 * 10, // Assuming Whisper gives 10ms timestamps
-        end:   seg.t1 * 10, 
-        text:  seg.text
-    }));
-
-    // Cleanup the temporary WAV file to save storage
-    await RNFS.unlink(tempWavPath);
-
-    return formattedSegments;
+    try {
+        const { promise } = context.transcribe(nativePath, {
+            language: 'en',
+            maxLen: 1,
+            tokenTimestamps: true,
+        });
+        const transcriptionResult = await promise;
+        console.log("Transcription Complete!");
+        return (transcriptionResult.segments || []).map((seg) => ({
+            start: seg.t0 * 10,
+            end:   seg.t1 * 10,
+            text:  seg.text,
+        }));
+    } finally {
+        subscription?.remove();
+    }
 };

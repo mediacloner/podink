@@ -1,4 +1,4 @@
-import RNFS from 'react-native-fs';
+import { File, Paths } from 'expo-file-system';
 
 /**
  * Downloads a file to the device's local filesystem
@@ -8,34 +8,15 @@ import RNFS from 'react-native-fs';
  * @returns {Promise<string>} - The local path where the file was saved
  */
 export const downloadAudioFile = async (url, filename, onProgress) => {
-    const destinationPath = `${RNFS.DocumentDirectoryPath}/${filename}`;
-    
-    // Check if the file already exists
-    const exists = await RNFS.exists(destinationPath);
-    if (exists) {
-        return destinationPath;
+    const destinationFile = new File(Paths.document, filename);
+
+    if (destinationFile.exists) {
+        return destinationFile.uri;
     }
 
     try {
-        const downloadOptions = {
-            fromUrl: url,
-            toFile: destinationPath,
-            progress: (res) => {
-                if (onProgress && res.contentLength > 0) {
-                    const percentage = (res.bytesWritten / res.contentLength) * 100;
-                    onProgress(percentage);
-                }
-            },
-            progressDivider: 2, // Emit progress update events less frequently
-        };
-
-        const result = await RNFS.downloadFile(downloadOptions).promise;
-        
-        if (result.statusCode === 200) {
-            return destinationPath;
-        } else {
-            throw new Error(`Download failed with status: ${result.statusCode}`);
-        }
+        const downloadedFile = await File.downloadFileAsync(url, destinationFile);
+        return downloadedFile.uri;
     } catch (error) {
         console.error('Error downloading audio file:', error);
         throw error;
@@ -46,28 +27,27 @@ export const downloadAudioFile = async (url, filename, onProgress) => {
  * Ensures the whisper model is available locally, downloading it if necessary
  */
 export const ensureWhisperModel = async (modelType = 'tiny') => {
-    // Determine the bin file name based on model
     const modelFileName = `ggml-${modelType}.bin`;
-    const modelPath = `${RNFS.DocumentDirectoryPath}/${modelFileName}`;
-    
-    const exists = await RNFS.exists(modelPath);
-    if (exists) return modelPath;
+    const modelFile = new File(Paths.document, modelFileName);
+
+    if (modelFile.exists) return modelFile.uri;
 
     // Model URL pointing to Hugging Face repository
     const modelUrl = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${modelFileName}`;
-    
+
     console.log(`Downloading Whisper Model: ${modelType}...`);
     return await downloadAudioFile(modelUrl, modelFileName, (progress) => {
         console.log(`Model Download Progress: ${progress.toFixed(2)}%`);
     });
 };
 
-export const deleteAudioFile = async (localPath) => {
-    if (!localPath) return;
+export const deleteAudioFile = async (localUri) => {
+    if (!localUri) return;
     try {
-        const exists = await RNFS.exists(localPath);
-        if (exists) {
-            await RNFS.unlink(localPath);
+        const filename = localUri.split('/').pop();
+        const file = new File(Paths.document, filename);
+        if (file.exists) {
+            file.delete();
         }
     } catch (e) {
         console.error('Failed to delete file', e);

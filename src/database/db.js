@@ -1,28 +1,25 @@
-import SQLite from 'react-native-sqlite-storage';
+import * as SQLite from 'expo-sqlite';
 
-SQLite.enablePromise(true);
+let _db = null;
+let _dbPromise = null;
 
-const database_name = "Podink.db";
-const database_version = "1.0";
-const database_displayname = "Podink Offline Database";
-const database_size = 200000;
-
-export const openDatabaseContext = async () => {
-  console.log("Opening SQLite Database");
-  const db = await SQLite.openDatabase(
-    database_name,
-    database_version,
-    database_displayname,
-    database_size
-  );
-  return db;
+export const openDatabaseContext = () => {
+  if (_db) return Promise.resolve(_db);
+  if (!_dbPromise) {
+    console.log("Opening SQLite Database");
+    _dbPromise = SQLite.openDatabaseAsync('Podink.db').then(db => {
+      _db = db;
+      return db;
+    });
+  }
+  return _dbPromise;
 };
 
 export const initDB = async () => {
     const db = await openDatabaseContext();
     
     // Create Episodes table
-    await db.executeSql(
+    await db.execAsync(
       `CREATE TABLE IF NOT EXISTS Episodes (
         id TEXT PRIMARY KEY,
         title TEXT,
@@ -39,7 +36,7 @@ export const initDB = async () => {
     );
 
     // Podcasts table to track subscribed feeds
-    await db.executeSql(
+    await db.execAsync(
       `CREATE TABLE IF NOT EXISTS Podcasts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT,
@@ -51,7 +48,7 @@ export const initDB = async () => {
     );
 
     // Create Transcripts table (segments of an episode)
-    await db.executeSql(
+    await db.execAsync(
       `CREATE TABLE IF NOT EXISTS Transcripts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         episode_id TEXT,
