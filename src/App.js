@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { LogBox } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -14,6 +15,8 @@ import PlayerScreen from './screens/PlayerScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import PodcastsScreen from './screens/PodcastsScreen';
 import { Feather as Icon } from '@expo/vector-icons';
+
+LogBox.ignoreLogs(['Attempted to import the module']);
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
