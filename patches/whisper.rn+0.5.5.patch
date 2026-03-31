@@ -9011,7 +9011,7 @@ index 0000000..2d9eaa2
 Binary files /dev/null and b/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/compile_commands.json.bin differ
 diff --git a/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/configure_fingerprint.bin b/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/configure_fingerprint.bin
 new file mode 100644
-index 0000000..a263d56
+index 0000000..9a7459a
 --- /dev/null
 +++ b/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/configure_fingerprint.bin
 @@ -0,0 +1,29 @@
@@ -9019,31 +9019,31 @@ index 0000000..a263d56
 +û
 +õ/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/additional_project_files.txtC
 +A
-+?com.android.build.gradle.internal.cxx.io.EncodedFileFingerPrint	√¸÷É‘3 ≈À‚ ”3û
++?com.android.build.gradle.internal.cxx.io.EncodedFileFingerPrint	ﬂ¯˚ó‘3 ≈À‚ ”3û
 +õ
-+ò/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/android_gradle_build.json	√¸÷É‘3˝  ÀÀ‚ ”3£
++ò/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/android_gradle_build.json	ﬂ¯˚ó‘3˝  ÀÀ‚ ”3£
 +†
-+ù/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/android_gradle_build_mini.json	√¸÷É‘3⁄ ØÃ‚ ”3ê
++ù/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/android_gradle_build_mini.json	ﬂ¯˚ó‘3⁄ ØÃ‚ ”3ê
 +ç
-+ä/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/build.ninja	√¸÷É‘3îö òÀ‚ ”3î
++ä/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/build.ninja	ﬂ¯˚ó‘3îö òÀ‚ ”3î
 +ë
-+é/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/build.ninja.txt	√¸÷É‘3ô
++é/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/build.ninja.txt	ﬂ¯˚ó‘3ô
 +ñ
-+ì/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/build_file_index.txt	√¸÷É‘3x µÃ‚ ”3ö
++ì/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/build_file_index.txt	ﬂ¯˚ó‘3x µÃ‚ ”3ö
 +ó
-+î/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/compile_commands.json	√¸÷É‘3ë†
++î/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/compile_commands.json	ﬂ¯˚ó‘3ë†
 + óÀ‚ ”3û
 +õ
-+ò/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/compile_commands.json.bin	√¸÷É‘3	Áà óÀ‚ ”3§
++ò/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/compile_commands.json.bin	ﬂ¯˚ó‘3	Áà óÀ‚ ”3§
 +°
-+û/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/metadata_generation_command.txt	√¸÷É‘3
++û/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/metadata_generation_command.txt	ﬂ¯˚ó‘3
 +» ¥Ã‚ ”3ó
 +î
-+ë/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/prefab_config.json	√¸÷É‘3à ¥Ã‚ ”3ú
++ë/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/prefab_config.json	ﬂ¯˚ó‘3à ¥Ã‚ ”3ú
 +ô
-+ñ/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/symbol_folder_index.txt	√¸÷É‘3ï ¥Ã‚ ”3|
++ñ/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/symbol_folder_index.txt	ﬂ¯˚ó‘3ï ¥Ã‚ ”3|
 +z
-+x/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/src/main/CMakeLists.txt	√¸÷É‘3Ë ÔÅﬁ ”3
++x/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/src/main/CMakeLists.txt	ﬂ¯˚ó‘3Ë ÔÅﬁ ”3
 \ No newline at end of file
 diff --git a/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/metadata_generation_command.txt b/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a/metadata_generation_command.txt
 new file mode 100644
@@ -33697,6 +33697,17 @@ diff --git a/node_modules/whisper.rn/android/bin/src/oldarch/java/com/rnwhisper/
 new file mode 100644
 index 0000000..8981805
 Binary files /dev/null and b/node_modules/whisper.rn/android/bin/src/oldarch/java/com/rnwhisper/RNWhisperModule.class differ
+diff --git a/node_modules/whisper.rn/android/build/.transforms/00a0a40a7c5443c80fe313d16c545dd0/results.bin b/node_modules/whisper.rn/android/build/.transforms/00a0a40a7c5443c80fe313d16c545dd0/results.bin
+new file mode 100644
+index 0000000..0d259dd
+--- /dev/null
++++ b/node_modules/whisper.rn/android/build/.transforms/00a0a40a7c5443c80fe313d16c545dd0/results.bin
+@@ -0,0 +1 @@
++o/classes
+diff --git a/node_modules/whisper.rn/android/build/.transforms/00a0a40a7c5443c80fe313d16c545dd0/transformed/classes/classes_dex/classes.dex b/node_modules/whisper.rn/android/build/.transforms/00a0a40a7c5443c80fe313d16c545dd0/transformed/classes/classes_dex/classes.dex
+new file mode 100644
+index 0000000..a3aea73
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/.transforms/00a0a40a7c5443c80fe313d16c545dd0/transformed/classes/classes_dex/classes.dex differ
 diff --git a/node_modules/whisper.rn/android/build/.transforms/d14677c62e0fec6847bde5771f6411ec/results.bin b/node_modules/whisper.rn/android/build/.transforms/d14677c62e0fec6847bde5771f6411ec/results.bin
 new file mode 100644
 index 0000000..0d259dd
@@ -33708,6 +33719,17 @@ diff --git a/node_modules/whisper.rn/android/build/.transforms/d14677c62e0fec684
 new file mode 100644
 index 0000000..128c156
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/.transforms/d14677c62e0fec6847bde5771f6411ec/transformed/classes/classes_dex/classes.dex differ
+diff --git a/node_modules/whisper.rn/android/build/.transforms/fa648fe9dae5a8be118fe2811a143add/results.bin b/node_modules/whisper.rn/android/build/.transforms/fa648fe9dae5a8be118fe2811a143add/results.bin
+new file mode 100644
+index 0000000..0d259dd
+--- /dev/null
++++ b/node_modules/whisper.rn/android/build/.transforms/fa648fe9dae5a8be118fe2811a143add/results.bin
+@@ -0,0 +1 @@
++o/classes
+diff --git a/node_modules/whisper.rn/android/build/.transforms/fa648fe9dae5a8be118fe2811a143add/transformed/classes/classes_dex/classes.dex b/node_modules/whisper.rn/android/build/.transforms/fa648fe9dae5a8be118fe2811a143add/transformed/classes/classes_dex/classes.dex
+new file mode 100644
+index 0000000..6a0fc55
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/.transforms/fa648fe9dae5a8be118fe2811a143add/transformed/classes/classes_dex/classes.dex differ
 diff --git a/node_modules/whisper.rn/android/build/generated/source/buildConfig/debug/com/rnwhisper/BuildConfig.java b/node_modules/whisper.rn/android/build/generated/source/buildConfig/debug/com/rnwhisper/BuildConfig.java
 new file mode 100644
 index 0000000..b5a3c68
@@ -35325,7 +35347,7 @@ index 0000000..9e26dfe
 \ No newline at end of file
 diff --git a/node_modules/whisper.rn/android/build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar b/node_modules/whisper.rn/android/build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar
 new file mode 100644
-index 0000000..89134cb
+index 0000000..c61adf0
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/compile_library_classes_jar/debug/bundleLibCompileToJarDebug/classes.jar differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/compile_r_class_jar/debug/generateDebugRFile/R.jar b/node_modules/whisper.rn/android/build/intermediates/compile_r_class_jar/debug/generateDebugRFile/R.jar
 new file mode 100644
@@ -35564,90 +35586,33 @@ new file mode 100644
 index 0000000..e69de29
 diff --git a/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/build_stdout_targets.txt b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/build_stdout_targets.txt
 new file mode 100644
-index 0000000..2209cc2
+index 0000000..9750747
 --- /dev/null
 +++ b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/build_stdout_targets.txt
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,2 @@
 +ninja: Entering directory `/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/.cxx/Debug/1k2j2a43/arm64-v8a'
-+[1/79] Building C object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-alloc.c.o
-+[2/79] Building C object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/ggml-cpu.c.o
-+[3/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/amx/mmq.cpp.o
-+[4/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/amx/amx.cpp.o
-+[5/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/traits.cpp.o
-+[6/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/ggml-cpu.cpp.o
-+[7/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/vec.cpp.o
-+[8/79] Building C object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/quants.c.o
-+[9/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-backend-reg.cpp.o
-+[10/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-threading.cpp.o
-+[11/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-backend.cpp.o
-+[12/79] Building C object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml.c.o
-+[13/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/rn-audioutils.cpp.o
-+[14/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-opt.cpp.o
-+[15/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/binary-ops.cpp.o
-+[16/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/rn-whisper.cpp.o
-+[17/79] Building C object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-alloc.c.o
-+[18/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/repack.cpp.o
-+[19/79] Building CXX object CMakeFiles/rnwhisper.dir/jni.cpp.o
-+[20/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/amx/amx.cpp.o
-+[21/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/unary-ops.cpp.o
-+[22/79] Building C object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml.c.o
-+[23/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-backend.cpp.o
-+[24/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/amx/mmq.cpp.o
-+[25/79] Building C object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/ggml-cpu.c.o
-+[26/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-backend-reg.cpp.o
-+[27/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/traits.cpp.o
-+[28/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/ggml-cpu.cpp.o
-+[29/79] Building C object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/quants.c.o
-+[30/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/vec.cpp.o
-+[31/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/gguf.cpp.o
-+[32/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-threading.cpp.o
-+[33/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/jsi/RNWhisperJSI.cpp.o
-+[34/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/binary-ops.cpp.o
-+[35/79] Building C object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-quants.c.o
-+[36/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-opt.cpp.o
-+[37/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/repack.cpp.o
-+[38/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/rn-audioutils.cpp.o
-+[39/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/ops.cpp.o
-+[40/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/rn-whisper.cpp.o
-+[41/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/unary-ops.cpp.o
-+[42/79] Building C object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/arch/arm/quants.c.o
-+[43/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/arch/arm/repack.cpp.o
-+[44/79] Building C object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-alloc.c.o
-+[45/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/jni.cpp.o
-+[46/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/amx/amx.cpp.o
-+[47/79] Building C object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml.c.o
-+[48/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/amx/mmq.cpp.o
-+[49/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-backend.cpp.o
-+[50/79] Building C object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/ggml-cpu.c.o
-+[51/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-backend-reg.cpp.o
-+[52/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/traits.cpp.o
-+[53/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/ggml-cpu.cpp.o
-+[54/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/gguf.cpp.o
-+[55/79] Building C object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/quants.c.o
-+[56/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/vec.cpp.o
-+[57/79] Building C object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-quants.c.o
-+[58/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/jsi/RNWhisperJSI.cpp.o
-+[59/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-threading.cpp.o
-+[60/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/ops.cpp.o
-+[61/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/binary-ops.cpp.o
-+[62/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-opt.cpp.o
-+[63/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/repack.cpp.o
-+[64/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/rn-audioutils.cpp.o
-+[65/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/unary-ops.cpp.o
-+[66/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/rn-whisper.cpp.o
-+[67/79] Building C object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/arch/arm/quants.c.o
-+[68/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/arch/arm/repack.cpp.o
-+[69/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/jni.cpp.o
-+[70/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/gguf.cpp.o
-+[71/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/jsi/RNWhisperJSI.cpp.o
-+[72/79] Building C object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-quants.c.o
-+[73/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/ggml-cpu/ops.cpp.o
-+[74/79] Building CXX object CMakeFiles/rnwhisper.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/whisper.cpp.o
-+[75/79] Linking CXX shared library /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/obj/arm64-v8a/librnwhisper.so
-+[76/79] Building CXX object CMakeFiles/rnwhisper_v8fp16_va_2.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/whisper.cpp.o
-+[77/79] Linking CXX shared library /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/obj/arm64-v8a/librnwhisper_v8fp16_va_2.so
-+[78/79] Building CXX object CMakeFiles/rnwhisper_v8.dir/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/cpp/whisper.cpp.o
-+[79/79] Linking CXX shared library /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/obj/arm64-v8a/librnwhisper_v8.so
++ninja: no work to do.
+diff --git a/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_1172_timing.txt b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_1172_timing.txt
+new file mode 100644
+index 0000000..9708df4
+--- /dev/null
++++ b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_1172_timing.txt
+@@ -0,0 +1,2 @@
++# C/C++ build system timings
++
+diff --git a/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_118_timing.txt b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_118_timing.txt
+new file mode 100644
+index 0000000..4aba7c3
+--- /dev/null
++++ b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_118_timing.txt
+@@ -0,0 +1,7 @@
++# C/C++ build system timings
++generate_cxx_metadata
++  [gap of 23ms]
++  create-invalidation-state 65ms
++  [gap of 23ms]
++generate_cxx_metadata completed in 111ms
++
 diff --git a/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_1896_timing.txt b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_1896_timing.txt
 new file mode 100644
 index 0000000..c3ae8b1
@@ -35656,6 +35621,46 @@ index 0000000..c3ae8b1
 @@ -0,0 +1,3 @@
 +# C/C++ build system timings
 +generate_cxx_metadata 13ms
++
+diff --git a/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_2234_timing.txt b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_2234_timing.txt
+new file mode 100644
+index 0000000..9708df4
+--- /dev/null
++++ b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_2234_timing.txt
+@@ -0,0 +1,2 @@
++# C/C++ build system timings
++
+diff --git a/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_287_timing.txt b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_287_timing.txt
+new file mode 100644
+index 0000000..9708df4
+--- /dev/null
++++ b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_287_timing.txt
+@@ -0,0 +1,2 @@
++# C/C++ build system timings
++
+diff --git a/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_468_timing.txt b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_468_timing.txt
+new file mode 100644
+index 0000000..9708df4
+--- /dev/null
++++ b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_468_timing.txt
+@@ -0,0 +1,2 @@
++# C/C++ build system timings
++
+diff --git a/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_643_timing.txt b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_643_timing.txt
+new file mode 100644
+index 0000000..9708df4
+--- /dev/null
++++ b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_643_timing.txt
+@@ -0,0 +1,2 @@
++# C/C++ build system timings
++
+diff --git a/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_827_timing.txt b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_827_timing.txt
+new file mode 100644
+index 0000000..9708df4
+--- /dev/null
++++ b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/generate_cxx_metadata_827_timing.txt
+@@ -0,0 +1,2 @@
++# C/C++ build system timings
 +
 diff --git a/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/metadata_generation_record.json b/node_modules/whisper.rn/android/build/intermediates/cxx/Debug/1k2j2a43/logs/arm64-v8a/metadata_generation_record.json
 new file mode 100644
@@ -35776,9 +35781,13 @@ index 0000000..30b2bbc
 +<?xml version="1.0" encoding="utf-8"?>
 +<merger version="3"><dataSet config="main" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/src/main/shaders"/></dataSet><dataSet config="debug" ignore_pattern="!.svn:!.git:!.ds_store:!*.scc:.*:&lt;dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"><source path="/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/src/debug/shaders"/></dataSet></merger>
 \ No newline at end of file
+diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/AudioUtils$ProgressListener.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/AudioUtils$ProgressListener.class
+new file mode 100644
+index 0000000..ca99b34
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/AudioUtils$ProgressListener.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/AudioUtils.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/AudioUtils.class
 new file mode 100644
-index 0000000..04aa57f
+index 0000000..de59b28
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/AudioUtils.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/BuildConfig.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/BuildConfig.class
 new file mode 100644
@@ -35802,19 +35811,19 @@ index 0000000..e754409
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$1.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$10.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$10.class
 new file mode 100644
-index 0000000..debfd5f
+index 0000000..906eff5
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$10.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$11.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$11.class
 new file mode 100644
-index 0000000..2d4ae61
+index 0000000..9e5fc71
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$11.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$12.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$12.class
 new file mode 100644
-index 0000000..03b1dee
+index 0000000..4cecfe6
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$12.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$13.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$13.class
 new file mode 100644
-index 0000000..e4acf6a
+index 0000000..fbda862
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$13.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$2.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$2.class
 new file mode 100644
@@ -35828,29 +35837,33 @@ diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/com
 new file mode 100644
 index 0000000..6f8931a
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$4.class differ
+diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$5$1.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$5$1.class
+new file mode 100644
+index 0000000..8f8d023
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$5$1.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$5.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$5.class
 new file mode 100644
-index 0000000..5cb730b
+index 0000000..db838fb
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$5.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$6.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$6.class
 new file mode 100644
-index 0000000..804e14f
+index 0000000..13c4024
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$6.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$7.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$7.class
 new file mode 100644
-index 0000000..cecb672
+index 0000000..6fd94fd
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$7.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$8.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$8.class
 new file mode 100644
-index 0000000..c0ef040
+index 0000000..4bd4f0f
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$8.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$9.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$9.class
 new file mode 100644
-index 0000000..226bf81
+index 0000000..e10dc4f
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper$9.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper.class
 new file mode 100644
-index 0000000..b482eec
+index 0000000..0049727
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisper.class differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisperModule.class b/node_modules/whisper.rn/android/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes/com/rnwhisper/RNWhisperModule.class
 new file mode 100644
@@ -35961,7 +35974,7 @@ index 0000000..08f4ebe
 \ No newline at end of file
 diff --git a/node_modules/whisper.rn/android/build/intermediates/runtime_library_classes_jar/debug/bundleLibRuntimeToJarDebug/classes.jar b/node_modules/whisper.rn/android/build/intermediates/runtime_library_classes_jar/debug/bundleLibRuntimeToJarDebug/classes.jar
 new file mode 100644
-index 0000000..24b3df8
+index 0000000..2eb2d41
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/intermediates/runtime_library_classes_jar/debug/bundleLibRuntimeToJarDebug/classes.jar differ
 diff --git a/node_modules/whisper.rn/android/build/intermediates/symbol_list_with_package_name/debug/generateDebugRFile/package-aware-r.txt b/node_modules/whisper.rn/android/build/intermediates/symbol_list_with_package_name/debug/generateDebugRFile/package-aware-r.txt
 new file mode 100644
@@ -35993,12 +36006,96 @@ index 0000000..4388272
 +		INJECTED from /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/src/main/AndroidManifest.xml
 +	android:minSdkVersion
 +		INJECTED from /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/android/src/main/AndroidManifest.xml
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/AudioUtils.class.uniqueId19 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/AudioUtils.class.uniqueId19
+new file mode 100644
+index 0000000..04aa57f
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/AudioUtils.class.uniqueId19 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$1.class.uniqueId15 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$1.class.uniqueId15
+new file mode 100644
+index 0000000..e754409
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$1.class.uniqueId15 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$10.class.uniqueId3 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$10.class.uniqueId3
+new file mode 100644
+index 0000000..5d86a6e
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$10.class.uniqueId3 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$11.class.uniqueId1 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$11.class.uniqueId1
+new file mode 100644
+index 0000000..74cedb9
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$11.class.uniqueId1 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$12.class.uniqueId4 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$12.class.uniqueId4
+new file mode 100644
+index 0000000..d6f1f84
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$12.class.uniqueId4 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$13.class.uniqueId17 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$13.class.uniqueId17
+new file mode 100644
+index 0000000..45aeb42
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$13.class.uniqueId17 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$2.class.uniqueId13 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$2.class.uniqueId13
+new file mode 100644
+index 0000000..da0997b
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$2.class.uniqueId13 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$3.class.uniqueId16 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$3.class.uniqueId16
+new file mode 100644
+index 0000000..78ef46b
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$3.class.uniqueId16 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$4.class.uniqueId18 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$4.class.uniqueId18
+new file mode 100644
+index 0000000..6f8931a
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$4.class.uniqueId18 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$5.class.uniqueId2 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$5.class.uniqueId2
+new file mode 100644
+index 0000000..9e58a51
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$5.class.uniqueId2 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$6.class.uniqueId5 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$6.class.uniqueId5
+new file mode 100644
+index 0000000..abcbc1a
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$6.class.uniqueId5 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$7.class.uniqueId7 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$7.class.uniqueId7
+new file mode 100644
+index 0000000..987af51
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$7.class.uniqueId7 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$8.class.uniqueId12 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$8.class.uniqueId12
+new file mode 100644
+index 0000000..0ea94c2
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$8.class.uniqueId12 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$9.class.uniqueId20 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$9.class.uniqueId20
+new file mode 100644
+index 0000000..a239c50
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper$9.class.uniqueId20 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper.class.uniqueId14 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper.class.uniqueId14
+new file mode 100644
+index 0000000..c692f89
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisper.class.uniqueId14 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisperModule.class.uniqueId0 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisperModule.class.uniqueId0
+new file mode 100644
+index 0000000..2ad1b72
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/RNWhisperModule.class.uniqueId0 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$1$1.class.uniqueId9 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$1$1.class.uniqueId9
+new file mode 100644
+index 0000000..bdf8e87
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$1$1.class.uniqueId9 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$1.class.uniqueId8 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$1.class.uniqueId8
+new file mode 100644
+index 0000000..0ef76ea
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$1.class.uniqueId8 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$Callback.class.uniqueId6 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$Callback.class.uniqueId6
+new file mode 100644
+index 0000000..8ae3327
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$Callback.class.uniqueId6 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$NativeLogCallback.class.uniqueId11 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$NativeLogCallback.class.uniqueId11
+new file mode 100644
+index 0000000..8ee144b
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext$NativeLogCallback.class.uniqueId11 differ
+diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext.class.uniqueId10 b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext.class.uniqueId10
+new file mode 100644
+index 0000000..0f7c0a7
+Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/compileTransaction/stash-dir/WhisperContext.class.uniqueId10 differ
 diff --git a/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/previous-compilation-data.bin b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/previous-compilation-data.bin
 new file mode 100644
-index 0000000..0ed4f8c
+index 0000000..6167265
 Binary files /dev/null and b/node_modules/whisper.rn/android/build/tmp/compileDebugJavaWithJavac/previous-compilation-data.bin differ
 diff --git a/node_modules/whisper.rn/android/src/main/java/com/rnwhisper/AudioUtils.java b/node_modules/whisper.rn/android/src/main/java/com/rnwhisper/AudioUtils.java
-index dab2d02..7b81cfa 100644
+index dab2d02..3653345 100644
 --- a/node_modules/whisper.rn/android/src/main/java/com/rnwhisper/AudioUtils.java
 +++ b/node_modules/whisper.rn/android/src/main/java/com/rnwhisper/AudioUtils.java
 @@ -1,11 +1,16 @@
@@ -36018,10 +36115,14 @@ index dab2d02..7b81cfa 100644
  import java.nio.ByteBuffer;
  import java.nio.ByteOrder;
  import java.nio.ShortBuffer;
-@@ -51,4 +56,184 @@ public class AudioUtils {
+@@ -51,4 +56,201 @@ public class AudioUtils {
    public static float[] decodePcmData(String dataBase64) {
      return bufferToFloatArray(Base64.getDecoder().decode(dataBase64), false);
    }
++
++  public interface ProgressListener {
++    void onProgress(int progress);
++  }
 +
 +  /**
 +   * Converts any audio file (WAV, MP3, AAC, etc.) to a 16 kHz mono WAV file on disk.
@@ -36029,7 +36130,7 @@ index dab2d02..7b81cfa 100644
 +   * Java heap ‚Äî only a small per-iteration buffer is held at any one time.
 +   * For WAV inputs the file is copied as-is (assumed already 16 kHz mono).
 +   */
-+  public static void convertToDiskWav(String inputPath, File outputFile) throws IOException {
++  public static void convertToDiskWav(String inputPath, File outputFile, ProgressListener listener) throws IOException {
 +    final int TARGET_RATE = 16000;
 +
 +    // Fast-path: already a WAV file ‚Äî copy directly
@@ -36068,6 +36169,9 @@ index dab2d02..7b81cfa 100644
 +    }
 +    extractor.selectTrack(audioTrackIndex);
 +
++    long durationUs = trackFormat.containsKey(MediaFormat.KEY_DURATION)
++        ? trackFormat.getLong(MediaFormat.KEY_DURATION) : 0;
++
 +    int sourceSampleRate = trackFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)
 +        ? trackFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE) : 44100;
 +    int channelCount = trackFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)
@@ -36088,6 +36192,7 @@ index dab2d02..7b81cfa 100644
 +    boolean inputDone = false;
 +    boolean outputDone = false;
 +    MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
++    int lastReportedProgress = -1;
 +
 +    // Accumulate one decode round-trip at a time (~1 MB) before resampling
 +    ByteArrayOutputStream decodeBatch = new ByteArrayOutputStream(1 << 20);
@@ -36103,8 +36208,17 @@ index dab2d02..7b81cfa 100644
 +            codec.queueInputBuffer(inputIndex, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
 +            inputDone = true;
 +          } else {
-+            codec.queueInputBuffer(inputIndex, 0, size, extractor.getSampleTime(), 0);
++            long presentationTimeUs = extractor.getSampleTime();
++            codec.queueInputBuffer(inputIndex, 0, size, presentationTimeUs, 0);
 +            extractor.advance();
++
++            if (listener != null && durationUs > 0 && presentationTimeUs >= 0) {
++              int progress = (int) ((presentationTimeUs * 100) / durationUs);
++              if (progress != lastReportedProgress) {
++                listener.onProgress(Math.min(100, progress));
++                lastReportedProgress = progress;
++              }
++            }
 +          }
 +        }
 +      }
@@ -36204,7 +36318,7 @@ index dab2d02..7b81cfa 100644
 +  }
  }
 diff --git a/node_modules/whisper.rn/android/src/main/java/com/rnwhisper/RNWhisper.java b/node_modules/whisper.rn/android/src/main/java/com/rnwhisper/RNWhisper.java
-index 045eee5..ea9a2a9 100644
+index 045eee5..8ff9c10 100644
 --- a/node_modules/whisper.rn/android/src/main/java/com/rnwhisper/RNWhisper.java
 +++ b/node_modules/whisper.rn/android/src/main/java/com/rnwhisper/RNWhisper.java
 @@ -25,6 +25,11 @@ import java.io.File;
@@ -36219,7 +36333,7 @@ index 045eee5..ea9a2a9 100644
  
  import com.facebook.react.common.LifecycleState;
  import com.facebook.react.modules.core.DeviceEventManagerModule;
-@@ -256,23 +261,151 @@ public class RNWhisper implements LifecycleEventListener {
+@@ -256,23 +261,163 @@ public class RNWhisper implements LifecycleEventListener {
          waveFilePath = downloader.downloadFile(filePathOrBase64);
        }
  
@@ -36266,7 +36380,19 @@ index 045eee5..ea9a2a9 100644
 +              File filesDir = reactContext.getFilesDir();
 +              tempWav = new File(filesDir,
 +                  "whisper_" + System.currentTimeMillis() + ".wav");
-+              AudioUtils.convertToDiskWav(finalWavPath, tempWav);
++              AudioUtils.convertToDiskWav(finalWavPath, tempWav, new AudioUtils.ProgressListener() {
++                @Override
++                public void onProgress(int progress) {
++                  try {
++                    WritableMap progressPayload = Arguments.createMap();
++                    progressPayload.putInt("contextId", context.getId());
++                    progressPayload.putInt("jobId", (int) jobId);
++                    progressPayload.putInt("progress", -progress); // Negative indicates decoding phase
++                    reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
++                        .emit("@RNWhisper_onTranscribeProgress", progressPayload);
++                  } catch (Exception ignored) {}
++                }
++              });
 +              wavPath = tempWav.getAbsolutePath();
 +            }
 +
@@ -36375,7 +36501,7 @@ index 045eee5..ea9a2a9 100644
    public void transcribeData(double id, double jobId, String dataBase64, ReadableMap options, Promise promise) {
      final WhisperContext context = contexts.get((int) id);
      if (context == null) {
-@@ -545,7 +678,7 @@ public class RNWhisper implements LifecycleEventListener {
+@@ -545,7 +690,7 @@ public class RNWhisper implements LifecycleEventListener {
            } else if (filePathOrBase64.startsWith("data:audio/wav;base64,")) {
              audioData = AudioUtils.decodeWaveData(filePathOrBase64);
            } else {

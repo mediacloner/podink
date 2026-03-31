@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system/legacy';
 import { File, Paths } from 'expo-file-system';
 
 /**
@@ -15,8 +16,19 @@ export const downloadAudioFile = async (url, filename, onProgress) => {
     }
 
     try {
-        const downloadedFile = await File.downloadFileAsync(url, destinationFile);
-        return downloadedFile.uri;
+        // createDownloadResumable supports progress callbacks; File.downloadFileAsync does not.
+        const download = FileSystem.createDownloadResumable(
+            url,
+            destinationFile.uri,
+            {},
+            ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
+                if (onProgress && totalBytesExpectedToWrite > 0) {
+                    onProgress((totalBytesWritten / totalBytesExpectedToWrite) * 100);
+                }
+            }
+        );
+        const result = await download.downloadAsync();
+        return result.uri;
     } catch (error) {
         console.error('Error downloading audio file:', error);
         throw error;

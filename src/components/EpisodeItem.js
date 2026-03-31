@@ -1,18 +1,29 @@
-import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, LayoutAnimation, UIManager, Platform, ActivityIndicator } from 'react-native';
+rrrimport React, { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
-
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-    UIManager.setLayoutAnimationEnabledExperimental(true);
-}
+import Animated, { 
+    useAnimatedStyle, 
+    withTiming, 
+    useSharedValue, 
+    FadeInUp, 
+    FadeOut,
+    withSpring,
+    Layout
+} from 'react-native-reanimated';
 
 const EpisodeItem = ({ episode, onPress, onDownload, onTranscribe, onDelete, isTranscribing, transcribeProgress }) => {
     const [expanded, setExpanded] = useState(false);
+    const rotation = useSharedValue(0);
 
     const toggleExpand = () => {
-        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-        setExpanded(!expanded);
+        const nextExpanded = !expanded;
+        setExpanded(nextExpanded);
+        rotation.value = withSpring(nextExpanded ? 1 : 0, { damping: 15 });
     };
+
+    const animatedIconStyle = useAnimatedStyle(() => ({
+        transform: [{ rotate: `${rotation.value * 180}deg` }]
+    }));
 
     return (
         <View style={styles.cardContainer}>
@@ -46,11 +57,15 @@ const EpisodeItem = ({ episode, onPress, onDownload, onTranscribe, onDelete, isT
                                    ) : (
                                        <Icon name="file-text" size={14} color="#fff" style={styles.iconSpaced} />
                                    )}
-                                   <Text style={styles.btnText}>
-                                       {isTranscribing
-                                           ? (transcribeProgress > 0 ? `${transcribeProgress}%` : 'Converting...')
-                                           : 'Transcribe'}
-                                   </Text>
+                                    <Text style={styles.btnText}>
+                                        {isTranscribing
+                                            ? (transcribeProgress > 0 
+                                                ? `Transcribing ${transcribeProgress}%` 
+                                                : (transcribeProgress < 0 
+                                                    ? `Converting ${Math.abs(transcribeProgress)}%` 
+                                                    : 'Converting...'))
+                                            : 'Transcribe'}
+                                    </Text>
                                </TouchableOpacity>
                             ) : (
                                <View style={styles.transcriptBadge}>
@@ -68,15 +83,21 @@ const EpisodeItem = ({ episode, onPress, onDownload, onTranscribe, onDelete, isT
                 )}
             </View>
             <TouchableOpacity style={styles.expandBtn} onPress={toggleExpand}>
-                <Icon name={expanded ? "chevron-up" : "chevron-down"} size={20} color="#888" />
+                <Animated.View style={animatedIconStyle}>
+                    <Icon name="chevron-down" size={20} color="#888" />
+                </Animated.View>
             </TouchableOpacity>
         </TouchableOpacity>
         {expanded && (
-            <View style={styles.expandedContent}>
+            <Animated.View 
+                entering={FadeInUp.duration(300)} 
+                exiting={FadeOut.duration(200)}
+                style={styles.expandedContent}
+            >
                 <Text style={styles.descriptionText}>
                     {episode.description?.replace(/<[^>]+>/g, '') || 'No description available.'}
                 </Text>
-            </View>
+            </Animated.View>
         )}
         </View>
     );

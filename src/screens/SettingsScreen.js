@@ -5,9 +5,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { downloadAudioFile } from '../services/downloadService';
 
 const MODELS = [
-    { id: 'tiny', name: 'Tiny', size: '~39 MB', desc: 'Fastest transcription, average accuracy.' },
-    { id: 'base', name: 'Base', size: '~74 MB', desc: 'Good balance of speed and high accuracy.' },
-    { id: 'small', name: 'Small', size: '~241 MB', desc: 'Slower to transcribe, peak accuracy.' }
+    { id: 'tiny',        name: 'Tiny',      size: '~39 MB',  desc: 'Fastest transcription, average accuracy.' },
+    { id: 'base',        name: 'Base',      size: '~74 MB',  desc: 'Good balance of speed and accuracy.' },
+    { id: 'base.q8_0',   name: 'Base Q8',   size: '~39 MB',  desc: 'Same quality as Base, ~2× faster. Best for most podcasts.', recommended: true },
+    { id: 'small',       name: 'Small',     size: '~241 MB', desc: 'Peak accuracy, slow on device.' },
+    { id: 'small.q8_0',  name: 'Small Q8',  size: '~120 MB', desc: 'Same quality as Small, ~2× faster.' },
 ];
 
 const SettingsScreen = () => {
@@ -104,13 +106,20 @@ const SettingsScreen = () => {
                  <Text style={styles.subtitle}>Select Default Model:</Text>
                  <View style={styles.modelList}>
                      {MODELS.map((model) => (
-                         <TouchableOpacity 
-                             key={model.id} 
-                             style={[styles.modelOption, selectedModel === model.id && styles.modelOptionSelected]} 
+                         <TouchableOpacity
+                             key={model.id}
+                             style={[styles.modelOption, selectedModel === model.id && styles.modelOptionSelected]}
                              onPress={() => savePreference(model.id)}
                          >
                              <View style={styles.modelHeaderRow}>
-                                 <Text style={[styles.modelName, selectedModel === model.id && styles.modelNameSelected]}>{model.name}</Text>
+                                 <View style={styles.modelNameRow}>
+                                     <Text style={[styles.modelName, selectedModel === model.id && styles.modelNameSelected]}>{model.name}</Text>
+                                     {model.recommended && (
+                                         <View style={styles.recommendedBadge}>
+                                             <Text style={styles.recommendedText}>Recommended</Text>
+                                         </View>
+                                     )}
+                                 </View>
                                  <Text style={styles.modelSize}>{model.size}</Text>
                              </View>
                              <Text style={styles.modelDesc}>{model.desc}</Text>
@@ -155,9 +164,12 @@ const styles = StyleSheet.create({
     modelList: { marginBottom: 20 },
     modelOption: { backgroundColor: '#2a2a2a', padding: 15, borderRadius: 8, marginBottom: 10, borderWidth: 1, borderColor: '#333' },
     modelOptionSelected: { borderColor: '#4a90e2', backgroundColor: '#1a2a3a' },
-    modelHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
+    modelHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
+    modelNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     modelName: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
     modelNameSelected: { color: '#4a90e2' },
+    recommendedBadge: { backgroundColor: '#1a3a1a', borderColor: '#4caf50', borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
+    recommendedText: { color: '#4caf50', fontSize: 11, fontWeight: '600' },
     modelSize: { color: '#888', fontSize: 14 },
     modelDesc: { color: '#aaa', fontSize: 13, lineHeight: 18 },
 

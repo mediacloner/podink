@@ -1,7 +1,19 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
-import { Dimensions, FlatList, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Dimensions,
+  FlatList,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import Animated, {
+  Easing,
   interpolateColor,
+  useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -11,27 +23,52 @@ import { useProgress } from "react-native-track-player";
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 const CENTER_OFFSET = SCREEN_HEIGHT * 0.35;
 const ANIMATION_DURATION = 125;
+const CHUNK_MARGIN = 10; // must match sentenceWrap.marginBottom
+// How many ms ahead of the audio the highlight leads.
+// Makes the word light up just before you hear it — feels more natural.
+const LOOKAHEAD_MS = 250;
 
 const LIST_HEADER = <View style={{ height: CENTER_OFFSET }} />;
 const LIST_FOOTER = <View style={{ height: SCREEN_HEIGHT * 0.5 }} />;
 
-// Colour constants
-const COLOR_FUTURE = "#303030"; // dark, barely visible
-const COLOR_SPOKEN = "#888888"; // medium grey
-const COLOR_ACTIVE = "#ffffff"; // bright white
+const COLOR_FUTURE = "#303030";
+const COLOR_SPOKEN = "#888888";
+const COLOR_ACTIVE = "#ffffff";
+
+// O(log n) binary search: returns the globalIndex of the last word whose startMs <= posMs.
+// wordTimings is a flat array sorted by startMs, indexed by globalIndex.
+function findActiveIndex(wordTimings, posMs) {
+  if (wordTimings.length === 0 || posMs < wordTimings[0].startMs) return -1;
+  let lo = 0;
+  let hi = wordTimings.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (wordTimings[mid].startMs <= posMs) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return wordTimings[lo].startMs <= posMs ? lo : -1;
+}
 
 const TranscriptHighlighter = ({ segments }) => {
-  const { position } = useProgress(80); // poll every 80ms
+  const { position } = useProgress(100);
   const flatListRef = useRef(null);
-  const wordYPositions = useRef({});
-  const lastActiveIndex = useRef(-1);
+  // Each chunk reports its rendered height via onLayout.
+  // We accumulate them to compute the real Y offset inside the scroll content,
+  // which lets us use scrollToOffset (exact pixels) instead of scrollToIndex
+  // (internal lookup that can feel abrupt).
+  const chunkHeights = useRef({});
 
-  // position from RNTP is seconds → ms
-  // We add an offset (e.g. +500ms) to look further into the future.
-  // Increase this number if the text is lagging behind the audio.
-  const posMs = position * 1000;
+  // SharedValue: updating this triggers zero React re-renders.
+  // Word components subscribe to it directly on the UI thread.
+  const activeIndexSV = useSharedValue(-1);
 
-  // 1. Group individual words into sentences/paragraphs (chunks) to avoid rendering 5000 views at once
+  // React state only for scroll — changes every ~2-5 seconds, not every 100ms.
+  const [activeChunkIndex, setActiveChunkIndex] = useState(-1);
+  const activeChunkRef = useRef(-1);
+
   const chunks = useMemo(() => {
     if (!segments || segments.length === 0) return [];
     const result = [];
@@ -44,12 +81,8 @@ const TranscriptHighlighter = ({ segments }) => {
       if (!rawText) return;
 
       const startMs = seg.start_time ?? seg.start ?? 0;
-      // Best effort to find end time, default to start + 2 seconds if missing to allow safe interpolation
       const endMs = seg.end_time ?? seg.end ?? startMs + 2000;
-
-      // Force split the segment into exact words to guarantee a true word-by-word effect,
-      // even if the transcription API grouped multiple words into a single segment.
-      const individualWords = rawText.split(/\s+/);
+      const individualWords = rawText.split(/\s+/).filter(Boolean);
       const timePerWord =
         (endMs - startMs) / Math.max(1, individualWords.length);
 
@@ -58,17 +91,13 @@ const TranscriptHighlighter = ({ segments }) => {
           chunkStartMs = startMs + wordIdx * timePerWord;
         }
 
-        // Attach trailing space back to the word for rendering
-        const isLastWord = wordIdx === individualWords.length - 1;
-        const displayText = wordText + (isLastWord ? " " : " ");
-
         currentChunk.push({
-          text: displayText,
+          text: wordText + " ",
           startMs: startMs + wordIdx * timePerWord,
           globalIndex: globalWordIndex++,
         });
 
-        // Break the paragraph chunk if we hit a sentence end, or the paragraph is getting large
+        const isLastWord = wordIdx === individualWords.length - 1;
         const isEndOfSentence =
           wordText.endsWith(".") ||
           wordText.endsWith("?") ||
@@ -91,60 +120,88 @@ const TranscriptHighlighter = ({ segments }) => {
     return result;
   }, [segments]);
 
-  // Find the current active word index & which chunk it belongs to
-  // Walk forward until we find a segment whose START is in the future
-  let activeIndex = -1;
-  let activeChunkIndex = 0;
+  // Flat sorted array for binary search: wordTimings[globalIndex] = { startMs, chunkIndex }
+  const wordTimings = useMemo(() => {
+    const arr = [];
+    chunks.forEach((chunk, chunkIdx) => {
+      chunk.words.forEach((w) => {
+        arr[w.globalIndex] = { startMs: w.startMs, chunkIndex: chunkIdx };
+      });
+    });
+    return arr;
+  }, [chunks]);
 
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    let foundInChunk = false;
-    for (let j = 0; j < chunk.words.length; j++) {
-      const w = chunk.words[j];
-      if (posMs >= w.startMs) {
-        activeIndex = w.globalIndex;
-        activeChunkIndex = i;
-        foundInChunk = true;
-      } else {
-        break; // Because words are sequential, if we pass posMs we found it
-      }
-    }
-    if (!foundInChunk && posMs < chunk.startMs) {
-      break; // Stop looking in future chunks
-    }
-  }
-
-  const lastActiveChunk = useRef(-1);
-
-  // Smooth scroll to keep active chunk near centre
-  const scrollToActive = useCallback(
-    (chunkIdx) => {
-      if (flatListRef.current && chunkIdx >= 0 && chunkIdx < chunks.length) {
-        flatListRef.current.scrollToIndex({
-          index: chunkIdx,
-          animated: true,
-          viewPosition: 0.35, // 0 = top, 0.5 = center, 0.35 = slightly above center
-        });
-      }
-    },
-    [chunks.length],
-  );
-
-  // Only scroll when the active CHUNK changes
+  // Runs every 100ms. Binary search is O(log n).
+  // Writing to a SharedValue does NOT trigger a React re-render.
+  // setActiveChunkIndex fires only when the active chunk changes (~every 2-5s).
   useEffect(() => {
-    if (activeChunkIndex !== lastActiveChunk.current) {
-      lastActiveChunk.current = activeChunkIndex;
-      if (activeChunkIndex > -1) {
-        scrollToActive(activeChunkIndex);
+    const posMs = position * 1000 + LOOKAHEAD_MS;
+    const idx = findActiveIndex(wordTimings, posMs);
+
+    activeIndexSV.value = idx;
+
+    const chunkIdx = idx >= 0 ? (wordTimings[idx]?.chunkIndex ?? 0) : 0;
+    if (chunkIdx !== activeChunkRef.current) {
+      activeChunkRef.current = chunkIdx;
+      setActiveChunkIndex(chunkIdx);
+    }
+  }, [position, wordTimings, activeIndexSV]);
+
+  const scrollToActive = useCallback((chunkIdx) => {
+    if (!flatListRef.current || chunkIdx < 0 || chunkIdx >= chunks.length) return;
+
+    // Sum the heights of all chunks before the target to get its exact Y in the content.
+    // onLayout.height is accurate; we add CHUNK_MARGIN per chunk since margin is not
+    // included in the measured height but does occupy space between items.
+    let y = CENTER_OFFSET; // ListHeaderComponent height
+    for (let i = 0; i < chunkIdx; i++) {
+      const h = chunkHeights.current[i];
+      if (h === undefined) {
+        // Chunk not rendered/measured yet — fall back to index scroll.
+        flatListRef.current.scrollToIndex({ index: chunkIdx, animated: true, viewPosition: 0.35 });
+        return;
       }
+      y += h + CHUNK_MARGIN;
+    }
+
+    flatListRef.current.scrollToOffset({
+      offset: Math.max(0, y - CENTER_OFFSET),
+      animated: true,
+    });
+  }, [chunks.length]);
+
+  // Scroll only when the active chunk changes — not on every word tick.
+  useEffect(() => {
+    if (activeChunkIndex > -1) {
+      scrollToActive(activeChunkIndex);
     }
   }, [activeChunkIndex, scrollToActive]);
 
+  const onChunkLayout = useCallback((chunkIdx, height) => {
+    chunkHeights.current[chunkIdx] = height;
+  }, []);
+
+  const [translateModal, setTranslateModal] = useState({ visible: false, text: "" });
+
+  const onChunkLongPress = useCallback((text) => {
+    setTranslateModal({ visible: true, text });
+  }, []);
+
+  const closeModal = useCallback(() => {
+    setTranslateModal({ visible: false, text: "" });
+  }, []);
+
+  // All callbacks are stable refs — renderChunk never recreates during playback.
   const renderChunk = useCallback(
-    ({ item }) => {
-      return <Chunk item={item} activeIndex={activeIndex} />;
-    },
-    [activeIndex],
+    ({ item }) => (
+      <Chunk
+        item={item}
+        activeIndexSV={activeIndexSV}
+        onLayout={onChunkLayout}
+        onLongPress={onChunkLongPress}
+      />
+    ),
+    [activeIndexSV, onChunkLayout, onChunkLongPress],
   );
 
   if (!segments || segments.length === 0) {
@@ -156,10 +213,16 @@ const TranscriptHighlighter = ({ segments }) => {
   }
 
   return (
+    <>
+    <TranslationModal
+      visible={translateModal.visible}
+      text={translateModal.text}
+      onClose={closeModal}
+    />
     <FlatList
       ref={flatListRef}
       data={chunks}
-      extraData={activeIndex}
+      // No extraData — FlatList re-renders only when activeChunkIndex (React state) changes.
       keyExtractor={(item) => item.id}
       renderItem={renderChunk}
       style={styles.container}
@@ -168,115 +231,95 @@ const TranscriptHighlighter = ({ segments }) => {
       scrollEventThrottle={16}
       initialNumToRender={10}
       maxToRenderPerBatch={5}
-      windowSize={5}
-      removeClippedSubviews={true}
+      windowSize={10}
       ListHeaderComponent={LIST_HEADER}
       ListFooterComponent={LIST_FOOTER}
       onScrollToIndexFailed={(info) => {
-        const wait = new Promise((resolve) => setTimeout(resolve, 500));
-        wait.then(() => {
-          if (flatListRef.current) {
-            flatListRef.current.scrollToIndex({
-              index: info.index,
-              animated: true,
-              viewPosition: 0.35,
-            });
-          }
+        // Fallback for the rare case a chunk isn't measured yet.
+        flatListRef.current?.scrollToOffset({
+          offset: info.averageItemLength * info.index,
+          animated: true,
         });
       }}
     />
+    </>
   );
 };
 
-// Extracted Chunk component that only re-renders if the activeIndex crosses its boundary
-const Chunk = React.memo(
-  ({ item, activeIndex }) => {
-    return (
-      <View style={styles.sentenceWrap}>
-        {item.words.map((w) => (
-          <Word key={w.globalIndex} word={w} activeIndex={activeIndex} />
-        ))}
-      </View>
-    );
-  },
-  (prevProps, nextProps) => {
-    if (prevProps.item !== nextProps.item) return false;
+// Chunk re-renders only when segments change (item ref changes).
+// During playback, all props are stable — this never re-renders.
+const Chunk = React.memo(({ item, activeIndexSV, onLayout, onLongPress }) => {
+  const text = item.words.map((w) => w.text).join("").trim();
+  return (
+    <Pressable
+      onLongPress={() => onLongPress(text)}
+      delayLongPress={400}
+      onLayout={(e) => onLayout(item.chunkIndex, e.nativeEvent.layout.height)}
+      style={styles.sentenceWrap}
+    >
+      {item.words.map((w) => (
+        <Word key={w.globalIndex} word={w} activeIndexSV={activeIndexSV} />
+      ))}
+    </Pressable>
+  );
+});
 
-    // Only check activeIndex boundaries to prevent re-renders when the tracker is far away
-    const words = prevProps.item.words;
-    if (!words || words.length === 0) return true;
+// Word drives its own color entirely on the UI thread via Reanimated.
+// React never re-renders this component during playback.
+//
+// Asymmetric timing gives the Apple Podcasts "lingering glow" feel:
+//   → active:          80ms  (snappy light-up)
+//   active → spoken:  450ms  ease-out (word fades gracefully after being spoken)
+//   other:            150ms  (seeking, skipping)
+const Word = React.memo(({ word, activeIndexSV }) => {
+  const colorState = useSharedValue(0); // 0=future, 1=spoken, 2=active
 
-    const chunkStart = words[0].globalIndex;
-    const chunkEnd = words[words.length - 1].globalIndex;
-    const prevActive = prevProps.activeIndex;
-    const nextActive = nextProps.activeIndex;
+  useAnimatedReaction(
+    () => {
+      const ai = activeIndexSV.value;
+      if (word.globalIndex === ai) return 2;
+      if (word.globalIndex < ai) return 1;
+      return 0;
+    },
+    (next, prev) => {
+      if (next === prev) return;
 
-    // If the tracker is past this chunk in both renders, it's already 'spoken' (state=1)
-    if (prevActive > chunkEnd && nextActive > chunkEnd) return true;
-    // If the tracker is before this chunk in both renders, it's fully in the 'future' (state=0)
-    if (prevActive < chunkStart && nextActive < chunkStart) return true;
-    // Exactly the same tracker index -> no change
-    if (prevActive === nextActive) return true;
+      // On first mount set the correct state instantly — no animation needed.
+      if (prev === null) {
+        colorState.value = next;
+        return;
+      }
 
-    // Otherwise, the activeIndex entered, moved inside, or left the chunk -> must re-render!
-    return false;
-  },
-);
+      if (next === 2) {
+        // → active: snap on quickly so it feels responsive
+        colorState.value = withTiming(2, { duration: 80 });
+      } else if (next === 1 && prev === 2) {
+        // active → spoken: linger bright, then ease out slowly (the "glow" effect)
+        colorState.value = withTiming(1, {
+          duration: 450,
+          easing: Easing.out(Easing.quad),
+        });
+      } else {
+        // future → spoken (seek forward) or spoken → future (seek back): quick
+        colorState.value = withTiming(next, { duration: 150 });
+      }
+    },
+  );
 
-// Extracted Word component using react-native-reanimated for 60fps native fading
-const Word = React.memo(
-  ({ word, activeIndex }) => {
-    // Determine state: 0 = future, 1 = spoken, 2 = active
-    const targetState =
-      word.globalIndex < activeIndex
-        ? 1
-        : word.globalIndex === activeIndex
-          ? 2
-          : 0;
-    const animState = useSharedValue(targetState);
+  const animatedStyle = useAnimatedStyle(() => ({
+    color: interpolateColor(
+      colorState.value,
+      [0, 1, 2],
+      [COLOR_FUTURE, COLOR_SPOKEN, COLOR_ACTIVE],
+    ),
+  }));
 
-    useEffect(() => {
-      animState.value = withTiming(targetState, {
-        duration: ANIMATION_DURATION,
-      });
-    }, [targetState, animState]);
-
-    const animatedStyle = useAnimatedStyle(() => {
-      return {
-        color: interpolateColor(
-          animState.value,
-          [0, 1, 2],
-          [COLOR_FUTURE, COLOR_SPOKEN, COLOR_ACTIVE],
-        ),
-      };
-    });
-
-    return (
-      <Animated.Text
-        style={[
-          styles.wordText,
-          animatedStyle,
-          targetState === 2 && styles.activeWeight,
-        ]}
-      >
-        {word.text}
-      </Animated.Text>
-    );
-  },
-  (prevProps, nextProps) => {
-    if (prevProps.word !== nextProps.word) return false;
-    // Only re-render if its specific target state changes
-    const getTarget = (idx) =>
-      prevProps.word.globalIndex < idx
-        ? 1
-        : prevProps.word.globalIndex === idx
-          ? 2
-          : 0;
-    return (
-      getTarget(prevProps.activeIndex) === getTarget(nextProps.activeIndex)
-    );
-  },
-);
+  return (
+    <Animated.Text selectable={false} style={[styles.wordText, animatedStyle]}>
+      {word.text}
+    </Animated.Text>
+  );
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -306,11 +349,141 @@ const styles = StyleSheet.create({
   wordText: {
     fontSize: 22,
     lineHeight: 28,
-    marginRight: 0, // Space is directly appended to wordText now
     fontWeight: "500",
   },
-  activeWeight: {
-    fontWeight: "800",
+});
+
+const TranslationModal = ({ visible, text, onClose }) => {
+  const [translation, setTranslation] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!visible || !text) return;
+    setLoading(true);
+    setTranslation("");
+    setError(false);
+
+    fetch(
+      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=es&dt=t&q=${encodeURIComponent(text)}`
+    )
+      .then((r) => r.json())
+      .then((data) => {
+        const result = data[0].map((chunk) => chunk[0]).join("");
+        setTranslation(result);
+      })
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
+  }, [visible, text]);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <Pressable style={modalStyles.backdrop} onPress={onClose}>
+        <Pressable style={modalStyles.sheet} onPress={() => {}}>
+          <View style={modalStyles.handle} />
+
+          <View style={modalStyles.langRow}>
+            <Text style={modalStyles.lang}>English</Text>
+            <Text style={modalStyles.arrow}>→</Text>
+            <Text style={modalStyles.lang}>Español</Text>
+          </View>
+
+          <Text style={modalStyles.originalText}>{text}</Text>
+
+          <View style={modalStyles.divider} />
+
+          {loading ? (
+            <ActivityIndicator color="#4a90e2" style={{ marginVertical: 16 }} />
+          ) : error ? (
+            <Text style={modalStyles.errorText}>Translation failed. Check your connection.</Text>
+          ) : (
+            <Text style={modalStyles.translatedText}>{translation}</Text>
+          )}
+
+          <TouchableOpacity style={modalStyles.closeBtn} onPress={onClose}>
+            <Text style={modalStyles.closeBtnText}>Close</Text>
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+};
+
+const modalStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "flex-end",
+  },
+  sheet: {
+    backgroundColor: "#1e1e1e",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    paddingBottom: 36,
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    backgroundColor: "#555",
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 20,
+  },
+  langRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+    gap: 12,
+  },
+  lang: {
+    color: "#4a90e2",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  arrow: {
+    color: "#555",
+    fontSize: 14,
+  },
+  originalText: {
+    color: "#888",
+    fontSize: 16,
+    lineHeight: 24,
+    marginBottom: 16,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#333",
+    marginBottom: 16,
+  },
+  translatedText: {
+    color: "#fff",
+    fontSize: 18,
+    lineHeight: 28,
+    fontWeight: "500",
+    marginBottom: 24,
+  },
+  errorText: {
+    color: "#e24a4a",
+    fontSize: 15,
+    marginBottom: 24,
+  },
+  closeBtn: {
+    alignSelf: "center",
+    paddingVertical: 10,
+    paddingHorizontal: 32,
+    backgroundColor: "#2a2a2a",
+    borderRadius: 20,
+  },
+  closeBtnText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 15,
   },
 });
 

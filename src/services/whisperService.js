@@ -41,18 +41,51 @@ export const transcribeAudio = async (audioFilePath, onProgress) => {
     console.log(`=> transcribeAudio triggered with file: ${audioFilePath}`);
     const context = await initializeWhisper();
 
-    // Native code uses FileInputStream which requires raw file paths (no file:// scheme)
     const nativePath = audioFilePath.replace('file://', '');
     console.log("=> Step 2: Starting Transcription natively on path: " + nativePath);
-    
+
+    // Progress normalization state.
+    // The native layer fires two mixed signals into the same callback:
+    //   1. Whisper C++ internal progress: 0→100% per chunk (fires many times per chunk)
+    //   2. Java chunk-completion milestone: 20%, 40%… once after each chunk finishes
+    // We detect the milestone by the drop from ≥95 to a positive non-zero value,
+    // then compute a smooth linear 0→100% across the whole file.
+    let completedChunks = 0;
+    let totalChunks = 5; // reasonable default until first milestone reveals the real count
+    let lastRaw = -1;
+
+    const normalizeProgress = (p) => {
+        // Ignore audio-decoding phase (native emits negative values during convertToDiskWav)
+        if (p < 0) return null;
+
+        // Detect Java milestone: fires after C++ reaches ~100%, drops to chunk-fraction value
+        if (lastRaw >= 95 && p > 0 && p < lastRaw) {
+            totalChunks = Math.round(100 / p);
+            completedChunks = Math.round((p / 100) * totalChunks);
+            lastRaw = p;
+            return null; // milestone handled — don't emit raw value
+        }
+
+        lastRaw = p;
+
+        // Smooth overall: completed portion + current chunk's contribution
+        return Math.min(99, Math.round(
+            (completedChunks / totalChunks) * 100 + (p / totalChunks)
+        ));
+    };
+
     try {
         const { promise } = context.transcribe(nativePath, {
             language: 'en',
-            maxLen: 1,
-            tokenTimestamps: true,
+            // No maxLen: Whisper outputs natural sentence-level segments (~200 for 1h)
+            // instead of one segment per token (~8000). Word timing is interpolated
+            // in TranscriptHighlighter so tokenTimestamps is not needed.
             onProgress: (p) => {
-                console.log(`Whisper Native Progress: ${p}%`);
-                if (onProgress) onProgress(p);
+                const smooth = normalizeProgress(p);
+                if (smooth !== null) {
+                    console.log(`Transcription progress: ${smooth}%`);
+                    if (onProgress) onProgress(smooth);
+                }
             }
         });
         

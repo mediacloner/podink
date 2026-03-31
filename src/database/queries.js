@@ -63,13 +63,16 @@ export const updateEpisodeLocalPath = async (id, localPath) => {
 
 export const saveTranscripts = async (episodeId, segments) => {
   const db = await openDatabaseContext();
-  for (const segment of segments) {
-    await db.runAsync(
-      `INSERT INTO Transcripts (episode_id, start_time, end_time, text) VALUES (?, ?, ?, ?)`,
-      [episodeId, segment.start, segment.end, segment.text]
-    );
-  }
-  await db.runAsync(`UPDATE Episodes SET has_transcript = 1 WHERE id = ?`, [episodeId]);
+  // Single transaction: all inserts commit together, ~100x faster than one await per row.
+  await db.withTransactionAsync(async () => {
+    for (const segment of segments) {
+      await db.runAsync(
+        `INSERT INTO Transcripts (episode_id, start_time, end_time, text) VALUES (?, ?, ?, ?)`,
+        [episodeId, segment.start, segment.end, segment.text]
+      );
+    }
+    await db.runAsync(`UPDATE Episodes SET has_transcript = 1 WHERE id = ?`, [episodeId]);
+  });
 };
 
 export const getTranscriptsForEpisode = async (episodeId) => {
