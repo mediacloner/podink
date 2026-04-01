@@ -194,11 +194,13 @@ const styles = StyleSheet.create({
   pill: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 5,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 20,
     backgroundColor: "rgba(79,172,254,0.10)",
+    minWidth: 112,
   },
   pillBlue: {
     borderWidth: 0.5,

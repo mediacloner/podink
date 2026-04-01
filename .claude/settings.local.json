@@ -20,7 +20,9 @@
       "Bash(grep -n \"transcribe\\\\|transcribeFile\\\\|transcribeData\" /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn/src/*.ts)",
       "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/node_modules/whisper.rn -name dr_mp3* -o -name dr_wav* -o -name *.cpp -name *audio*)",
       "Bash(ls:*)",
-      "WebFetch(domain:docs.expo.dev)"
+      "WebFetch(domain:docs.expo.dev)",
+      "Bash(npx expo:*)",
+      "Bash(npx pod-install:*)"
     ]
   }
 }

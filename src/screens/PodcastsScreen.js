@@ -1,9 +1,57 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, Image } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, PanResponder, View, Text, FlatList, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import { getPodcasts, deletePodcast } from '../database/queries';
+
+const DELETE_WIDTH = 80;
+const SWIPE_THRESHOLD = 50;
+
+const SwipeableRow = ({ children, onDelete }) => {
+    const translateX = useRef(new Animated.Value(0)).current;
+    const [open, setOpen] = useState(false);
+
+    const close = () => {
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
+        setOpen(false);
+    };
+
+    const confirmDelete = () => {
+        Animated.timing(translateX, { toValue: -400, duration: 200, useNativeDriver: true }).start(() => {
+            onDelete();
+        });
+    };
+
+    const panResponder = useRef(PanResponder.create({
+        onMoveShouldSetPanResponder: (_, g) =>
+            Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy * 1.5),
+        onPanResponderMove: (_, g) => {
+            const base = open ? -DELETE_WIDTH : 0;
+            translateX.setValue(Math.max(Math.min(base + g.dx, 0), -DELETE_WIDTH));
+        },
+        onPanResponderRelease: (_, g) => {
+            const delta = (open ? -DELETE_WIDTH : 0) + g.dx;
+            if (delta < -SWIPE_THRESHOLD) {
+                Animated.spring(translateX, { toValue: -DELETE_WIDTH, useNativeDriver: true, bounciness: 4 }).start();
+                setOpen(true);
+            } else {
+                close();
+            }
+        },
+    })).current;
+
+    return (
+        <View style={s.swipeContainer}>
+            <TouchableOpacity style={s.deleteAction} onPress={confirmDelete} activeOpacity={0.8}>
+                <Icon name="trash-2" size={20} color="#fff" />
+            </TouchableOpacity>
+            <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}>
+                {children}
+            </Animated.View>
+        </View>
+    );
+};
 
 const PodcastsScreen = () => {
     const { bottom } = useSafeAreaInsets();
@@ -19,45 +67,29 @@ const PodcastsScreen = () => {
         setPodcasts(data);
     };
 
-    const handleUnsubscribe = (podcast) => {
-        Alert.alert(
-            'Unsubscribe',
-            `Remove "${podcast.title}" and all its episodes?`,
-            [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                    text: 'Remove', style: 'destructive', onPress: async () => {
-                        await deletePodcast(podcast.feed_url);
-                        loadPodcasts();
-                    }
-                }
-            ]
-        );
+    const handleUnsubscribe = async (podcast) => {
+        await deletePodcast(podcast.feed_url);
+        loadPodcasts();
     };
 
     const renderPodcast = ({ item }) => (
-        <View style={styles.row}>
-            {item.image_url ? (
-                <Image source={{ uri: item.image_url }} style={styles.artwork} />
-            ) : (
-                <View style={[styles.artwork, styles.artworkPlaceholder]}>
-                    <Icon name="headphones" size={22} color="#3A3A3C" />
+        <SwipeableRow onDelete={() => handleUnsubscribe(item)}>
+            <View style={styles.row}>
+                {item.image_url ? (
+                    <Image source={{ uri: item.image_url }} style={styles.artwork} />
+                ) : (
+                    <View style={[styles.artwork, styles.artworkPlaceholder]}>
+                        <Icon name="headphones" size={22} color="#3A3A3C" />
+                    </View>
+                )}
+                <View style={styles.info}>
+                    <Text style={styles.podcastTitle} numberOfLines={1}>{item.title}</Text>
+                    <Text style={styles.podcastDesc} numberOfLines={2}>
+                        {item.description?.replace(/<[^>]+>/g, '') || ''}
+                    </Text>
                 </View>
-            )}
-            <View style={styles.info}>
-                <Text style={styles.podcastTitle} numberOfLines={1}>{item.title}</Text>
-                <Text style={styles.podcastDesc} numberOfLines={2}>
-                    {item.description?.replace(/<[^>]+>/g, '') || ''}
-                </Text>
             </View>
-            <TouchableOpacity
-                style={styles.removeBtn}
-                onPress={() => handleUnsubscribe(item)}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-                <Icon name="trash-2" size={17} color="#3A3A3C" />
-            </TouchableOpacity>
-        </View>
+        </SwipeableRow>
     );
 
     return (
@@ -67,7 +99,7 @@ const PodcastsScreen = () => {
                 keyExtractor={item => item.id.toString()}
                 renderItem={renderPodcast}
                 ItemSeparatorComponent={() => <View style={styles.separator} />}
-                contentContainerStyle={podcasts.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 50 }}
+                contentContainerStyle={podcasts.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 130 }}
                 ListEmptyComponent={
                     <View style={styles.empty}>
                         <View style={styles.emptyIcon}>
@@ -84,6 +116,18 @@ const PodcastsScreen = () => {
     );
 };
 
+const s = StyleSheet.create({
+    swipeContainer: { position: 'relative', overflow: 'hidden' },
+    deleteAction: {
+        position: 'absolute',
+        right: 0, top: 0, bottom: 0,
+        width: DELETE_WIDTH,
+        backgroundColor: '#FF453A',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+});
+
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#0C0C0E' },
 
@@ -92,6 +136,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 20,
         paddingVertical: 14,
+        backgroundColor: '#0C0C0E',
     },
     artwork: {
         width: 64,
@@ -104,7 +149,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    info: { flex: 1, gap: 4, marginRight: 12 },
+    info: { flex: 1, gap: 4 },
     podcastTitle: {
         fontSize: 16,
         fontWeight: '600',
@@ -114,9 +159,6 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: '#636366',
         lineHeight: 18,
-    },
-    removeBtn: {
-        padding: 4,
     },
     separator: {
         height: 0.5,
