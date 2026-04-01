@@ -37,10 +37,11 @@ export const loadEpisodeTrack = async (episode, autoPlay = true) => {
     const url = episode.is_downloaded && episode.local_audio_path ? episode.local_audio_path : episode.audio_url;
 
     const track = {
-        id: episode.id,
-        url: url,
-        title: episode.title,
-        artist: episode.podcast_title,
+        id:      episode.id,
+        url:     url,
+        title:   episode.title,
+        artist:  episode.podcast_title,
+        artwork: episode.image_url || undefined,
     };
 
     await TrackPlayer.reset();

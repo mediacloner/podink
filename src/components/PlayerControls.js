@@ -13,19 +13,9 @@ const formatTime = (seconds) => {
     return `${m}:${String(s).padStart(2, '0')}`;
 };
 
-const RATES = [1, 1.25, 1.5, 1.75, 2];
-
 const PlayerControls = () => {
     const { state: playbackState } = usePlaybackState();
     const { position, duration } = useProgress();
-    const [rateIdx, setRateIdx] = React.useState(0);
-    const rate = RATES[rateIdx];
-
-    const cycleRate = async () => {
-        const next = (rateIdx + 1) % RATES.length;
-        await TrackPlayer.setRate(RATES[next]);
-        setRateIdx(next);
-    };
 
     const togglePlayback = async () => {
         if (!playbackState) return;
@@ -62,25 +52,20 @@ const PlayerControls = () => {
 
             {/* Controls */}
             <View style={styles.controls}>
-                {/* Rate */}
-                <TouchableOpacity style={styles.rateBtn} onPress={cycleRate}>
-                    <Text style={styles.rateText}>{rate === 1 ? '1×' : `${rate}×`}</Text>
-                </TouchableOpacity>
-
                 {/* Skip back */}
                 <TouchableOpacity
                     style={styles.skipBtn}
-                    onPress={() => TrackPlayer.seekTo(Math.max(0, position - 15))}
+                    onPress={() => TrackPlayer.seekTo(Math.max(0, position - 10))}
                 >
                     <Icon name="rotate-ccw" size={28} color="#FFFFFF" />
-                    <Text style={styles.skipLabel}>15</Text>
+                    <Text style={styles.skipLabel}>10</Text>
                 </TouchableOpacity>
 
                 {/* Play / Pause */}
                 <TouchableOpacity style={styles.playBtn} onPress={togglePlayback}>
                     <Icon
                         name={isPlaying ? 'pause' : 'play'}
-                        size={28}
+                        size={34}
                         color="#0C0C0E"
                         style={isPlaying ? undefined : { marginLeft: 3 }}
                     />
@@ -89,14 +74,11 @@ const PlayerControls = () => {
                 {/* Skip forward */}
                 <TouchableOpacity
                     style={styles.skipBtn}
-                    onPress={() => TrackPlayer.seekTo(position + 15)}
+                    onPress={() => TrackPlayer.seekTo(position + 10)}
                 >
                     <Icon name="rotate-cw" size={28} color="#FFFFFF" />
-                    <Text style={styles.skipLabel}>15</Text>
+                    <Text style={styles.skipLabel}>10</Text>
                 </TouchableOpacity>
-
-                {/* Spacer to balance rate button */}
-                <View style={styles.rateSpacer} />
             </View>
         </View>
     );
@@ -131,25 +113,11 @@ const styles = StyleSheet.create({
     controls: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
+        justifyContent: 'center',
+        gap: 36,
         paddingHorizontal: 4,
         marginBottom: 12,
     },
-
-    rateBtn: {
-        width: 52,
-        height: 34,
-        borderRadius: 17,
-        backgroundColor: 'rgba(255,255,255,0.08)',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    rateText: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: '#FFFFFF',
-    },
-    rateSpacer: { width: 52 },
 
     skipBtn: {
         alignItems: 'center',
@@ -162,9 +130,9 @@ const styles = StyleSheet.create({
     },
 
     playBtn: {
-        width: 72,
-        height: 72,
-        borderRadius: 36,
+        width: 88,
+        height: 88,
+        borderRadius: 44,
         backgroundColor: '#FFFFFF',
         alignItems: 'center',
         justifyContent: 'center',

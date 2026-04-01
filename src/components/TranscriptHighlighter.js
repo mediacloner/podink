@@ -29,7 +29,7 @@ import { useProgress, usePlaybackState, State } from "react-native-track-player"
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const CONTENT_WIDTH   = SCREEN_WIDTH - 48;    // paddingHorizontal: 24 * 2
-const CENTER_OFFSET   = SCREEN_HEIGHT * 0.35; // active chunk sits 35% from top
+const CENTER_OFFSET   = SCREEN_HEIGHT * 0.45; // active chunk sits near vertical center
 const CHUNK_MARGIN    = 10;                   // matches sentenceWrap.marginBottom
 const FONT_SIZE       = 22;
 const LINE_HEIGHT     = 28;
@@ -39,9 +39,24 @@ const WORD_LEVEL_RADIUS      = 1;             // prev + current + next chunk →
 const KEYPOINT_INTERVAL_MS   = 10 * 60 * 1000;
 const KEYPOINT_HEIGHT        = 36;            // fixed — used in both layout and scroll math
 
-const COLOR_FUTURE = "#2A2A2C";
-const COLOR_SPOKEN = "#7A7A7E";
-const COLOR_ACTIVE = "#FFFFFF";
+// Dark theme (light text on dark bg) — kept for potential future use
+const DARK_FUTURE = "#28262E";
+const DARK_SPOKEN = "#78788C";
+const DARK_ACTIVE = "#FFFFFF";
+// Light theme (dark text on light bg) — Apple Podcasts system palette
+const LIGHT_FUTURE = "#D1D1D6"; // iOS gray 5 — barely-there future text
+const LIGHT_SPOKEN = "#8E8E93"; // iOS gray 2 — already-spoken text
+const LIGHT_ACTIVE = "#1C1C1E"; // iOS label    — current active word
+
+// Kept for backwards compat with default value
+const COLOR_FUTURE = DARK_FUTURE;
+const COLOR_SPOKEN = DARK_SPOKEN;
+const COLOR_ACTIVE = DARK_ACTIVE;
+
+const BG = "#0E0C13";             // very dark indigo — richer than pure black
+const VIGNETTE_STEPS = 10;
+const VIGNETTE_TOP_H = 110;
+const VIGNETTE_BOT_H = 130;
 
 const LIST_HEADER = <View style={{ height: CENTER_OFFSET }} />;
 const LIST_FOOTER = <View style={{ height: SCREEN_HEIGHT * 0.5 }} />;
@@ -76,7 +91,11 @@ function estimateChunkHeight(words) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-const TranscriptHighlighter = ({ segments }) => {
+const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) => {
+  const cFuture = textTheme === 'light' ? LIGHT_FUTURE : DARK_FUTURE;
+  const cSpoken = textTheme === 'light' ? LIGHT_SPOKEN : DARK_SPOKEN;
+  const cActive = textTheme === 'light' ? LIGHT_ACTIVE : DARK_ACTIVE;
+  const glowColor = textTheme === 'light' ? 'transparent' : 'rgba(79,172,254,0.75)';
   const { position }  = useProgress(100);
   const playbackState = usePlaybackState();
 
@@ -291,9 +310,13 @@ const TranscriptHighlighter = ({ segments }) => {
         activeIndexSV={activeIndexSV}
         isPlayingSV={isPlayingSV}
         onLongPress={onLongPress}
+        cFuture={cFuture}
+        cSpoken={cSpoken}
+        cActive={cActive}
+        glowColor={glowColor}
       />
     );
-  }, [activeChunkSV, activeIndexSV, isPlayingSV, onLongPress]);
+  }, [activeChunkSV, activeIndexSV, isPlayingSV, onLongPress, cFuture, cSpoken, cActive, glowColor]);
 
   if (!segments?.length) {
     return (
@@ -304,8 +327,9 @@ const TranscriptHighlighter = ({ segments }) => {
   }
 
   return (
-    <>
+    <View style={styles.root}>
       <TranslationModal visible={translateModal.visible} text={translateModal.text} onClose={closeModal} />
+
       <Animated.FlatList
         ref={flatListRef}
         data={displayItems}
@@ -328,7 +352,38 @@ const TranscriptHighlighter = ({ segments }) => {
         onMomentumScrollEnd={onMomentumScrollEnd}
         onScrollToIndexFailed={() => {}}
       />
-    </>
+
+      {/* Vignette fades — drawn OVER the list, pointerEvents="none" so scrolling still works */}
+      <FadeEdge height={VIGNETTE_TOP_H} position="top"    color={fadeTo} />
+      <FadeEdge height={VIGNETTE_BOT_H} position="bottom" color={fadeTo} />
+    </View>
+  );
+};
+
+// ─── FadeEdge ─────────────────────────────────────────────────────────────────
+// Simulates a linear gradient from BG → transparent using stacked Views.
+// No external library needed.
+
+const FadeEdge = ({ height, position, color = BG }) => {
+  const bands = Array.from({ length: VIGNETTE_STEPS }, (_, i) => {
+    const t = i / (VIGNETTE_STEPS - 1);
+    return position === "top" ? 1 - t : t;
+  });
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        left: 0, right: 0,
+        height,
+        ...(position === "top" ? { top: 0 } : { bottom: 0 }),
+        flexDirection: "column",
+      }}
+    >
+      {bands.map((opacity, i) => (
+        <View key={i} style={{ flex: 1, backgroundColor: color, opacity }} />
+      ))}
+    </View>
   );
 };
 
@@ -348,10 +403,13 @@ const Keypoint = React.memo(({ item }) => (
 // When activeChunkSV changes, only the 2-3 boundary chunks call runOnJS —
 // all other mounted chunks skip instantly. FlatList never drives re-renders here.
 
-const chunkEqual = (p, n) => p.item === n.item; // item is stable; all other props are SharedValues
+const chunkEqual = (p, n) =>
+  p.item === n.item &&
+  p.cFuture === n.cFuture && p.cSpoken === n.cSpoken &&
+  p.cActive === n.cActive && p.glowColor === n.glowColor;
 
 const Chunk = React.memo(
-  ({ item, activeChunkSV, activeIndexSV, isPlayingSV, onLongPress }) => {
+  ({ item, activeChunkSV, activeIndexSV, isPlayingSV, onLongPress, cFuture, cSpoken, cActive, glowColor }) => {
     const chunkIndex = item.chunkIndex;
     const text = item.words.map(w => w.text).join("").trim();
 
@@ -378,9 +436,18 @@ const Chunk = React.memo(
       >
         {isWordLevel
           ? item.words.map(w => (
-              <Word key={w.globalIndex} word={w} activeIndexSV={activeIndexSV} isPlayingSV={isPlayingSV} />
+              <Word
+                key={w.globalIndex}
+                word={w}
+                activeIndexSV={activeIndexSV}
+                isPlayingSV={isPlayingSV}
+                cFuture={cFuture}
+                cSpoken={cSpoken}
+                cActive={cActive}
+                glowColor={glowColor}
+              />
             ))
-          : <Text style={[styles.wordText, isPast ? styles.spokenText : styles.futureText]}>{text}</Text>
+          : <Text style={[styles.wordText, { color: isPast ? cSpoken : cFuture }]}>{text}</Text>
         }
       </Pressable>
     );
@@ -390,7 +457,7 @@ const Chunk = React.memo(
 
 // ─── Word ─────────────────────────────────────────────────────────────────────
 
-const Word = React.memo(({ word, activeIndexSV, isPlayingSV }) => {
+const Word = React.memo(({ word, activeIndexSV, isPlayingSV, cFuture, cSpoken, cActive, glowColor }) => {
   const colorState = useSharedValue(0); // 0 future · 1 spoken · 2 active
 
   useAnimatedReaction(
@@ -413,12 +480,8 @@ const Word = React.memo(({ word, activeIndexSV, isPlayingSV }) => {
   );
 
   const animStyle = useAnimatedStyle(() => ({
-    color: interpolateColor(colorState.value, [0, 1, 2], [COLOR_FUTURE, COLOR_SPOKEN, COLOR_ACTIVE]),
-    textShadowColor: interpolateColor(
-      colorState.value,
-      [1, 2],
-      ["transparent", "rgba(79,172,254,0.75)"],
-    ),
+    color: interpolateColor(colorState.value, [0, 1, 2], [cFuture, cSpoken, cActive]),
+    textShadowColor: interpolateColor(colorState.value, [1, 2], ["transparent", glowColor]),
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: interpolate(colorState.value, [1, 2], [0, 14], "clamp"),
   }));
@@ -433,24 +496,23 @@ const Word = React.memo(({ word, activeIndexSV, isPlayingSV }) => {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container:        { flex: 1, backgroundColor: "#0C0C0E" },
+  root:             { flex: 1, backgroundColor: "transparent" },
+  container:        { flex: 1, backgroundColor: "transparent" },
   contentContainer: { paddingHorizontal: 24 },
-  empty:            { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0C0C0E" },
-  placeholder:      { fontSize: 16, color: "#555", textAlign: "center" },
+  empty:            { flex: 1, alignItems: "center", justifyContent: "center" },
+  placeholder:      { fontSize: 16, color: "#AEAEB2", textAlign: "center" },
 
   sentenceWrap: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", marginBottom: 10 },
-  wordText:     { fontSize: 22, lineHeight: 28, fontWeight: "500" },
-  spokenText:   { color: COLOR_SPOKEN },
-  futureText:   { color: COLOR_FUTURE },
+  wordText: { fontSize: 22, lineHeight: 28, fontWeight: "500" },
 
   keypointRow:  {
     flexDirection: "row",
     alignItems:    "center",
-    height:        KEYPOINT_HEIGHT, // matches constant used in itemOffsets + itemLengths
+    height:        KEYPOINT_HEIGHT,
     marginBottom:  CHUNK_MARGIN,
   },
-  keypointLine:  { flex: 1, height: 0.5, backgroundColor: "rgba(255,255,255,0.06)" },
-  keypointLabel: { color: "#3A3A3C", fontSize: 11, fontWeight: "700", letterSpacing: 1.2, paddingHorizontal: 10 },
+  keypointLine:  { flex: 1, height: 0.5, backgroundColor: "rgba(255,255,255,0.07)" },
+  keypointLabel: { color: "#48485A", fontSize: 11, fontWeight: "700", letterSpacing: 1.2, paddingHorizontal: 10 },
 });
 
 // ─── Translation Modal ────────────────────────────────────────────────────────

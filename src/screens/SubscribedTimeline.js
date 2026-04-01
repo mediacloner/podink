@@ -24,8 +24,8 @@ const SubscribedTimeline = ({ navigation }) => {
     const [rssUrl, setRssUrl]                 = useState('');
     const [isFetching, setIsFetching]         = useState(false);
     const [isConnected, setIsConnected]       = useState(true);
-    const [downloadingId, setDownloadingId]   = useState(null);
-    const [downloadProgress, setDownloadProgress] = useState(0);
+    // { [episodeId]: progress 0-100 }  — supports concurrent downloads
+    const [downloads, setDownloads] = useState({});
     const [panelOpen, setPanelOpen]           = useState(false);
     const inputRef = useRef(null);
     const isFocused = useIsFocused();
@@ -95,17 +95,20 @@ const SubscribedTimeline = ({ navigation }) => {
         if (!episode.audio_url) return;
         const safeId   = episode.id.toString().replace(/[^a-zA-Z0-9]/g, '_');
         const filename = `episode_${safeId}.mp3`;
-        setDownloadingId(episode.id);
-        setDownloadProgress(0);
+        setDownloads(prev => ({ ...prev, [episode.id]: 0 }));
         try {
-            const localPath = await downloadAudioFile(episode.audio_url, filename, (p) => setDownloadProgress(p));
+            const localPath = await downloadAudioFile(
+                episode.audio_url,
+                filename,
+                (p) => setDownloads(prev => ({ ...prev, [episode.id]: p })),
+            );
             await updateEpisodeLocalPath(episode.id, localPath);
             loadData();
         } catch (e) {
             console.error('Download failed', e);
             Alert.alert('Error', 'Failed to download episode.');
         } finally {
-            setDownloadingId(null);
+            setDownloads(prev => { const n = { ...prev }; delete n[episode.id]; return n; });
         }
     };
 
@@ -201,11 +204,11 @@ const SubscribedTimeline = ({ navigation }) => {
                         episode={item}
                         onPress={(ep) => navigation.navigate('Player', { episode: ep })}
                         onDownload={handleDownload}
-                        isDownloading={downloadingId === item.id}
-                        downloadProgress={downloadingId === item.id ? downloadProgress : 0}
+                        isDownloading={item.id in downloads}
+                        downloadProgress={downloads[item.id] ?? 0}
                     />
                 )}
-                contentContainerStyle={episodes.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 50 }}
+                contentContainerStyle={episodes.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 130 }}
                 ListEmptyComponent={
                     <View style={styles.empty}>
                         <View style={styles.emptyIcon}>

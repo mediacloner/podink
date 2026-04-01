@@ -2,15 +2,21 @@ import { openDatabaseContext } from './db';
 
 const byDateDesc = (a, b) => new Date(b.release_date) - new Date(a.release_date);
 
+const EPISODE_WITH_IMAGE = `
+  SELECT e.*, p.image_url
+  FROM Episodes e
+  LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
+`;
+
 export const getDownloadedEpisodes = async () => {
   const db = await openDatabaseContext();
-  const rows = await db.getAllAsync('SELECT * FROM Episodes WHERE is_downloaded = 1');
+  const rows = await db.getAllAsync(`${EPISODE_WITH_IMAGE} WHERE e.is_downloaded = 1`);
   return rows.sort(byDateDesc);
 };
 
 export const getSubscribedEpisodes = async () => {
   const db = await openDatabaseContext();
-  const rows = await db.getAllAsync('SELECT * FROM Episodes');
+  const rows = await db.getAllAsync(EPISODE_WITH_IMAGE);
   return rows.sort(byDateDesc);
 };
 
@@ -85,6 +91,12 @@ export const getTranscriptsForEpisode = async (episodeId) => {
   );
 };
 
+export const deleteEpisodeTranscript = async (id) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
+  await db.runAsync(`UPDATE Episodes SET has_transcript = 0 WHERE id = ?`, [id]);
+};
+
 export const deleteEpisodeLocalData = async (id) => {
   const db = await openDatabaseContext();
   await db.runAsync(
@@ -105,7 +117,7 @@ export const savePlayPosition = async (id, positionSeconds) => {
 export const getEpisodeById = async (id) => {
   const db = await openDatabaseContext();
   return db.getFirstAsync(
-    'SELECT * FROM Episodes WHERE id = ? LIMIT 1',
+    `${EPISODE_WITH_IMAGE} WHERE e.id = ? LIMIT 1`,
     [id]
   );
 };

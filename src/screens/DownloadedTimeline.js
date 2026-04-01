@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, PanResponder, View, FlatList, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Alert, Animated, PanResponder, View, FlatList, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
-import { getDownloadedEpisodes, saveTranscripts, deleteEpisodeLocalData } from '../database/queries';
+import { getDownloadedEpisodes, saveTranscripts, deleteEpisodeLocalData, deleteEpisodeTranscript } from '../database/queries';
 import {
     initializeWhisper,
     enqueueTranscription,
@@ -16,21 +16,29 @@ import { deleteAudioFile } from '../services/downloadService';
 
 // ─── Swipeable delete row ─────────────────────────────────────────────────────
 
-const DELETE_WIDTH = 80;
-const SWIPE_THRESHOLD = 50;
+const ACTION_WIDTH  = 80;
+const THRESHOLD     = 50;
 
-const SwipeableRow = ({ children, onDelete }) => {
+// open: null | 'left' | 'right'
+const SwipeableRow = ({ children, onDelete, onRemoveTranscript }) => {
     const translateX = useRef(new Animated.Value(0)).current;
-    const [open, setOpen] = useState(false);
+    const openRef    = useRef(null); // track without re-render
 
     const close = () => {
         Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
-        setOpen(false);
+        openRef.current = null;
     };
 
-    const confirmDelete = () => {
-        Animated.timing(translateX, { toValue: -400, duration: 200, useNativeDriver: true }).start(() => {
-            onDelete();
+    const fireDelete = () => {
+        Animated.timing(translateX, { toValue: -400, duration: 200, useNativeDriver: true }).start(onDelete);
+    };
+
+    const fireRemove = () => {
+        Animated.timing(translateX, { toValue: 400, duration: 200, useNativeDriver: true }).start(() => {
+            onRemoveTranscript();
+            // snap back after removal (list will refresh)
+            translateX.setValue(0);
+            openRef.current = null;
         });
     };
 
@@ -38,14 +46,26 @@ const SwipeableRow = ({ children, onDelete }) => {
         onMoveShouldSetPanResponder: (_, g) =>
             Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy * 1.5),
         onPanResponderMove: (_, g) => {
-            const base = open ? -DELETE_WIDTH : 0;
-            translateX.setValue(Math.max(Math.min(base + g.dx, 0), -DELETE_WIDTH));
+            const base = openRef.current === 'left'  ? -ACTION_WIDTH
+                       : openRef.current === 'right' ?  ACTION_WIDTH : 0;
+            const next = base + g.dx;
+            // left swipe → delete (negative), right swipe → transcript (positive, only if available)
+            const clamped = onRemoveTranscript
+                ? Math.max(-ACTION_WIDTH, Math.min(ACTION_WIDTH, next))
+                : Math.max(-ACTION_WIDTH, Math.min(0, next));
+            translateX.setValue(clamped);
         },
         onPanResponderRelease: (_, g) => {
-            const delta = (open ? -DELETE_WIDTH : 0) + g.dx;
-            if (delta < -SWIPE_THRESHOLD) {
-                Animated.spring(translateX, { toValue: -DELETE_WIDTH, useNativeDriver: true, bounciness: 4 }).start();
-                setOpen(true);
+            const base  = openRef.current === 'left'  ? -ACTION_WIDTH
+                        : openRef.current === 'right' ?  ACTION_WIDTH : 0;
+            const delta = base + g.dx;
+
+            if (delta < -THRESHOLD) {
+                Animated.spring(translateX, { toValue: -ACTION_WIDTH, useNativeDriver: true, bounciness: 4 }).start();
+                openRef.current = 'left';
+            } else if (onRemoveTranscript && delta > THRESHOLD) {
+                Animated.spring(translateX, { toValue: ACTION_WIDTH, useNativeDriver: true, bounciness: 4 }).start();
+                openRef.current = 'right';
             } else {
                 close();
             }
@@ -54,7 +74,15 @@ const SwipeableRow = ({ children, onDelete }) => {
 
     return (
         <View style={s.swipeContainer}>
-            <TouchableOpacity style={s.deleteAction} onPress={confirmDelete} activeOpacity={0.8}>
+            {/* Left side: remove transcript (revealed on right-swipe) */}
+            {onRemoveTranscript && (
+                <TouchableOpacity style={s.transcriptAction} onPress={fireRemove} activeOpacity={0.8}>
+                    <Icon name="x-circle" size={20} color="#fff" />
+                    <Text style={s.actionLabel}>Transcript</Text>
+                </TouchableOpacity>
+            )}
+            {/* Right side: delete episode (revealed on left-swipe) */}
+            <TouchableOpacity style={s.deleteAction} onPress={fireDelete} activeOpacity={0.8}>
                 <Icon name="trash-2" size={20} color="#fff" />
             </TouchableOpacity>
             <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}>
@@ -99,26 +127,35 @@ const DownloadedTimeline = ({ navigation }) => {
     const handleTranscribe = useCallback(async (episode) => {
         if (!episode.local_audio_path) return;
 
+        const id = episode.id;
+        setProgressMap(prev => ({ ...prev, [id]: 0 }));
+
         try {
             const segments = await enqueueTranscription(
-                episode.id,
+                id,
                 episode.local_audio_path,
-                (p) => setProgressMap(prev => ({ ...prev, [episode.id]: p })),
-                ()  => setActiveId(episode.id),
+                (p) => setProgressMap(prev => ({ ...prev, [id]: p })),
+                ()  => setActiveId(id),
             );
-            await saveTranscripts(episode.id, segments);
-            setActiveId(null);
-            setProgressMap(prev => { const n = { ...prev }; delete n[episode.id]; return n; });
+            await saveTranscripts(id, segments);
             loadData();
         } catch (e) {
-            setActiveId(null);
-            setProgressMap(prev => { const n = { ...prev }; delete n[episode.id]; return n; });
             if (e.message !== 'Cancelled' && e.message !== 'Already queued') {
-                // Alert only for real failures, shown after the episode's turn
-                console.error('Transcription failed', e);
+                Alert.alert(
+                    'Transcription Failed',
+                    'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
+                );
             }
+        } finally {
+            setActiveId(prev => prev === id ? null : prev);
+            setProgressMap(prev => { const n = { ...prev }; delete n[id]; return n; });
         }
     }, []);
+
+    const handleRemoveTranscript = async (episode) => {
+        await deleteEpisodeTranscript(episode.id);
+        loadData();
+    };
 
     const handleDelete = async (episode) => {
         // Remove from queue if waiting
@@ -139,7 +176,10 @@ const DownloadedTimeline = ({ navigation }) => {
                     const progress   = progressMap[item.id] ?? 0;
 
                     return (
-                        <SwipeableRow onDelete={() => handleDelete(item)}>
+                        <SwipeableRow
+                            onDelete={() => handleDelete(item)}
+                            onRemoveTranscript={item.has_transcript ? () => handleRemoveTranscript(item) : undefined}
+                        >
                             <EpisodeItem
                                 episode={item}
                                 onPress={(ep) => navigation.navigate('Player', { episode: ep })}
@@ -151,7 +191,7 @@ const DownloadedTimeline = ({ navigation }) => {
                         </SwipeableRow>
                     );
                 }}
-                contentContainerStyle={episodes.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 50 }}
+                contentContainerStyle={episodes.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 130 }}
                 ListEmptyComponent={
                     <View style={styles.empty}>
                         <View style={styles.emptyIcon}>
@@ -173,10 +213,25 @@ const s = StyleSheet.create({
     deleteAction: {
         position: 'absolute',
         right: 0, top: 0, bottom: 0,
-        width: DELETE_WIDTH,
+        width: ACTION_WIDTH,
         backgroundColor: '#FF453A',
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    transcriptAction: {
+        position: 'absolute',
+        left: 0, top: 0, bottom: 0,
+        width: ACTION_WIDTH,
+        backgroundColor: '#636DAE',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+    },
+    actionLabel: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: '#fff',
+        letterSpacing: 0.2,
     },
 });
 
