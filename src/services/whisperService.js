@@ -4,14 +4,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureWhisperModel } from './downloadService';
 
 let whisperContext = null;
+let loadedModelType = null;
 
 export const initializeWhisper = async () => {
     console.log("=> initializeWhisper triggered");
-    // Check if context is already initialized
-    if (whisperContext) {
-        console.log("Context already exists, returning cached context");
-        return whisperContext;
-    }
 
     // Load preferred model from settings, default to 'base'
     let modelType = 'base';
@@ -20,6 +16,20 @@ export const initializeWhisper = async () => {
         if (saved) modelType = saved;
     } catch (e) {
         console.error('Failed to load preferred model', e);
+    }
+
+    // Return cached context only if it matches the currently selected model
+    if (whisperContext && loadedModelType === modelType) {
+        console.log("Context already exists for model, returning cached context");
+        return whisperContext;
+    }
+
+    // Model changed — release old context before reinitializing
+    if (whisperContext && loadedModelType !== modelType) {
+        console.log(`Model changed from ${loadedModelType} to ${modelType}, reinitializing`);
+        try { await whisperContext.release(); } catch (_) {}
+        whisperContext = null;
+        loadedModelType = null;
     }
 
     // Download or find the model locally
@@ -32,8 +42,9 @@ export const initializeWhisper = async () => {
     whisperContext = await initWhisper({
         filePath: modelFilePath.replace('file://', ''),
     });
+    loadedModelType = modelType;
     console.log(`Whisper context successfully initialized`);
-    
+
     return whisperContext;
 };
 

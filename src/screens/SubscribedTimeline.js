@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, FlatList, StyleSheet, TextInput, TouchableOpacity, Text, ActivityIndicator, Alert } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
+import { useIsFocused } from '@react-navigation/native';
 import EpisodeItem from '../components/EpisodeItem';
 import { getSubscribedEpisodes, saveEpisode, updateEpisodeLocalPath, savePodcast } from '../database/queries';
 import { downloadAudioFile } from '../services/downloadService';
@@ -11,14 +12,20 @@ const SubscribedTimeline = ({ navigation }) => {
     const [rssUrl, setRssUrl] = useState('');
     const [isFetching, setIsFetching] = useState(false);
     const [isConnected, setIsConnected] = useState(true);
+    const [downloadingId, setDownloadingId] = useState(null);
+    const [downloadProgress, setDownloadProgress] = useState(0);
+    const isFocused = useIsFocused();
 
     useEffect(() => {
-        loadData();
         const unsubscribe = NetInfo.addEventListener(state => {
             setIsConnected(state.isConnected);
         });
         return () => unsubscribe();
     }, []);
+
+    useEffect(() => {
+        if (isFocused) loadData();
+    }, [isFocused]);
 
     const loadData = async () => {
         try {
@@ -35,17 +42,21 @@ const SubscribedTimeline = ({ navigation }) => {
             return;
         }
         if (!episode.audio_url) return;
-        // Sanitize the ID to remove any slashes or URL components from the RSS GUID 
+        // Sanitize the ID to remove any slashes or URL components from the RSS GUID
         // to prevent FileSystem.downloadAsync from rejecting the filepath
         const safeId = episode.id.toString().replace(/[^a-zA-Z0-9]/g, '_');
         const filename = `episode_${safeId}.mp3`;
+        setDownloadingId(episode.id);
+        setDownloadProgress(0);
         try {
-            const localPath = await downloadAudioFile(episode.audio_url, filename);
+            const localPath = await downloadAudioFile(episode.audio_url, filename, (p) => setDownloadProgress(p));
             await updateEpisodeLocalPath(episode.id, localPath);
             loadData();
         } catch (e) {
             console.error('Download failed', e);
             Alert.alert('Error', 'Failed to download episode.');
+        } finally {
+            setDownloadingId(null);
         }
     };
 
@@ -109,10 +120,12 @@ const SubscribedTimeline = ({ navigation }) => {
                 data={episodes}
                 keyExtractor={item => item.id.toString()}
                 renderItem={({ item }) => (
-                    <EpisodeItem 
+                    <EpisodeItem
                         episode={item}
                         onPress={(ep) => navigation.navigate('Player', { episode: ep })}
                         onDownload={handleDownload}
+                        isDownloading={downloadingId === item.id}
+                        downloadProgress={downloadingId === item.id ? downloadProgress : 0}
                     />
                 )}
             />
