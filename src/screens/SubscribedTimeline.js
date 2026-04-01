@@ -1,8 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
     View, FlatList, StyleSheet, TextInput,
     TouchableOpacity, Text, ActivityIndicator, Alert,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, {
+    useSharedValue, useAnimatedStyle, withTiming, Easing,
+} from 'react-native-reanimated';
 import NetInfo from '@react-native-community/netinfo';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
@@ -11,14 +15,42 @@ import { getSubscribedEpisodes, saveEpisode, updateEpisodeLocalPath, savePodcast
 import { downloadAudioFile } from '../services/downloadService';
 import { fetchPodcastFeed } from '../api/rssParser';
 
+const PANEL_HEIGHT = 64; // inputRow height when open
+
 const SubscribedTimeline = ({ navigation }) => {
+    const { bottom } = useSafeAreaInsets();
     const [episodes, setEpisodes]             = useState([]);
     const [rssUrl, setRssUrl]                 = useState('');
     const [isFetching, setIsFetching]         = useState(false);
     const [isConnected, setIsConnected]       = useState(true);
     const [downloadingId, setDownloadingId]   = useState(null);
     const [downloadProgress, setDownloadProgress] = useState(0);
+    const [panelOpen, setPanelOpen]           = useState(false);
+    const inputRef = useRef(null);
     const isFocused = useIsFocused();
+
+    const heightSV  = useSharedValue(0);
+    const opacitySV = useSharedValue(0);
+
+    const panelStyle = useAnimatedStyle(() => ({
+        height:   heightSV.value,
+        opacity:  opacitySV.value,
+        overflow: 'hidden',
+    }));
+
+    const togglePanel = () => {
+        if (panelOpen) {
+            heightSV.value  = withTiming(0,           { duration: 220, easing: Easing.out(Easing.quad) });
+            opacitySV.value = withTiming(0,           { duration: 180 });
+            setPanelOpen(false);
+            setRssUrl('');
+        } else {
+            heightSV.value  = withTiming(PANEL_HEIGHT, { duration: 220, easing: Easing.out(Easing.quad) });
+            opacitySV.value = withTiming(1,            { duration: 220 });
+            setPanelOpen(true);
+            setTimeout(() => inputRef.current?.focus(), 240);
+        }
+    };
 
     useEffect(() => {
         const unsubscribe = NetInfo.addEventListener(state => {
@@ -30,6 +62,20 @@ const SubscribedTimeline = ({ navigation }) => {
     useEffect(() => {
         if (isFocused) loadData();
     }, [isFocused]);
+
+    useEffect(() => {
+        navigation.setOptions({
+            headerRight: () => (
+                <TouchableOpacity
+                    onPress={togglePanel}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    style={{ marginRight: 16 }}
+                >
+                    <Icon name={panelOpen ? 'x' : 'plus'} size={22} color="#4FACFE" />
+                </TouchableOpacity>
+            ),
+        });
+    }, [panelOpen]);
 
     const loadData = async () => {
         try {
@@ -88,6 +134,7 @@ const SubscribedTimeline = ({ navigation }) => {
             }
             setRssUrl('');
             loadData();
+            togglePanel();
         } catch (e) {
             Alert.alert('Error', 'Could not fetch or parse the RSS feed.');
             console.error(e);
@@ -98,38 +145,41 @@ const SubscribedTimeline = ({ navigation }) => {
 
     return (
         <View style={styles.container}>
-            {/* RSS input bar */}
-            <View style={styles.inputRow}>
-                <View style={styles.inputWrap}>
-                    <Icon name="rss" size={14} color="#636366" style={styles.inputIcon} />
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Paste RSS feed URL…"
-                        placeholderTextColor="#636366"
-                        value={rssUrl}
-                        onChangeText={setRssUrl}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        returnKeyType="go"
-                        onSubmitEditing={handleAddFeed}
-                    />
-                    {rssUrl.length > 0 && (
-                        <TouchableOpacity onPress={() => setRssUrl('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                            <Icon name="x" size={14} color="#636366" />
-                        </TouchableOpacity>
-                    )}
+            {/* Collapsible RSS input panel */}
+            <Animated.View style={[styles.inputPanel, panelStyle]}>
+                <View style={styles.inputRow}>
+                    <View style={styles.inputWrap}>
+                        <Icon name="rss" size={14} color="#636366" />
+                        <TextInput
+                            ref={inputRef}
+                            style={styles.input}
+                            placeholder="Paste RSS feed URL…"
+                            placeholderTextColor="#636366"
+                            value={rssUrl}
+                            onChangeText={setRssUrl}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            returnKeyType="go"
+                            onSubmitEditing={handleAddFeed}
+                        />
+                        {rssUrl.length > 0 && (
+                            <TouchableOpacity onPress={() => setRssUrl('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                <Icon name="x" size={14} color="#636366" />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                    <TouchableOpacity
+                        style={[styles.addBtn, (!isConnected || isFetching || !rssUrl.trim()) && styles.addBtnDisabled]}
+                        onPress={handleAddFeed}
+                        disabled={isFetching || !isConnected}
+                    >
+                        {isFetching
+                            ? <ActivityIndicator color="#fff" size="small" />
+                            : <Text style={styles.addBtnText}>Add</Text>
+                        }
+                    </TouchableOpacity>
                 </View>
-                <TouchableOpacity
-                    style={[styles.addBtn, (!isConnected || isFetching || !rssUrl.trim()) && styles.addBtnDisabled]}
-                    onPress={handleAddFeed}
-                    disabled={isFetching || !isConnected}
-                >
-                    {isFetching
-                        ? <ActivityIndicator color="#fff" size="small" />
-                        : <Text style={styles.addBtnText}>Add</Text>
-                    }
-                </TouchableOpacity>
-            </View>
+            </Animated.View>
 
             <FlatList
                 data={episodes}
@@ -143,7 +193,7 @@ const SubscribedTimeline = ({ navigation }) => {
                         downloadProgress={downloadingId === item.id ? downloadProgress : 0}
                     />
                 )}
-                contentContainerStyle={episodes.length === 0 ? { flex: 1 } : undefined}
+                contentContainerStyle={episodes.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 50 }}
                 ListEmptyComponent={
                     <View style={styles.empty}>
                         <View style={styles.emptyIcon}>
@@ -163,14 +213,17 @@ const SubscribedTimeline = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#0C0C0E' },
 
+    inputPanel: {
+        borderBottomWidth: 0.5,
+        borderBottomColor: 'rgba(255,255,255,0.07)',
+    },
     inputRow: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
         paddingVertical: 10,
         gap: 10,
-        borderBottomWidth: 0.5,
-        borderBottomColor: 'rgba(255,255,255,0.07)',
+        height: PANEL_HEIGHT,
     },
     inputWrap: {
         flex: 1,
@@ -184,7 +237,6 @@ const styles = StyleSheet.create({
         borderColor: 'rgba(255,255,255,0.08)',
         gap: 8,
     },
-    inputIcon: {},
     input: {
         flex: 1,
         color: '#FFFFFF',

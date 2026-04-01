@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import Animated, {
   Easing,
+  interpolate,
   interpolateColor,
   runOnJS,
   runOnUI,
@@ -413,6 +414,13 @@ const Word = React.memo(({ word, activeIndexSV, isPlayingSV }) => {
 
   const animStyle = useAnimatedStyle(() => ({
     color: interpolateColor(colorState.value, [0, 1, 2], [COLOR_FUTURE, COLOR_SPOKEN, COLOR_ACTIVE]),
+    textShadowColor: interpolateColor(
+      colorState.value,
+      [1, 2],
+      ["transparent", "rgba(79,172,254,0.75)"],
+    ),
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: interpolate(colorState.value, [1, 2], [0, 14], "clamp"),
   }));
 
   return (

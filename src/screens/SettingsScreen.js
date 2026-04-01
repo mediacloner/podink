@@ -3,6 +3,7 @@ import {
     Platform, View, Text, TouchableOpacity,
     StyleSheet, Alert, ActivityIndicator, ScrollView,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
 import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -19,6 +20,7 @@ const ALL_MODELS = [
 const MODELS = Platform.OS === 'android' ? ALL_MODELS.filter(m => !m.ios) : ALL_MODELS;
 
 const SettingsScreen = () => {
+    const { bottom } = useSafeAreaInsets();
     const [selectedModel, setSelectedModel]     = useState('base');
     const [isModelDownloaded, setIsModelDownloaded] = useState(false);
     const [isDownloading, setIsDownloading]     = useState(false);
@@ -81,7 +83,7 @@ const SettingsScreen = () => {
     };
 
     return (
-        <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingBottom: bottom + 58 }]}>
 
             {/* Section: Model picker */}
             <Text style={styles.sectionLabel}>TRANSCRIPTION MODEL</Text>
@@ -172,7 +174,6 @@ const SettingsScreen = () => {
                 )
             )}
 
-            <View style={{ height: 48 }} />
         </ScrollView>
     );
 };

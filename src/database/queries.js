@@ -1,15 +1,17 @@
 import { openDatabaseContext } from './db';
 
+const byDateDesc = (a, b) => new Date(b.release_date) - new Date(a.release_date);
+
 export const getDownloadedEpisodes = async () => {
   const db = await openDatabaseContext();
-  return db.getAllAsync(
-    'SELECT * FROM Episodes WHERE is_downloaded = 1 ORDER BY release_date DESC'
-  );
+  const rows = await db.getAllAsync('SELECT * FROM Episodes WHERE is_downloaded = 1');
+  return rows.sort(byDateDesc);
 };
 
 export const getSubscribedEpisodes = async () => {
   const db = await openDatabaseContext();
-  return db.getAllAsync('SELECT * FROM Episodes ORDER BY release_date DESC');
+  const rows = await db.getAllAsync('SELECT * FROM Episodes');
+  return rows.sort(byDateDesc);
 };
 
 export const saveEpisode = async (episode) => {

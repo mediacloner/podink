@@ -25,6 +25,7 @@ const EpisodeItem = ({
   transcribeProgress,
   isDownloading,
   downloadProgress,
+  isQueued,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const rotation = useSharedValue(0);
@@ -47,13 +48,14 @@ const EpisodeItem = ({
 
   return (
     <View style={styles.card}>
-      <TouchableOpacity
-        style={styles.row}
-        onPress={() => onPress(episode)}
-        activeOpacity={0.7}
-      >
-        {/* Left: info */}
-        <View style={styles.info}>
+      {/* Row: info (tap = play) + actions side by side, no nesting */}
+      <View style={styles.row}>
+        {/* Left: tap to open player */}
+        <TouchableOpacity
+          style={styles.infoTouch}
+          onPress={() => onPress(episode)}
+          activeOpacity={0.7}
+        >
           <Text style={styles.podcastLabel} numberOfLines={1}>
             {episode.podcast_title}
           </Text>
@@ -61,12 +63,12 @@ const EpisodeItem = ({
             {episode.title}
           </Text>
           <Text style={styles.date}>{formattedDate}</Text>
-        </View>
+        </TouchableOpacity>
 
-        {/* Right: actions + chevron */}
-        <View style={styles.right}>
+        {/* Right: independent action buttons — collapsable={false} prevents Android from
+            collapsing this non-touchable View, which breaks child hit-testing */}
+        <View style={styles.right} collapsable={false}>
           {!episode.is_downloaded ? (
-            /* ── Download button ── */
             <TouchableOpacity
               style={[styles.pill, styles.pillBlue, isDownloading && styles.pillDisabled]}
               onPress={() => onDownload(episode)}
@@ -83,15 +85,19 @@ const EpisodeItem = ({
               </Text>
             </TouchableOpacity>
           ) : (
-            /* ── Downloaded state ── */
             <View style={styles.downloadedCol}>
-              <View style={styles.downloadedBadge}>
+              <View style={[styles.pill, styles.pillGreen]}>
                 <Icon name="check" size={11} color="#34C759" />
-                <Text style={styles.downloadedText}>Downloaded</Text>
+                <Text style={styles.pillGreenText}>Downloaded</Text>
               </View>
 
               <View style={styles.actionRow}>
-                {onTranscribe && !episode.has_transcript ? (
+                {isQueued && !episode.has_transcript ? (
+                  <View style={[styles.pill, styles.pillQueued]}>
+                    <Icon name="clock" size={11} color="#FF9F0A" />
+                    <Text style={styles.pillQueuedText}>Queued</Text>
+                  </View>
+                ) : onTranscribe && !episode.has_transcript ? (
                   <TouchableOpacity
                     style={[styles.pill, styles.pillSolid, isTranscribing && styles.pillDisabled]}
                     onPress={() => onTranscribe(episode)}
@@ -103,9 +109,7 @@ const EpisodeItem = ({
                     }
                     <Text style={styles.pillSolidText}>
                       {isTranscribing
-                        ? transcribeProgress > 0 ? `${transcribeProgress}%`
-                          : transcribeProgress < 0 ? `${Math.abs(transcribeProgress)}%`
-                          : "…"
+                        ? transcribeProgress > 0 ? `${transcribeProgress}%` : "…"
                         : "Transcribe"}
                     </Text>
                   </TouchableOpacity>
@@ -125,7 +129,6 @@ const EpisodeItem = ({
             </View>
           )}
 
-          {/* Expand chevron */}
           <TouchableOpacity
             style={styles.chevron}
             onPress={toggleExpand}
@@ -136,7 +139,7 @@ const EpisodeItem = ({
             </Animated.View>
           </TouchableOpacity>
         </View>
-      </TouchableOpacity>
+      </View>
 
       {/* Expanded description */}
       {expanded && (
@@ -167,8 +170,8 @@ const styles = StyleSheet.create({
     gap: 14,
   },
 
-  /* Info */
-  info: { flex: 1, gap: 4 },
+  /* Info — independent touchable, no nesting */
+  infoTouch: { flex: 1, gap: 4 },
   podcastLabel: {
     fontSize: 11,
     fontWeight: "700",
@@ -205,11 +208,21 @@ const styles = StyleSheet.create({
   pillSolid: { backgroundColor: "#4FACFE" },
   pillSolidText: { fontSize: 12, fontWeight: "700", color: "#fff" },
   pillDisabled: { opacity: 0.45 },
+  pillQueued: {
+    backgroundColor: "rgba(255,159,10,0.10)",
+    borderWidth: 0.5,
+    borderColor: "rgba(255,159,10,0.25)",
+  },
+  pillQueuedText: { fontSize: 12, fontWeight: "600", color: "#FF9F0A" },
+  pillGreen: {
+    backgroundColor: "rgba(52,199,89,0.10)",
+    borderWidth: 0.5,
+    borderColor: "rgba(52,199,89,0.25)",
+  },
+  pillGreenText: { fontSize: 12, fontWeight: "600", color: "#34C759" },
 
   /* Downloaded */
   downloadedCol: { alignItems: "flex-end", gap: 8 },
-  downloadedBadge: { flexDirection: "row", alignItems: "center", gap: 4 },
-  downloadedText: { fontSize: 11, fontWeight: "600", color: "#34C759" },
   actionRow: { flexDirection: "row", alignItems: "center", gap: 8 },
 
   iconBtn: {
