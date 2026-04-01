@@ -14,6 +14,7 @@ import EpisodeItem from '../components/EpisodeItem';
 import { getSubscribedEpisodes, saveEpisode, updateEpisodeLocalPath, savePodcast } from '../database/queries';
 import { downloadAudioFile } from '../services/downloadService';
 import { fetchPodcastFeed } from '../api/rssParser';
+import { resolveToRssUrl, detectService } from '../api/podcastResolver';
 
 const PANEL_HEIGHT = 64; // inputRow height when open
 
@@ -116,18 +117,19 @@ const SubscribedTimeline = ({ navigation }) => {
         if (!rssUrl.trim()) return;
         setIsFetching(true);
         try {
-            const feedData = await fetchPodcastFeed(rssUrl.trim());
+            const rss      = await resolveToRssUrl(rssUrl);
+            const feedData = await fetchPodcastFeed(rss);
             await savePodcast({
                 title:       feedData.title,
                 description: feedData.description,
-                feed_url:    rssUrl.trim(),
+                feed_url:    rss,
                 image_url:   feedData.image,
             });
             for (const ep of feedData.episodes) {
                 await saveEpisode({
                     ...ep,
                     podcast_title:    feedData.title,
-                    podcast_feed_url: rssUrl.trim(),
+                    podcast_feed_url: rss,
                     description:      ep.description || '',
                     audio_url:        ep.enclosure,
                 });
@@ -136,7 +138,7 @@ const SubscribedTimeline = ({ navigation }) => {
             loadData();
             togglePanel();
         } catch (e) {
-            Alert.alert('Error', 'Could not fetch or parse the RSS feed.');
+            Alert.alert('Could not add podcast', e.message || 'Check the link and try again.');
             console.error(e);
         } finally {
             setIsFetching(false);
@@ -153,7 +155,7 @@ const SubscribedTimeline = ({ navigation }) => {
                         <TextInput
                             ref={inputRef}
                             style={styles.input}
-                            placeholder="Paste RSS feed URL…"
+                            placeholder="RSS, Apple Podcasts link…"
                             placeholderTextColor="#636366"
                             value={rssUrl}
                             onChangeText={setRssUrl}
@@ -162,11 +164,21 @@ const SubscribedTimeline = ({ navigation }) => {
                             returnKeyType="go"
                             onSubmitEditing={handleAddFeed}
                         />
-                        {rssUrl.length > 0 && (
-                            <TouchableOpacity onPress={() => setRssUrl('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                                <Icon name="x" size={14} color="#636366" />
-                            </TouchableOpacity>
-                        )}
+                        {rssUrl.length > 0 && (() => {
+                            const svc = detectService(rssUrl);
+                            return (
+                                <>
+                                    {svc !== 'RSS' && (
+                                        <View style={styles.serviceBadge}>
+                                            <Text style={styles.serviceBadgeText}>{svc}</Text>
+                                        </View>
+                                    )}
+                                    <TouchableOpacity onPress={() => setRssUrl('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                        <Icon name="x" size={14} color="#636366" />
+                                    </TouchableOpacity>
+                                </>
+                            );
+                        })()}
                     </View>
                     <TouchableOpacity
                         style={[styles.addBtn, (!isConnected || isFetching || !rssUrl.trim()) && styles.addBtnDisabled]}
@@ -254,6 +266,16 @@ const styles = StyleSheet.create({
     },
     addBtnDisabled: { opacity: 0.4 },
     addBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+
+    serviceBadge: {
+        backgroundColor: 'rgba(79,172,254,0.12)',
+        borderRadius: 8,
+        paddingHorizontal: 7,
+        paddingVertical: 3,
+        borderWidth: 0.5,
+        borderColor: 'rgba(79,172,254,0.25)',
+    },
+    serviceBadgeText: { fontSize: 11, fontWeight: '700', color: '#4FACFE' },
 
     empty: {
         flex: 1,
