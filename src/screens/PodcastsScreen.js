@@ -24,7 +24,7 @@ const PodcastsScreen = () => {
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                    text: 'Unsubscribe', style: 'destructive', onPress: async () => {
+                    text: 'Remove', style: 'destructive', onPress: async () => {
                         await deletePodcast(podcast.feed_url);
                         loadPodcasts();
                     }
@@ -39,15 +39,21 @@ const PodcastsScreen = () => {
                 <Image source={{ uri: item.image_url }} style={styles.artwork} />
             ) : (
                 <View style={[styles.artwork, styles.artworkPlaceholder]}>
-                    <Icon name="mic" size={24} color="#555" />
+                    <Icon name="headphones" size={22} color="#3A3A3C" />
                 </View>
             )}
             <View style={styles.info}>
                 <Text style={styles.podcastTitle} numberOfLines={1}>{item.title}</Text>
-                <Text style={styles.podcastDesc} numberOfLines={2}>{item.description?.replace(/<[^>]+>/g, '') || ''}</Text>
+                <Text style={styles.podcastDesc} numberOfLines={2}>
+                    {item.description?.replace(/<[^>]+>/g, '') || ''}
+                </Text>
             </View>
-            <TouchableOpacity style={styles.unsubBtn} onPress={() => handleUnsubscribe(item)}>
-                <Icon name="user-minus" size={18} color="#e24a4a" />
+            <TouchableOpacity
+                style={styles.removeBtn}
+                onPress={() => handleUnsubscribe(item)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+                <Icon name="trash-2" size={17} color="#3A3A3C" />
             </TouchableOpacity>
         </View>
     );
@@ -57,33 +63,92 @@ const PodcastsScreen = () => {
             <FlatList
                 data={podcasts}
                 keyExtractor={item => item.id.toString()}
-                ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Icon name="rss" size={48} color="#333" />
-                        <Text style={styles.emptyText}>No subscriptions yet</Text>
-                        <Text style={styles.emptySubText}>Add an RSS feed URL from the Timeline tab</Text>
-                    </View>
-                }
                 renderItem={renderPodcast}
                 ItemSeparatorComponent={() => <View style={styles.separator} />}
+                contentContainerStyle={podcasts.length === 0 ? { flex: 1 } : undefined}
+                ListEmptyComponent={
+                    <View style={styles.empty}>
+                        <View style={styles.emptyIcon}>
+                            <Icon name="headphones" size={28} color="#3A3A3C" />
+                        </View>
+                        <Text style={styles.emptyTitle}>No podcasts yet</Text>
+                        <Text style={styles.emptySubtitle}>
+                            Add an RSS feed from the Discover tab to subscribe
+                        </Text>
+                    </View>
+                }
             />
         </View>
     );
 };
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#121212' },
-    row: { flexDirection: 'row', alignItems: 'center', padding: 16 },
-    artwork: { width: 56, height: 56, borderRadius: 8, marginRight: 14 },
-    artworkPlaceholder: { backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' },
-    info: { flex: 1 },
-    podcastTitle: { color: '#fff', fontSize: 15, fontWeight: 'bold', marginBottom: 4 },
-    podcastDesc: { color: '#888', fontSize: 12, lineHeight: 17 },
-    unsubBtn: { padding: 10 },
-    separator: { height: 1, backgroundColor: '#222', marginLeft: 86 },
-    emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingTop: 100 },
-    emptyText: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginTop: 20 },
-    emptySubText: { color: '#888', fontSize: 14, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 }
+    container: { flex: 1, backgroundColor: '#0C0C0E' },
+
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 14,
+    },
+    artwork: {
+        width: 64,
+        height: 64,
+        borderRadius: 12,
+        marginRight: 14,
+        backgroundColor: '#1A1A1C',
+    },
+    artworkPlaceholder: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    info: { flex: 1, gap: 4, marginRight: 12 },
+    podcastTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#FFFFFF',
+    },
+    podcastDesc: {
+        fontSize: 13,
+        color: '#636366',
+        lineHeight: 18,
+    },
+    removeBtn: {
+        padding: 4,
+    },
+    separator: {
+        height: 0.5,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        marginLeft: 98,
+    },
+
+    empty: {
+        flex: 1,
+        alignItems: 'center',
+        paddingHorizontal: 40,
+        paddingTop: 80,
+    },
+    emptyIcon: {
+        width: 72,
+        height: 72,
+        backgroundColor: '#141416',
+        borderRadius: 36,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 20,
+    },
+    emptyTitle: {
+        fontSize: 20,
+        fontWeight: '700',
+        color: '#FFFFFF',
+        marginBottom: 8,
+    },
+    emptySubtitle: {
+        fontSize: 14,
+        color: '#636366',
+        textAlign: 'center',
+        lineHeight: 21,
+    },
 });
 
 export default PodcastsScreen;
