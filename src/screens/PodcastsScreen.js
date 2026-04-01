@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, Image } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import { getPodcasts, deletePodcast } from '../database/queries';
 
 const PodcastsScreen = () => {
+    const { bottom } = useSafeAreaInsets();
     const [podcasts, setPodcasts] = useState([]);
     const isFocused = useIsFocused();
 
@@ -65,7 +67,7 @@ const PodcastsScreen = () => {
                 keyExtractor={item => item.id.toString()}
                 renderItem={renderPodcast}
                 ItemSeparatorComponent={() => <View style={styles.separator} />}
-                contentContainerStyle={podcasts.length === 0 ? { flex: 1 } : undefined}
+                contentContainerStyle={podcasts.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 50 }}
                 ListEmptyComponent={
                     <View style={styles.empty}>
                         <View style={styles.emptyIcon}>

@@ -18,7 +18,7 @@ export const fetchPodcastFeed = async (url) => {
         id: item.id,
         title: item.title,
         description: item.description,
-        release_date: item.published,
+        release_date: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
         enclosure: item.enclosures && item.enclosures.length > 0 ? item.enclosures[0].url : null,
         duration: item.itunes && item.itunes.duration ? item.itunes.duration : 0,
       }))

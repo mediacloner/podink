@@ -3,127 +3,156 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureWhisperModel } from './downloadService';
 
+// ─── Whisper context singleton ────────────────────────────────────────────────
+
 let whisperContext = null;
 let loadedModelType = null;
-let initializingPromise = null; // prevents concurrent initWhisper calls
+let initializingPromise = null;
 
 const _doInit = async () => {
     let modelType = 'base';
     try {
         const saved = await AsyncStorage.getItem('@whisper_model');
         if (saved) modelType = saved;
-    } catch (e) {
-        console.error('Failed to load preferred model', e);
-    }
+    } catch (e) {}
 
-    // Q8 models are not supported on Android — fall back to base
     if (Platform.OS === 'android' && modelType.includes('q8')) {
-        console.warn(`Q8 model (${modelType}) not supported on Android, falling back to base`);
         modelType = 'base';
     }
 
-    // Return cached context only if it matches the currently selected model
-    if (whisperContext && loadedModelType === modelType) {
-        console.log("Context already exists for model, returning cached context");
-        return whisperContext;
-    }
+    if (whisperContext && loadedModelType === modelType) return whisperContext;
 
-    // Model changed — release old context before reinitializing
     if (whisperContext && loadedModelType !== modelType) {
-        console.log(`Model changed from ${loadedModelType} to ${modelType}, reinitializing`);
         try { await whisperContext.release(); } catch (_) {}
         whisperContext = null;
         loadedModelType = null;
     }
 
-    console.log(`Ensuring model exists: ${modelType}`);
     const modelFilePath = await ensureWhisperModel(modelType);
-    console.log(`Model file path resolved: ${modelFilePath}`);
-
-    console.log(`Initializing whisper context...`);
-    whisperContext = await initWhisper({
-        filePath: modelFilePath.replace('file://', ''),
-    });
+    whisperContext = await initWhisper({ filePath: modelFilePath.replace('file://', '') });
     loadedModelType = modelType;
-    console.log(`Whisper context successfully initialized`);
-
     return whisperContext;
 };
 
 export const initializeWhisper = () => {
-    console.log("=> initializeWhisper triggered");
-    // If initialization is already in progress, return the same promise so
-    // concurrent callers (pre-warm + user tap) share one initWhisper call.
     if (!initializingPromise) {
-        initializingPromise = _doInit().finally(() => {
-            initializingPromise = null;
-        });
+        initializingPromise = _doInit().finally(() => { initializingPromise = null; });
     }
     return initializingPromise;
 };
 
-export const transcribeAudio = async (audioFilePath, onProgress) => {
-    console.log(`=> transcribeAudio triggered with file: ${audioFilePath}`);
-    const context = await initializeWhisper();
+// ─── FIFO transcription queue ─────────────────────────────────────────────────
 
-    const nativePath = audioFilePath.replace('file://', '');
-    console.log("=> Step 2: Starting Transcription natively on path: " + nativePath);
+// Each entry: { id, audioFilePath, onProgress, onStart, resolve, reject }
+const _queue = [];
+let _processing = false;
 
-    // Progress normalization state.
-    // The native layer fires two mixed signals into the same callback:
-    //   1. Whisper C++ internal progress: 0→100% per chunk (fires many times per chunk)
-    //   2. Java chunk-completion milestone: 20%, 40%… once after each chunk finishes
-    // We detect the milestone by the drop from ≥95 to a positive non-zero value,
-    // then compute a smooth linear 0→100% across the whole file.
-    let completedChunks = 0;
-    let totalChunks = 5; // reasonable default until first milestone reveals the real count
-    let lastRaw = -1;
+// Listeners notified whenever queue state changes (for UI polling-free updates)
+const _listeners = new Set();
+const _notify = () => _listeners.forEach(fn => fn());
 
-    const normalizeProgress = (p) => {
-        // Ignore audio-decoding phase (native emits negative values during convertToDiskWav)
-        if (p < 0) return null;
+export const onQueueChange = (fn) => {
+    _listeners.add(fn);
+    return () => _listeners.delete(fn);
+};
 
-        // Detect Java milestone: fires after C++ reaches ~100%, drops to chunk-fraction value
-        if (lastRaw >= 95 && p > 0 && p < lastRaw) {
-            totalChunks = Math.round(100 / p);
-            completedChunks = Math.round((p / 100) * totalChunks);
-            lastRaw = p;
-            return null; // milestone handled — don't emit raw value
-        }
+/** Returns the ID that is currently being transcribed, or null. */
+export const getActiveId  = () => _processing && _queue.length > 0 ? null : (_activeId ?? null);
 
-        lastRaw = p;
+// Track the active id separately so callers can read it synchronously.
+let _activeId = null;
 
-        // Smooth overall: completed portion + current chunk's contribution
-        return Math.min(99, Math.round(
-            (completedChunks / totalChunks) * 100 + (p / totalChunks)
-        ));
-    };
+export const getQueueIds = () => _queue.map(e => e.id);
+
+const _runNext = async () => {
+    if (_processing || _queue.length === 0) return;
+    _processing = true;
+
+    const entry = _queue.shift();
+    _activeId = entry.id;
+    _notify();
+
+    if (entry.onStart) entry.onStart();
 
     try {
+        const context = await initializeWhisper();
+        const nativePath = entry.audioFilePath.replace('file://', '');
+
+        let completedChunks = 0;
+        let totalChunks = 5;
+        let lastRaw = -1;
+
+        const normalizeProgress = (p) => {
+            if (p < 0) return null;
+            if (lastRaw >= 95 && p > 0 && p < lastRaw) {
+                totalChunks = Math.round(100 / p);
+                completedChunks = Math.round((p / 100) * totalChunks);
+                lastRaw = p;
+                return null;
+            }
+            lastRaw = p;
+            return Math.min(99, Math.round((completedChunks / totalChunks) * 100 + (p / totalChunks)));
+        };
+
         const { promise } = context.transcribe(nativePath, {
             language: 'en',
-            // No maxLen: Whisper outputs natural sentence-level segments (~200 for 1h)
-            // instead of one segment per token (~8000). Word timing is interpolated
-            // in TranscriptHighlighter so tokenTimestamps is not needed.
             onProgress: (p) => {
                 const smooth = normalizeProgress(p);
-                if (smooth !== null) {
-                    console.log(`Transcription progress: ${smooth}%`);
-                    if (onProgress) onProgress(smooth);
-                }
-            }
+                if (smooth !== null && entry.onProgress) entry.onProgress(smooth);
+            },
         });
-        
-        const transcriptionResult = await promise;
-        console.log("Transcription Complete!");
-        
-        return (transcriptionResult.segments || []).map((seg) => ({
+
+        const result = await promise;
+        const segments = (result.segments || []).map(seg => ({
             start: seg.t0 * 10,
             end:   seg.t1 * 10,
             text:  seg.text,
         }));
+        entry.resolve(segments);
     } catch (e) {
-        console.error("Transcription execution failed:", e);
-        throw e;
+        entry.reject(e);
+    } finally {
+        _processing = false;
+        _activeId = null;
+        _notify();
+        _runNext();
     }
 };
+
+/**
+ * Enqueue an episode for transcription. Returns a promise that resolves with
+ * segments when this episode's turn comes and transcription completes.
+ *
+ * @param {string} id            - Unique episode ID (used for queue state tracking)
+ * @param {string} audioFilePath - Local file path
+ * @param {function} onProgress  - Called with 0-99 as transcription progresses
+ * @param {function} onStart     - Called when this item starts processing
+ */
+export const enqueueTranscription = (id, audioFilePath, onProgress, onStart) => {
+    // Don't add duplicates
+    if (_activeId === id || _queue.some(e => e.id === id)) {
+        return Promise.reject(new Error('Already queued'));
+    }
+
+    return new Promise((resolve, reject) => {
+        _queue.push({ id, audioFilePath, onProgress, onStart, resolve, reject });
+        _notify();
+        _runNext();
+    });
+};
+
+/**
+ * Remove an episode from the queue (only works if it hasn't started yet).
+ */
+export const dequeueTranscription = (id) => {
+    const idx = _queue.findIndex(e => e.id === id);
+    if (idx !== -1) {
+        _queue[idx].reject(new Error('Cancelled'));
+        _queue.splice(idx, 1);
+        _notify();
+    }
+};
+
+// Legacy export kept for any other callers
+export const transcribeAudio = (audioFilePath, onProgress) =>
+    enqueueTranscription(audioFilePath, audioFilePath, onProgress, null);
