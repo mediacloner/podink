@@ -1,21 +1,25 @@
 import { initWhisper } from 'whisper.rn';
-import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureWhisperModel } from './downloadService';
 
 let whisperContext = null;
 let loadedModelType = null;
+let initializingPromise = null; // prevents concurrent initWhisper calls
 
-export const initializeWhisper = async () => {
-    console.log("=> initializeWhisper triggered");
-
-    // Load preferred model from settings, default to 'base'
+const _doInit = async () => {
     let modelType = 'base';
     try {
         const saved = await AsyncStorage.getItem('@whisper_model');
         if (saved) modelType = saved;
     } catch (e) {
         console.error('Failed to load preferred model', e);
+    }
+
+    // Q8 models are not supported on Android — fall back to base
+    if (Platform.OS === 'android' && modelType.includes('q8')) {
+        console.warn(`Q8 model (${modelType}) not supported on Android, falling back to base`);
+        modelType = 'base';
     }
 
     // Return cached context only if it matches the currently selected model
@@ -32,12 +36,10 @@ export const initializeWhisper = async () => {
         loadedModelType = null;
     }
 
-    // Download or find the model locally
     console.log(`Ensuring model exists: ${modelType}`);
     const modelFilePath = await ensureWhisperModel(modelType);
     console.log(`Model file path resolved: ${modelFilePath}`);
 
-    // Initialize whisper context (0.5.5 API)
     console.log(`Initializing whisper context...`);
     whisperContext = await initWhisper({
         filePath: modelFilePath.replace('file://', ''),
@@ -46,6 +48,18 @@ export const initializeWhisper = async () => {
     console.log(`Whisper context successfully initialized`);
 
     return whisperContext;
+};
+
+export const initializeWhisper = () => {
+    console.log("=> initializeWhisper triggered");
+    // If initialization is already in progress, return the same promise so
+    // concurrent callers (pre-warm + user tap) share one initWhisper call.
+    if (!initializingPromise) {
+        initializingPromise = _doInit().finally(() => {
+            initializingPromise = null;
+        });
+    }
+    return initializingPromise;
 };
 
 export const transcribeAudio = async (audioFilePath, onProgress) => {
