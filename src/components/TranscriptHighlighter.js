@@ -13,6 +13,7 @@ import {
 import Animated, {
   Easing,
   interpolateColor,
+  runOnJS,
   runOnUI,
   scrollTo,
   useAnimatedReaction,
@@ -82,18 +83,21 @@ const TranscriptHighlighter = ({ segments }) => {
   const flatListRef  = useAnimatedRef();
 
 
-  // ── SharedValues (zero React re-renders) ──────────────────────────────────
+  // ── SharedValues (zero React re-renders for word highlighting) ───────────
   const activeIndexSV = useSharedValue(-1);
   const isPlayingSV   = useSharedValue(1);  // 1 = playing, 0 = paused
+  // activeChunkSV replaces both activeChunkIndex state and activeChunkRef.
+  // Each Chunk subscribes to this via useAnimatedReaction — only the 2-3 cells
+  // near the boundary call runOnJS(setter) to update their own state. FlatList
+  // never gets extraData re-renders.
+  const activeChunkSV = useSharedValue(-1);
+  const opacitySV     = useSharedValue(1);   // drives fade-out/in on seek
 
   useEffect(() => {
     isPlayingSV.value = playbackState.state === State.Playing ? 1 : 0;
   }, [playbackState.state, isPlayingSV]);
 
-  // ── React state (scroll trigger only, ~every 2-5s) ────────────────────────
-  const [activeChunkIndex, setActiveChunkIndex] = useState(-1);
-  const activeChunkRef = useRef(-1); // mirrors state — read in renderItem without closure
-  const prevChunkRef   = useRef(-1); // previous chunk — detects seek vs normal advance
+  const prevChunkRef = useRef(-1); // detects seek vs normal advance
 
   // Manual scroll detection — suppresses auto-follow while user reads ahead.
   const isUserScrollingRef   = useRef(false);
@@ -175,38 +179,9 @@ const TranscriptHighlighter = ({ segments }) => {
     return arr;
   }, [chunks]);
 
-  // ── Playback tick (100ms) ─────────────────────────────────────────────────
-
-  useEffect(() => {
-    const posMs = position * 1000 + LOOKAHEAD_MS;
-    const idx   = findActiveIndex(wordTimings, posMs);
-    activeIndexSV.value = idx;
-
-    const ci = idx >= 0 ? (wordTimings[idx]?.chunkIndex ?? 0) : -1;
-    if (ci !== activeChunkRef.current) {
-      activeChunkRef.current = ci;
-      setActiveChunkIndex(ci);
-    }
-  }, [position, wordTimings, activeIndexSV]);
-
-  // ── Scroll computation ────────────────────────────────────────────────────
-  //
-  // Use the same itemOffsets table as getItemLayout.
-  // itemOffsets[di] = content-absolute position of item di (includes LIST_HEADER).
-  // Subtracting CENTER_OFFSET gives the scrollY that places the item at 35% from top.
-  // Using the same table guarantees scroll position matches FlatList's internal layout.
-  const computeScrollY = useCallback((targetDisplayIdx) => {
-    const offset = itemOffsets[targetDisplayIdx] ?? CENTER_OFFSET;
-    return Math.max(0, offset - CENTER_OFFSET);
-  }, [itemOffsets]);
-
   // ── UI-thread scroll via Reanimated ──────────────────────────────────────
-  //
-  // Calling scrollTo() inside a worklet runs entirely on the native UI thread —
-  // no JS bridge round-trip. On Android this eliminates the jank from JS-driven
-  // scrollToOffset({ animated: true }) which goes JS → bridge → native each frame.
-  //
-  // runOnUI(fn)(args) serialises fn + args to the UI thread and executes immediately.
+
+  // Normal advance: smooth animated scroll, no opacity change.
   const triggerScroll = useCallback((y, animated) => {
     runOnUI((targetY, doAnimate) => {
       "worklet";
@@ -214,22 +189,56 @@ const TranscriptHighlighter = ({ segments }) => {
     })(y, animated);
   }, [flatListRef]);
 
-  const scrollToActive = useCallback((chunkIdx) => {
-    const di = chunkDisplayIndex[chunkIdx];
-    if (di === undefined) return;
+  // Seek (large jump): fade out → instant scroll → fade in.
+  // Runs entirely on the UI thread so there's no bridge delay between the
+  // fade-out completing and the scroll firing.
+  const triggerSeekScroll = useCallback((y) => {
+    runOnUI((targetY) => {
+      "worklet";
+      opacitySV.value = withTiming(0, { duration: 120 }, (finished) => {
+        "worklet";
+        if (finished) {
+          scrollTo(flatListRef, 0, targetY, false);
+          opacitySV.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.quad) });
+        }
+      });
+    })(y);
+  }, [flatListRef, opacitySV]);
 
-    const isSeek = Math.abs(chunkIdx - prevChunkRef.current) > 3;
-    prevChunkRef.current = chunkIdx;
+  const listAnimStyle = useAnimatedStyle(() => ({ opacity: opacitySV.value }));
 
-    // Don't fight the user reading ahead — but always honour external seeks.
-    if (isUserScrollingRef.current && !isSeek) return;
-
-    triggerScroll(computeScrollY(di), !isSeek);
-  }, [chunkDisplayIndex, computeScrollY, triggerScroll]);
-
+  // ── Playback tick (100ms) ─────────────────────────────────────────────────
+  //
+  // Single effect handles word highlighting, chunk self-updates, and scrolling.
+  // activeChunkSV drives per-Chunk useAnimatedReaction — only 2-3 boundary cells
+  // ever call runOnJS. FlatList extraData is not needed.
   useEffect(() => {
-    if (activeChunkIndex > -1) scrollToActive(activeChunkIndex);
-  }, [activeChunkIndex, scrollToActive]);
+    const posMs = position * 1000 + LOOKAHEAD_MS;
+    const idx   = findActiveIndex(wordTimings, posMs);
+    activeIndexSV.value = idx;
+
+    const ci = idx >= 0 ? (wordTimings[idx]?.chunkIndex ?? 0) : -1;
+    activeChunkSV.value = ci;
+
+    if (ci !== prevChunkRef.current) {
+      const prevCi = prevChunkRef.current;
+      prevChunkRef.current = ci;
+
+      const di = chunkDisplayIndex[ci];
+      if (di !== undefined) {
+        // itemOffsets[di] is the content-absolute offset (including LIST_HEADER).
+        // Subtracting CENTER_OFFSET positions the item at 35% from screen top —
+        // identical to what getItemLayout reports, so scroll always matches rendering.
+        const scrollY = Math.max(0, (itemOffsets[di] ?? CENTER_OFFSET) - CENTER_OFFSET);
+        const isSeek  = Math.abs(ci - prevCi) > 3;
+        if (isSeek) {
+          triggerSeekScroll(scrollY);
+        } else if (!isUserScrollingRef.current) {
+          triggerScroll(scrollY, true);
+        }
+      }
+    }
+  }, [position, wordTimings, activeIndexSV, activeChunkSV, chunkDisplayIndex, itemOffsets, triggerScroll, triggerSeekScroll]);
 
   // ── getItemLayout ─────────────────────────────────────────────────────────
   //
@@ -270,21 +279,20 @@ const TranscriptHighlighter = ({ segments }) => {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  // Stable — reads activeChunkRef (already updated before state fires).
+  // Fully stable — all deps are SharedValues or stable callbacks.
+  // FlatList never needs to re-render cells due to parent state changes.
   const renderItem = useCallback(({ item }) => {
     if (item.type === "keypoint") return <Keypoint item={item} />;
-    const dist = Math.abs(item.chunkIndex - activeChunkRef.current);
     return (
       <Chunk
         item={item}
-        isWordLevel={dist <= WORD_LEVEL_RADIUS}
-        isPast={item.chunkIndex < activeChunkRef.current}
+        activeChunkSV={activeChunkSV}
         activeIndexSV={activeIndexSV}
         isPlayingSV={isPlayingSV}
         onLongPress={onLongPress}
       />
     );
-  }, [activeIndexSV, isPlayingSV, onLongPress]);
+  }, [activeChunkSV, activeIndexSV, isPlayingSV, onLongPress]);
 
   if (!segments?.length) {
     return (
@@ -300,11 +308,10 @@ const TranscriptHighlighter = ({ segments }) => {
       <Animated.FlatList
         ref={flatListRef}
         data={displayItems}
-        extraData={activeChunkIndex}
         keyExtractor={item => item.id}
         renderItem={renderItem}
         getItemLayout={getItemLayout}
-        style={styles.container}
+        style={[styles.container, listAnimStyle]}
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
@@ -335,15 +342,33 @@ const Keypoint = React.memo(({ item }) => (
 ));
 
 // ─── Chunk ────────────────────────────────────────────────────────────────────
+//
+// Manages its own isWordLevel / isPast state via useAnimatedReaction.
+// When activeChunkSV changes, only the 2-3 boundary chunks call runOnJS —
+// all other mounted chunks skip instantly. FlatList never drives re-renders here.
 
-const chunkEqual = (p, n) =>
-  p.item        === n.item &&
-  p.isWordLevel === n.isWordLevel &&
-  p.isPast      === n.isPast;
+const chunkEqual = (p, n) => p.item === n.item; // item is stable; all other props are SharedValues
 
 const Chunk = React.memo(
-  ({ item, isWordLevel, isPast, activeIndexSV, isPlayingSV, onLongPress }) => {
+  ({ item, activeChunkSV, activeIndexSV, isPlayingSV, onLongPress }) => {
+    const chunkIndex = item.chunkIndex;
     const text = item.words.map(w => w.text).join("").trim();
+
+    const [isWordLevel, setIsWordLevel] = useState(false);
+    const [isPast,      setIsPast]      = useState(false);
+
+    useAnimatedReaction(
+      () => ({
+        wl:   Math.abs(chunkIndex - activeChunkSV.value) <= WORD_LEVEL_RADIUS,
+        past: chunkIndex < activeChunkSV.value,
+      }),
+      (next, prev) => {
+        "worklet";
+        if (!prev || next.wl !== prev.wl)     runOnJS(setIsWordLevel)(next.wl);
+        if (!prev || next.past !== prev.past)  runOnJS(setIsPast)(next.past);
+      },
+    );
+
     return (
       <Pressable
         onLongPress={() => onLongPress(text)}
@@ -413,7 +438,7 @@ const styles = StyleSheet.create({
   keypointRow:  {
     flexDirection: "row",
     alignItems:    "center",
-    height:        KEYPOINT_HEIGHT, // matches constant used in computeScrollY + itemLengths
+    height:        KEYPOINT_HEIGHT, // matches constant used in itemOffsets + itemLengths
     marginBottom:  CHUNK_MARGIN,
   },
   keypointLine:  { flex: 1, height: 1, backgroundColor: "#1e1e1e" },
