@@ -5,94 +5,175 @@ import Slider from '@react-native-community/slider';
 import { Feather as Icon } from '@expo/vector-icons';
 
 const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    if (!seconds || isNaN(seconds)) return '0:00';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${m}:${String(s).padStart(2, '0')}`;
 };
+
+const RATES = [1, 1.25, 1.5, 1.75, 2];
 
 const PlayerControls = () => {
     const { state: playbackState } = usePlaybackState();
     const { position, duration } = useProgress();
-    const [rate, setRate] = React.useState(1);
+    const [rateIdx, setRateIdx] = React.useState(0);
+    const rate = RATES[rateIdx];
 
     const cycleRate = async () => {
-        const nextRate = rate === 1 ? 1.25 : rate === 1.25 ? 1.5 : rate === 1.5 ? 2 : 1;
-        await TrackPlayer.setRate(nextRate);
-        setRate(nextRate);
+        const next = (rateIdx + 1) % RATES.length;
+        await TrackPlayer.setRate(RATES[next]);
+        setRateIdx(next);
     };
 
     const togglePlayback = async () => {
-        if (!playbackState) return; // still initialising
-        const currentTrack = await TrackPlayer.getActiveTrackIndex();
-        if (currentTrack != null) {
-            if (playbackState === State.Playing) {
-                await TrackPlayer.pause();
-            } else {
-                await TrackPlayer.play();
-            }
+        if (!playbackState) return;
+        const track = await TrackPlayer.getActiveTrackIndex();
+        if (track != null) {
+            playbackState === State.Playing
+                ? await TrackPlayer.pause()
+                : await TrackPlayer.play();
         }
     };
 
-    const skipForward = async () => {
-        await TrackPlayer.seekTo(position + 15);
-    };
-
-    const skipBackward = async () => {
-        await TrackPlayer.seekTo(Math.max(0, position - 15));
-    };
+    const isPlaying = playbackState === State.Playing;
+    const remaining = Math.max(0, duration - position);
 
     return (
         <View style={styles.container}>
-            <View style={styles.progressContainer}>
-                <Text style={styles.timeText}>{formatTime(position)}</Text>
-                <Slider
-                    style={styles.slider}
-                    minimumValue={0}
-                    maximumValue={duration}
-                    value={position}
-                    minimumTrackTintColor="#4a90e2"
-                    maximumTrackTintColor="#333"
-                    thumbTintColor="#fff"
-                    onSlidingComplete={async (value) => {
-                        await TrackPlayer.seekTo(value);
-                    }}
-                />
-                <Text style={styles.timeText}>{formatTime(duration)}</Text>
+            {/* Slider */}
+            <Slider
+                style={styles.slider}
+                minimumValue={0}
+                maximumValue={duration || 1}
+                value={position}
+                minimumTrackTintColor="#4FACFE"
+                maximumTrackTintColor="rgba(255,255,255,0.08)"
+                thumbTintColor="#FFFFFF"
+                onSlidingComplete={async (v) => { await TrackPlayer.seekTo(v); }}
+            />
+
+            {/* Time row */}
+            <View style={styles.timeRow}>
+                <Text style={styles.time}>{formatTime(position)}</Text>
+                <Text style={styles.time}>−{formatTime(remaining)}</Text>
             </View>
-            <View style={styles.controlsRow}>
-                <TouchableOpacity onPress={skipBackward} style={styles.iconButton}>
-                    <Icon name="rotate-ccw" size={24} color="#fff" />
-                    <Text style={styles.skipText}>15</Text>
+
+            {/* Controls */}
+            <View style={styles.controls}>
+                {/* Rate */}
+                <TouchableOpacity style={styles.rateBtn} onPress={cycleRate}>
+                    <Text style={styles.rateText}>{rate === 1 ? '1×' : `${rate}×`}</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={togglePlayback} style={styles.playButton}>
-                    <Icon name={playbackState === State.Playing ? 'pause' : 'play'} size={32} color="#000" />
+                {/* Skip back */}
+                <TouchableOpacity
+                    style={styles.skipBtn}
+                    onPress={() => TrackPlayer.seekTo(Math.max(0, position - 15))}
+                >
+                    <Icon name="rotate-ccw" size={28} color="#FFFFFF" />
+                    <Text style={styles.skipLabel}>15</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={skipForward} style={styles.iconButton}>
-                    <Icon name="rotate-cw" size={24} color="#fff" />
-                    <Text style={styles.skipText}>15</Text>
+                {/* Play / Pause */}
+                <TouchableOpacity style={styles.playBtn} onPress={togglePlayback}>
+                    <Icon
+                        name={isPlaying ? 'pause' : 'play'}
+                        size={28}
+                        color="#0C0C0E"
+                        style={isPlaying ? undefined : { marginLeft: 3 }}
+                    />
                 </TouchableOpacity>
 
-                <TouchableOpacity onPress={cycleRate} style={styles.rateButton}>
-                    <Text style={styles.rateText}>{rate}x</Text>
+                {/* Skip forward */}
+                <TouchableOpacity
+                    style={styles.skipBtn}
+                    onPress={() => TrackPlayer.seekTo(position + 15)}
+                >
+                    <Icon name="rotate-cw" size={28} color="#FFFFFF" />
+                    <Text style={styles.skipLabel}>15</Text>
                 </TouchableOpacity>
+
+                {/* Spacer to balance rate button */}
+                <View style={styles.rateSpacer} />
             </View>
         </View>
     );
 };
 
 const styles = StyleSheet.create({
-    container: { width: '100%', paddingHorizontal: 20 },
-    progressContainer: { flexDirection: 'row', alignItems: 'center', width: '100%', marginBottom: 15 },
-    slider: { flex: 1, height: 40, marginHorizontal: 10 },
-    timeText: { color: '#888', fontSize: 12, width: 40, textAlign: 'center' },
-    controlsRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
-    playButton: { backgroundColor: '#fff', padding: 15, borderRadius: 50, width: 64, height: 64, alignItems: 'center', justifyContent: 'center', marginHorizontal: 30 },
-    iconButton: { alignItems: 'center', justifyContent: 'center' },
-    skipText: { color: '#fff', fontSize: 10, marginTop: 4 },
-    rateButton: { position: 'absolute', right: -20, backgroundColor: '#333', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 12 },
-    rateText: { color: '#fff', fontSize: 12, fontWeight: 'bold' }
+    container: {
+        width: '100%',
+        paddingHorizontal: 20,
+        paddingTop: 4,
+    },
+
+    slider: {
+        width: '100%',
+        height: 36,
+        marginBottom: 2,
+    },
+
+    timeRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        paddingHorizontal: 4,
+        marginBottom: 20,
+    },
+    time: {
+        fontSize: 12,
+        fontWeight: '500',
+        color: '#636366',
+        fontVariant: ['tabular-nums'],
+    },
+
+    controls: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 4,
+        marginBottom: 12,
+    },
+
+    rateBtn: {
+        width: 52,
+        height: 34,
+        borderRadius: 17,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    rateText: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#FFFFFF',
+    },
+    rateSpacer: { width: 52 },
+
+    skipBtn: {
+        alignItems: 'center',
+        gap: 3,
+    },
+    skipLabel: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: '#AEAEB2',
+    },
+
+    playBtn: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        backgroundColor: '#FFFFFF',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#4FACFE',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.3,
+        shadowRadius: 16,
+        elevation: 8,
+    },
 });
 
 export default PlayerControls;

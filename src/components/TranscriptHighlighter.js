@@ -38,9 +38,9 @@ const WORD_LEVEL_RADIUS      = 1;             // prev + current + next chunk →
 const KEYPOINT_INTERVAL_MS   = 10 * 60 * 1000;
 const KEYPOINT_HEIGHT        = 36;            // fixed — used in both layout and scroll math
 
-const COLOR_FUTURE = "#303030";
-const COLOR_SPOKEN = "#888888";
-const COLOR_ACTIVE = "#ffffff";
+const COLOR_FUTURE = "#2A2A2C";
+const COLOR_SPOKEN = "#7A7A7E";
+const COLOR_ACTIVE = "#FFFFFF";
 
 const LIST_HEADER = <View style={{ height: CENTER_OFFSET }} />;
 const LIST_FOOTER = <View style={{ height: SCREEN_HEIGHT * 0.5 }} />;
@@ -425,9 +425,9 @@ const Word = React.memo(({ word, activeIndexSV, isPlayingSV }) => {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container:        { flex: 1, backgroundColor: "#0a0a0a" },
+  container:        { flex: 1, backgroundColor: "#0C0C0E" },
   contentContainer: { paddingHorizontal: 24 },
-  empty:            { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0a0a0a" },
+  empty:            { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0C0C0E" },
   placeholder:      { fontSize: 16, color: "#555", textAlign: "center" },
 
   sentenceWrap: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", marginBottom: 10 },
@@ -441,8 +441,8 @@ const styles = StyleSheet.create({
     height:        KEYPOINT_HEIGHT, // matches constant used in itemOffsets + itemLengths
     marginBottom:  CHUNK_MARGIN,
   },
-  keypointLine:  { flex: 1, height: 1, backgroundColor: "#1e1e1e" },
-  keypointLabel: { color: "#3a3a3a", fontSize: 11, fontWeight: "700", letterSpacing: 1.2, paddingHorizontal: 10 },
+  keypointLine:  { flex: 1, height: 0.5, backgroundColor: "rgba(255,255,255,0.06)" },
+  keypointLabel: { color: "#3A3A3C", fontSize: 11, fontWeight: "700", letterSpacing: 1.2, paddingHorizontal: 10 },
 });
 
 // ─── Translation Modal ────────────────────────────────────────────────────────
@@ -487,18 +487,18 @@ const TranslationModal = ({ visible, text, onClose }) => {
 };
 
 const ms = StyleSheet.create({
-  backdrop:       { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
-  sheet:          { backgroundColor: "#1e1e1e", borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 24, paddingBottom: 36 },
-  handle:         { width: 40, height: 4, backgroundColor: "#555", borderRadius: 2, alignSelf: "center", marginBottom: 20 },
+  backdrop:       { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-end" },
+  sheet:          { backgroundColor: "#141416", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40, borderTopWidth: 0.5, borderTopColor: "rgba(255,255,255,0.08)" },
+  handle:         { width: 36, height: 4, backgroundColor: "#3A3A3C", borderRadius: 2, alignSelf: "center", marginBottom: 22 },
   langRow:        { flexDirection: "row", alignItems: "center", marginBottom: 16, gap: 12 },
-  lang:           { color: "#4a90e2", fontWeight: "700", fontSize: 14 },
-  arrow:          { color: "#555", fontSize: 14 },
-  originalText:   { color: "#888", fontSize: 16, lineHeight: 24, marginBottom: 16 },
-  divider:        { height: 1, backgroundColor: "#333", marginBottom: 16 },
-  translatedText: { color: "#fff", fontSize: 18, lineHeight: 28, fontWeight: "500", marginBottom: 24 },
-  errorText:      { color: "#e24a4a", fontSize: 15, marginBottom: 24 },
-  closeBtn:       { alignSelf: "center", paddingVertical: 10, paddingHorizontal: 32, backgroundColor: "#2a2a2a", borderRadius: 20 },
-  closeBtnText:   { color: "#fff", fontWeight: "600", fontSize: 15 },
+  lang:           { color: "#4FACFE", fontWeight: "700", fontSize: 14 },
+  arrow:          { color: "#3A3A3C", fontSize: 14 },
+  originalText:   { color: "#636366", fontSize: 16, lineHeight: 24, marginBottom: 16 },
+  divider:        { height: 0.5, backgroundColor: "rgba(255,255,255,0.08)", marginBottom: 16 },
+  translatedText: { color: "#FFFFFF", fontSize: 19, lineHeight: 28, fontWeight: "600", marginBottom: 28, letterSpacing: -0.2 },
+  errorText:      { color: "#FF453A", fontSize: 15, marginBottom: 24 },
+  closeBtn:       { alignSelf: "center", paddingVertical: 11, paddingHorizontal: 36, backgroundColor: "rgba(255,255,255,0.07)", borderRadius: 22, borderWidth: 0.5, borderColor: "rgba(255,255,255,0.1)" },
+  closeBtnText:   { color: "#FFFFFF", fontWeight: "600", fontSize: 15 },
 });
 
 export default TranscriptHighlighter;

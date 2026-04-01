@@ -8,13 +8,11 @@ import {
   View,
 } from "react-native";
 import Animated, {
-  FadeInUp,
+  FadeInDown,
   FadeOut,
-  Layout,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
-  withTiming,
 } from "react-native-reanimated";
 
 const EpisodeItem = ({
@@ -32,136 +30,123 @@ const EpisodeItem = ({
   const rotation = useSharedValue(0);
 
   const toggleExpand = () => {
-    const nextExpanded = !expanded;
-    setExpanded(nextExpanded);
-    rotation.value = withSpring(nextExpanded ? 1 : 0, { damping: 15 });
+    const next = !expanded;
+    setExpanded(next);
+    rotation.value = withSpring(next ? 1 : 0, { damping: 15 });
   };
 
-  const animatedIconStyle = useAnimatedStyle(() => ({
+  const chevronStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${rotation.value * 180}deg` }],
   }));
 
+  const formattedDate = new Date(episode.release_date).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
   return (
-    <View style={styles.cardContainer}>
+    <View style={styles.card}>
       <TouchableOpacity
-        style={styles.container}
+        style={styles.row}
         onPress={() => onPress(episode)}
+        activeOpacity={0.7}
       >
-        <View style={styles.details}>
-          <Text style={styles.podcastTitle}>{episode.podcast_title}</Text>
-          <Text style={styles.title} numberOfLines={2}>
+        {/* Left: info */}
+        <View style={styles.info}>
+          <Text style={styles.podcastLabel} numberOfLines={1}>
+            {episode.podcast_title}
+          </Text>
+          <Text style={styles.episodeTitle} numberOfLines={2}>
             {episode.title}
           </Text>
-          <Text style={styles.date}>
-            {new Date(episode.release_date).toLocaleDateString()}
-          </Text>
+          <Text style={styles.date}>{formattedDate}</Text>
         </View>
-        <View style={styles.actions}>
+
+        {/* Right: actions + chevron */}
+        <View style={styles.right}>
           {!episode.is_downloaded ? (
+            /* ── Download button ── */
             <TouchableOpacity
-              style={[styles.actionBtn, isDownloading && styles.disabledBtn]}
+              style={[styles.pill, styles.pillBlue, isDownloading && styles.pillDisabled]}
               onPress={() => onDownload(episode)}
               disabled={isDownloading}
             >
-              {isDownloading ? (
-                <ActivityIndicator size="small" color="#fff" style={styles.iconSpaced} />
-              ) : (
-                <Icon name="download" size={16} color="#fff" style={styles.iconSpaced} />
-              )}
-              <Text style={styles.btnText}>
+              {isDownloading
+                ? <ActivityIndicator size="small" color="#4FACFE" style={{ width: 13 }} />
+                : <Icon name="arrow-down-circle" size={13} color="#4FACFE" />
+              }
+              <Text style={styles.pillBlueText}>
                 {isDownloading
-                  ? downloadProgress > 0
-                    ? `Downloading ${Math.round(downloadProgress)}%`
-                    : 'Downloading...'
-                  : 'Download'}
+                  ? downloadProgress > 0 ? `${Math.round(downloadProgress)}%` : "…"
+                  : "Download"}
               </Text>
             </TouchableOpacity>
           ) : (
-            <View style={styles.downloadedActions}>
-              <View style={styles.badgeRow}>
-                <Icon
-                  name="check-circle"
-                  size={14}
-                  color="#4ae26d"
-                  style={styles.iconSpaced}
-                />
-                <Text style={styles.downloadedBadge}>Downloaded</Text>
+            /* ── Downloaded state ── */
+            <View style={styles.downloadedCol}>
+              <View style={styles.downloadedBadge}>
+                <Icon name="check" size={11} color="#34C759" />
+                <Text style={styles.downloadedText}>Downloaded</Text>
               </View>
-              <View style={styles.btnRow}>
+
+              <View style={styles.actionRow}>
                 {onTranscribe && !episode.has_transcript ? (
                   <TouchableOpacity
-                    style={[
-                      styles.actionBtn,
-                      styles.transcribeBtn,
-                      isTranscribing && styles.disabledBtn,
-                    ]}
+                    style={[styles.pill, styles.pillSolid, isTranscribing && styles.pillDisabled]}
                     onPress={() => onTranscribe(episode)}
                     disabled={!!isTranscribing}
                   >
-                    {isTranscribing ? (
-                      <ActivityIndicator
-                        size="small"
-                        color="#fff"
-                        style={styles.iconSpaced}
-                      />
-                    ) : (
-                      <Icon
-                        name="file-text"
-                        size={14}
-                        color="#fff"
-                        style={styles.iconSpaced}
-                      />
-                    )}
-                    <Text style={styles.btnText}>
+                    {isTranscribing
+                      ? <ActivityIndicator size="small" color="#fff" style={{ width: 13 }} />
+                      : <Icon name="zap" size={13} color="#fff" />
+                    }
+                    <Text style={styles.pillSolidText}>
                       {isTranscribing
-                        ? transcribeProgress > 0
-                          ? `Transcribing ${transcribeProgress}%`
-                          : transcribeProgress < 0
-                            ? `Converting ${Math.abs(transcribeProgress)}%`
-                            : "Transcribing..."
+                        ? transcribeProgress > 0 ? `${transcribeProgress}%`
+                          : transcribeProgress < 0 ? `${Math.abs(transcribeProgress)}%`
+                          : "…"
                         : "Transcribe"}
                     </Text>
                   </TouchableOpacity>
-                ) : (
-                  <View style={styles.transcriptBadge}>
-                    <Icon
-                      name="align-left"
-                      size={12}
-                      color="#4a90e2"
-                      style={styles.iconSpaced}
-                    />
-                    <Text style={styles.transcriptBadgeText}>
-                      Transcript Ready
-                    </Text>
+                ) : episode.has_transcript ? (
+                  <View style={styles.pill}>
+                    <Icon name="align-left" size={11} color="#4FACFE" />
+                    <Text style={styles.pillBlueText}>Transcript</Text>
                   </View>
-                )}
+                ) : null}
+
                 {onDelete && (
-                  <TouchableOpacity
-                    style={[styles.actionBtn, styles.deleteBtn]}
-                    onPress={() => onDelete(episode)}
-                  >
-                    <Icon name="trash-2" size={14} color="#fff" />
+                  <TouchableOpacity style={styles.iconBtn} onPress={() => onDelete(episode)}>
+                    <Icon name="trash-2" size={15} color="#3A3A3C" />
                   </TouchableOpacity>
                 )}
               </View>
             </View>
           )}
+
+          {/* Expand chevron */}
+          <TouchableOpacity
+            style={styles.chevron}
+            onPress={toggleExpand}
+            hitSlop={{ top: 8, bottom: 8, left: 10, right: 10 }}
+          >
+            <Animated.View style={chevronStyle}>
+              <Icon name="chevron-down" size={16} color="#3A3A3C" />
+            </Animated.View>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.expandBtn} onPress={toggleExpand}>
-          <Animated.View style={animatedIconStyle}>
-            <Icon name="chevron-down" size={20} color="#888" />
-          </Animated.View>
-        </TouchableOpacity>
       </TouchableOpacity>
+
+      {/* Expanded description */}
       {expanded && (
         <Animated.View
-          entering={FadeInUp.duration(300)}
-          exiting={FadeOut.duration(200)}
-          style={styles.expandedContent}
+          entering={FadeInDown.duration(200)}
+          exiting={FadeOut.duration(150)}
+          style={styles.description}
         >
           <Text style={styles.descriptionText}>
-            {episode.description?.replace(/<[^>]+>/g, "") ||
-              "No description available."}
+            {episode.description?.replace(/<[^>]+>/g, "") || "No description available."}
           </Text>
         </Animated.View>
       )}
@@ -170,50 +155,75 @@ const EpisodeItem = ({
 };
 
 const styles = StyleSheet.create({
-  cardContainer: { borderBottomWidth: 1, borderBottomColor: "#333" },
-  container: {
-    padding: 16,
-    paddingRight: 10,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+  card: {
+    borderBottomWidth: 0.5,
+    borderBottomColor: "rgba(255,255,255,0.06)",
+    backgroundColor: "#0C0C0E",
   },
-  details: { flex: 1, paddingRight: 10 },
-  podcastTitle: { fontSize: 12, color: "#aaa", marginBottom: 4 },
-  title: { fontSize: 16, fontWeight: "bold", color: "#fff", marginBottom: 4 },
-  date: { fontSize: 12, color: "#888" },
-  actions: { alignItems: "flex-end", justifyContent: "center" },
-  actionBtn: {
-    backgroundColor: "#4a90e2",
-    padding: 8,
-    borderRadius: 5,
-    marginTop: 4,
+  row: {
     flexDirection: "row",
-    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    gap: 14,
   },
-  transcribeBtn: { backgroundColor: "#e24a4a", marginRight: 8 },
-  deleteBtn: { backgroundColor: "#333" },
-  downloadedActions: { alignItems: "flex-end" },
-  badgeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 4,
-    marginBottom: 4,
+
+  /* Info */
+  info: { flex: 1, gap: 4 },
+  podcastLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#4FACFE",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
-  btnRow: { flexDirection: "row", alignItems: "center" },
-  downloadedBadge: { color: "#4ae26d", fontSize: 12 },
-  btnText: { color: "#fff", fontSize: 12, fontWeight: "bold" },
-  iconSpaced: { marginRight: 4 },
-  expandBtn: { padding: 10 },
-  expandedContent: { paddingHorizontal: 16, paddingBottom: 16, paddingTop: 4 },
-  descriptionText: { color: "#ccc", fontSize: 13, lineHeight: 20 },
-  disabledBtn: { opacity: 0.6 },
-  transcriptBadge: {
+  episodeTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#FFFFFF",
+    lineHeight: 21,
+  },
+  date: { fontSize: 12, color: "#636366" },
+
+  /* Right column */
+  right: { alignItems: "flex-end", justifyContent: "space-between", minWidth: 90 },
+
+  /* Pills */
+  pill: {
     flexDirection: "row",
     alignItems: "center",
-    marginRight: 8,
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: "rgba(79,172,254,0.10)",
   },
-  transcriptBadgeText: { color: "#4a90e2", fontSize: 12, fontWeight: "bold" },
+  pillBlue: {
+    borderWidth: 0.5,
+    borderColor: "rgba(79,172,254,0.25)",
+  },
+  pillBlueText: { fontSize: 12, fontWeight: "600", color: "#4FACFE" },
+  pillSolid: { backgroundColor: "#4FACFE" },
+  pillSolidText: { fontSize: 12, fontWeight: "700", color: "#fff" },
+  pillDisabled: { opacity: 0.45 },
+
+  /* Downloaded */
+  downloadedCol: { alignItems: "flex-end", gap: 8 },
+  downloadedBadge: { flexDirection: "row", alignItems: "center", gap: 4 },
+  downloadedText: { fontSize: 11, fontWeight: "600", color: "#34C759" },
+  actionRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+
+  iconBtn: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  chevron: { marginTop: 10 },
+
+  /* Description */
+  description: { paddingHorizontal: 20, paddingBottom: 16 },
+  descriptionText: { fontSize: 13, color: "#AEAEB2", lineHeight: 20 },
 });
 
 export default EpisodeItem;
