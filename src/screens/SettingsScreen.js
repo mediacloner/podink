@@ -1,16 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import { Platform, View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, ScrollView } from 'react-native';
 import { File, Paths } from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { downloadAudioFile } from '../services/downloadService';
 
-const MODELS = [
+const ALL_MODELS = [
     { id: 'tiny',        name: 'Tiny',      size: '~39 MB',  desc: 'Fastest transcription, average accuracy.' },
-    { id: 'base',        name: 'Base',      size: '~74 MB',  desc: 'Good balance of speed and accuracy.' },
-    { id: 'base.q8_0',   name: 'Base Q8',   size: '~39 MB',  desc: 'Same quality as Base, ~2× faster. Best for most podcasts.', recommended: true },
+    { id: 'base',        name: 'Base',      size: '~74 MB',  desc: 'Good balance of speed and accuracy.', recommended: true },
+    { id: 'base.q8_0',   name: 'Base Q8',   size: '~39 MB',  desc: 'Same quality as Base, ~2× faster.', ios: true },
     { id: 'small',       name: 'Small',     size: '~241 MB', desc: 'Peak accuracy, slow on device.' },
-    { id: 'small.q8_0',  name: 'Small Q8',  size: '~120 MB', desc: 'Same quality as Small, ~2× faster.' },
+    { id: 'small.q8_0',  name: 'Small Q8',  size: '~120 MB', desc: 'Same quality as Small, ~2× faster.', ios: true },
 ];
+
+// Q8 quantized models are not supported by the Android native build of whisper.rn
+const MODELS = Platform.OS === 'android'
+    ? ALL_MODELS.filter(m => !m.ios)
+    : ALL_MODELS;
 
 const SettingsScreen = () => {
     const [selectedModel, setSelectedModel] = useState('base');
