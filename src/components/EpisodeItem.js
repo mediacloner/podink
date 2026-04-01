@@ -25,6 +25,8 @@ const EpisodeItem = ({
   onDelete,
   isTranscribing,
   transcribeProgress,
+  isDownloading,
+  downloadProgress,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const rotation = useSharedValue(0);
@@ -57,16 +59,22 @@ const EpisodeItem = ({
         <View style={styles.actions}>
           {!episode.is_downloaded ? (
             <TouchableOpacity
-              style={styles.actionBtn}
+              style={[styles.actionBtn, isDownloading && styles.disabledBtn]}
               onPress={() => onDownload(episode)}
+              disabled={isDownloading}
             >
-              <Icon
-                name="download"
-                size={16}
-                color="#fff"
-                style={styles.iconSpaced}
-              />
-              <Text style={styles.btnText}>Download</Text>
+              {isDownloading ? (
+                <ActivityIndicator size="small" color="#fff" style={styles.iconSpaced} />
+              ) : (
+                <Icon name="download" size={16} color="#fff" style={styles.iconSpaced} />
+              )}
+              <Text style={styles.btnText}>
+                {isDownloading
+                  ? downloadProgress > 0
+                    ? `Downloading ${Math.round(downloadProgress)}%`
+                    : 'Downloading...'
+                  : 'Download'}
+              </Text>
             </TouchableOpacity>
           ) : (
             <View style={styles.downloadedActions}>
@@ -110,7 +118,7 @@ const EpisodeItem = ({
                           ? `Transcribing ${transcribeProgress}%`
                           : transcribeProgress < 0
                             ? `Converting ${Math.abs(transcribeProgress)}%`
-                            : "Converting..."
+                            : "Transcribing..."
                         : "Transcribe"}
                     </Text>
                   </TouchableOpacity>

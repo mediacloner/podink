@@ -4,7 +4,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { useIsFocused } from '@react-navigation/native';
 import EpisodeItem from '../components/EpisodeItem';
 import { getDownloadedEpisodes, saveTranscripts, deleteEpisodeLocalData } from '../database/queries';
-import { transcribeAudio } from '../services/whisperService';
+import { transcribeAudio, initializeWhisper } from '../services/whisperService';
 import { deleteAudioFile } from '../services/downloadService';
 
 const DownloadedTimeline = ({ navigation }) => {
@@ -14,7 +14,11 @@ const DownloadedTimeline = ({ navigation }) => {
     const isFocused = useIsFocused();
 
     useEffect(() => {
-        if (isFocused) loadData();
+        if (isFocused) {
+            loadData();
+            // Pre-warm the whisper context so model is loaded before user taps Transcribe
+            initializeWhisper().catch(() => {});
+        }
     }, [isFocused]);
 
     const loadData = async () => {
