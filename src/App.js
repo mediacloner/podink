@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, LogBox, StyleSheet } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -8,6 +8,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 
 import { initDB } from './database/db';
+import AppAlert, { setAlertRef } from './components/AppAlert';
 import { setupPlayer, onUserPlay, onUserStop } from './services/trackPlayer';
 import { restoreQueue } from './services/whisperService';
 import { getTotalNewEpisodesCount } from './database/queries';
@@ -122,6 +123,9 @@ const TabNavigator = ({ navigation }) => {
 };
 
 const App = () => {
+    const alertRef = useRef();
+    useEffect(() => { setAlertRef(alertRef.current); }, []);
+
     useEffect(() => {
         initDB().then(() => {
             console.log('Database Initialized');
@@ -132,6 +136,7 @@ const App = () => {
 
     return (
         <SafeAreaProvider>
+            <AppAlert ref={alertRef} />
             <NavigationContainer theme={appTheme}>
                 <Stack.Navigator screenOptions={{ headerShown: false }}>
                     <Stack.Screen

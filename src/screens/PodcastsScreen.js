@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Alert, Animated, PanResponder,
+    Animated, PanResponder,
     View, Text, FlatList, TouchableOpacity, StyleSheet, Image,
 } from 'react-native';
 import ReAnimated, { FadeInDown, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
+import { showAlert } from '../components/AppAlert';
 import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
 import {
@@ -153,7 +154,7 @@ const PodcastsScreen = ({ navigation }) => {
 
     const handleDownload = useCallback(async (episode) => {
         if (!isConnected) {
-            Alert.alert('Offline', 'You need an internet connection to download episodes.');
+            showAlert('Offline', 'You need an internet connection to download episodes.');
             return;
         }
         if (!episode.audio_url) return;
@@ -168,7 +169,7 @@ const PodcastsScreen = ({ navigation }) => {
             await updateEpisodeLocalPath(episode.id, localPath);
             await refreshEpisodesFor(episode.podcast_feed_url);
         } catch (e) {
-            Alert.alert('Error', 'Failed to download episode.');
+            showAlert('Error', 'Failed to download episode.');
         } finally {
             setDownloads(prev => { const n = { ...prev }; delete n[episode.id]; return n; });
         }
@@ -188,7 +189,7 @@ const PodcastsScreen = ({ navigation }) => {
             await refreshEpisodesFor(episode.podcast_feed_url);
         } catch (e) {
             if (e.message !== 'Cancelled' && e.message !== 'Already queued') {
-                Alert.alert('Transcription Failed', 'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.');
+                showAlert('Transcription Failed', 'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.');
             }
         } finally {
             setActiveId(prev => prev === id ? null : prev);

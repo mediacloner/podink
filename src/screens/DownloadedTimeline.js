@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, PanResponder, View, FlatList, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Animated, PanResponder, View, FlatList, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { showAlert } from '../components/AppAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
@@ -152,7 +153,7 @@ const DownloadedTimeline = ({ navigation }) => {
             loadData();
         } catch (e) {
             if (e.message !== 'Cancelled' && e.message !== 'Already queued') {
-                Alert.alert(
+                showAlert(
                     'Transcription Failed',
                     'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
                 );

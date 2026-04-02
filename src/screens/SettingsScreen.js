@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Platform, View, Text, TouchableOpacity,
-    StyleSheet, Alert, ActivityIndicator, ScrollView,
+    StyleSheet, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { File, Paths } from 'expo-file-system';
@@ -9,6 +9,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { downloadAudioFile } from '../services/downloadService';
 import { resetService } from '../services/whisperService';
+import { showAlert } from '../components/AppAlert';
 
 const ALL_MODELS = [
     { id: 'tiny',       name: 'Tiny',     size: '39 MB',  desc: 'Fastest, lower accuracy' },
@@ -58,16 +59,16 @@ const SettingsScreen = () => {
         try {
             await downloadAudioFile(url, fileName, (p) => setDownloadProgress(p));
             setIsModelDownloaded(true);
-            Alert.alert('Done', `${selectedModel} model is ready.`);
+            showAlert('Done', `${selectedModel} model is ready.`);
         } catch {
-            Alert.alert('Download Failed', 'Check your connection and try again.');
+            showAlert('Download Failed', 'Check your connection and try again.');
         } finally {
             setIsDownloading(false);
         }
     };
 
     const handleResetQueue = () => {
-        Alert.alert(
+        showAlert(
             'Reset Transcription Queue',
             'This will cancel all pending and active transcriptions and clear the queue. Use this if the service appears stuck.',
             [
@@ -75,7 +76,7 @@ const SettingsScreen = () => {
                 {
                     text: 'Reset', style: 'destructive', onPress: async () => {
                         await resetService();
-                        Alert.alert('Done', 'Transcription queue has been cleared.');
+                        showAlert('Done', 'Transcription queue has been cleared.');
                     },
                 },
             ],
@@ -83,7 +84,7 @@ const SettingsScreen = () => {
     };
 
     const handleDelete = () => {
-        Alert.alert(
+        showAlert(
             'Delete Model',
             `Remove the ${selectedModel} model from your device?`,
             [
