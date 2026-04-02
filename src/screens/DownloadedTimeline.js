@@ -102,10 +102,22 @@ const DownloadedTimeline = ({ navigation }) => {
     const [progressMap, setProgressMap]   = useState({}); // { [id]: 0-99 }
     const isFocused = useIsFocused();
 
-    // Sync queue state from the service
+    // Sync queue state from the service.
+    // We also reload the episode list when queue shrinks (transcription completed)
+    // so the transcript badge appears without requiring a manual screen refresh.
+    // This is especially important for items restored from a previous session,
+    // which don't have UI callbacks attached.
+    const prevQueueLenRef = useRef(0);
     const syncQueue = useCallback(() => {
-        setQueuedIds(getQueueIds());
-    }, []);
+        const ids = getQueueIds();
+        const prevLen = prevQueueLenRef.current;
+        prevQueueLenRef.current = ids.length;
+        setQueuedIds(ids);
+        if (ids.length < prevLen) {
+            // An item left the queue — reload so has_transcript flag is current
+            loadData();
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         const unsub = onQueueChange(syncQueue);
