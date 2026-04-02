@@ -65,6 +65,9 @@ const _doInit = async () => {
         modelType = 'base';
     }
 
+    // Bail immediately if an abort was requested while we were waiting to init
+    if (_abortCurrent) throw new Error('Cancelled');
+
     // Already loaded with the right model — reuse it
     if (whisperContext && loadedModelType === modelType) return whisperContext;
 
@@ -162,6 +165,9 @@ export const onQueueChange = (fn) => {
 
 /** Returns the ID that is currently being transcribed, or null. */
 export const getActiveId = () => _activeId;
+
+/** Returns the ID currently being aborted (cancel in progress), or null. */
+export const getAbortingId = () => (_abortCurrent ? _activeId : null);
 
 export const getQueueIds = () => _queue.map(e => e.id);
 
@@ -368,6 +374,7 @@ export const dequeueTranscription = (id) => {
         _abortCurrent = true; // suppress retries for this abort
         _currentStop();
         _currentStop = null;
+        _notify(); // let UI know abort started so it can clear the active state immediately
         // _runNext's catch block will handle cleanup and reject the promise
     }
 };

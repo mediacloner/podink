@@ -12,6 +12,8 @@ import {
     dequeueTranscription,
     onQueueChange,
     getQueueIds,
+    getActiveId,
+    getAbortingId,
 } from '../services/whisperService';
 import { deleteAudioFile } from '../services/downloadService';
 
@@ -108,14 +110,20 @@ const DownloadedTimeline = ({ navigation }) => {
     // so the transcript badge appears without requiring a manual screen refresh.
     // This is especially important for items restored from a previous session,
     // which don't have UI callbacks attached.
-    const prevQueueLenRef = useRef(0);
+    const prevQueueLenRef  = useRef(0);
+    const prevActiveIdRef  = useRef(null);
     const syncQueue = useCallback(() => {
-        const ids = getQueueIds();
-        const prevLen = prevQueueLenRef.current;
+        const ids       = getQueueIds();
+        const curActive = getActiveId();
+        const prevLen    = prevQueueLenRef.current;
+        const prevActive = prevActiveIdRef.current;
         prevQueueLenRef.current = ids.length;
+        prevActiveIdRef.current = curActive;
         setQueuedIds(ids);
-        if (ids.length < prevLen) {
-            // An item left the queue — reload so has_transcript flag is current
+        // Do NOT touch activeId here — it conflicts with handleCancel's immediate
+        // clear and the onStart callback. activeId is owned by those two,
+        // plus the focus-time sync below for screen remount recovery.
+        if (ids.length < prevLen || (prevActive !== null && curActive === null)) {
             loadData();
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -129,8 +137,13 @@ const DownloadedTimeline = ({ navigation }) => {
         if (isFocused) {
             loadData();
             initializeWhisper().catch(() => {});
+            // Recover activeId if screen was remounted while a transcription was running.
+            // Suppress if the active item is being aborted (getAbortingId matches).
+            const svcActive = getActiveId();
+            setActiveId(svcActive !== null && getAbortingId() !== svcActive ? svcActive : null);
+            syncQueue();
         }
-    }, [isFocused]);
+    }, [isFocused, syncQueue]);
 
     const loadData = async () => {
         const data = await getDownloadedEpisodes();
