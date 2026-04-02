@@ -293,9 +293,15 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
 
   // ── Translation modal ─────────────────────────────────────────────────────
 
-  const [translateModal, setTranslateModal] = useState({ visible: false, text: "" });
-  const onLongPress = useCallback((text) => setTranslateModal({ visible: true, text }), []);
-  const closeModal  = useCallback(() => setTranslateModal({ visible: false, text: "" }), []);
+  const [translateModal, setTranslateModal] = useState({ visible: false, text: "", contextText: "" });
+  const onLongPress = useCallback((text, chunkIndex) => {
+    const prevTexts = [];
+    if (chunkIndex >= 2) prevTexts.push(chunks[chunkIndex - 2].words.map(w => w.text).join("").trim());
+    if (chunkIndex >= 1) prevTexts.push(chunks[chunkIndex - 1].words.map(w => w.text).join("").trim());
+    const contextText = [...prevTexts, text].join("\n\n");
+    setTranslateModal({ visible: true, text, contextText });
+  }, [chunks]);
+  const closeModal  = useCallback(() => setTranslateModal({ visible: false, text: "", contextText: "" }), []);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -328,7 +334,7 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
 
   return (
     <View style={styles.root}>
-      <TranslationModal visible={translateModal.visible} text={translateModal.text} onClose={closeModal} />
+      <TranslationModal visible={translateModal.visible} text={translateModal.text} contextText={translateModal.contextText} onClose={closeModal} />
 
       <Animated.FlatList
         ref={flatListRef}
@@ -430,7 +436,7 @@ const Chunk = React.memo(
 
     return (
       <Pressable
-        onLongPress={() => onLongPress(text)}
+        onLongPress={() => onLongPress(text, chunkIndex)}
         delayLongPress={400}
         style={styles.sentenceWrap}
       >
@@ -517,20 +523,29 @@ const styles = StyleSheet.create({
 
 // ─── Translation Modal ────────────────────────────────────────────────────────
 
-const TranslationModal = ({ visible, text, onClose }) => {
-  const [translation, setTranslation] = useState("");
-  const [loading,     setLoading]     = useState(false);
-  const [error,       setError]       = useState(false);
+const TranslationModal = ({ visible, text, contextText, onClose }) => {
+  const [translationParts, setTranslationParts] = useState([]);
+  const [loading,          setLoading]          = useState(false);
+  const [error,            setError]            = useState(false);
+  const [expanded,         setExpanded]         = useState(false);
 
   useEffect(() => {
-    if (!visible || !text) return;
-    setLoading(true); setTranslation(""); setError(false);
-    fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=es&dt=t&q=${encodeURIComponent(text)}`)
+    if (!visible || !contextText) return;
+    setLoading(true); setTranslationParts([]); setError(false); setExpanded(false);
+    fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=es&dt=t&q=${encodeURIComponent(contextText)}`)
       .then(r => r.json())
-      .then(d => setTranslation(d[0].map(c => c[0]).join("")))
+      .then(d => {
+        const full  = d[0].map(c => c[0]).join("");
+        const parts = full.split(/\n+/).map(p => p.trim()).filter(Boolean);
+        setTranslationParts(parts.length ? parts : [full]);
+      })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [visible, text]);
+  }, [visible, contextText]);
+
+  const lastTranslation = translationParts[translationParts.length - 1] ?? "";
+  const contextParts    = translationParts.slice(0, -1);
+  const hasContext      = contextParts.length > 0;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -544,9 +559,19 @@ const TranslationModal = ({ visible, text, onClose }) => {
           </View>
           <Text style={ms.originalText}>{text}</Text>
           <View style={ms.divider} />
-          {loading  ? <ActivityIndicator color="#4a90e2" style={{ marginVertical: 16 }} />
-          : error   ? <Text style={ms.errorText}>Translation failed. Check your connection.</Text>
-          :           <Text style={ms.translatedText}>{translation}</Text>}
+          {loading ? <ActivityIndicator color="#4a90e2" style={{ marginVertical: 16 }} />
+          : error  ? <Text style={ms.errorText}>Translation failed. Check your connection.</Text>
+          : <>
+              {expanded && hasContext && (
+                <Text style={ms.contextText}>{contextParts.join("\n\n")}</Text>
+              )}
+              <Text style={ms.translatedText}>{lastTranslation}</Text>
+              {hasContext && (
+                <TouchableOpacity onPress={() => setExpanded(e => !e)} style={ms.expandBtn}>
+                  <Text style={ms.expandBtnText}>{expanded ? "Hide context" : "Show context"}</Text>
+                </TouchableOpacity>
+              )}
+            </>}
           <TouchableOpacity style={ms.closeBtn} onPress={onClose}>
             <Text style={ms.closeBtnText}>Close</Text>
           </TouchableOpacity>
@@ -565,7 +590,10 @@ const ms = StyleSheet.create({
   arrow:          { color: "#3A3A3C", fontSize: 14 },
   originalText:   { color: "#636366", fontSize: 16, lineHeight: 24, marginBottom: 16 },
   divider:        { height: 0.5, backgroundColor: "rgba(255,255,255,0.08)", marginBottom: 16 },
-  translatedText: { color: "#FFFFFF", fontSize: 19, lineHeight: 28, fontWeight: "600", marginBottom: 28, letterSpacing: -0.2 },
+  contextText:    { color: "#8E8E93", fontSize: 15, lineHeight: 22, marginBottom: 16, fontStyle: "italic" },
+  translatedText: { color: "#FFFFFF", fontSize: 19, lineHeight: 28, fontWeight: "600", marginBottom: 12, letterSpacing: -0.2 },
+  expandBtn:      { alignSelf: "flex-start", marginBottom: 20 },
+  expandBtnText:  { color: "#4FACFE", fontSize: 13, fontWeight: "600" },
   errorText:      { color: "#FF453A", fontSize: 15, marginBottom: 24 },
   closeBtn:       { alignSelf: "center", paddingVertical: 11, paddingHorizontal: 36, backgroundColor: "rgba(255,255,255,0.07)", borderRadius: 22, borderWidth: 0.5, borderColor: "rgba(255,255,255,0.1)" },
   closeBtnText:   { color: "#FFFFFF", fontWeight: "600", fontSize: 15 },

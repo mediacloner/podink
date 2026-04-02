@@ -99,12 +99,6 @@ const PlayerScreen = ({ route, navigation }) => {
                     </Text>
                 </View>
 
-                <TouchableOpacity
-                    onPress={() => navigation.goBack()}
-                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                >
-                    <Icon name="chevron-down" size={24} color="rgba(255,255,255,0.85)" />
-                </TouchableOpacity>
             </View>
 
             {/* ── Transcript ────────────────────────────────────────────── */}
@@ -125,6 +119,13 @@ const PlayerScreen = ({ route, navigation }) => {
 
             {/* ── Controls ──────────────────────────────────────────────── */}
             <View style={[styles.controls, { paddingBottom: Math.max(insets.bottom + 8, 24) }]}>
+                <TouchableOpacity
+                    onPress={() => navigation.goBack()}
+                    style={styles.dismissBtn}
+                    hitSlop={{ top: 10, bottom: 10, left: 40, right: 40 }}
+                >
+                    <Icon name="chevron-down" size={28} color="rgba(255,255,255,0.5)" />
+                </TouchableOpacity>
                 <PlayerControls />
             </View>
 
@@ -215,10 +216,15 @@ const styles = StyleSheet.create({
 
     // ── Controls ──────────────────────────────────────────────
     controls: {
-        paddingTop: 16,
+        paddingTop: 8,
         backgroundColor: DARK,
         borderTopWidth: 0.5,
         borderTopColor: 'rgba(255,255,255,0.06)',
+    },
+    dismissBtn: {
+        alignSelf: 'center',
+        paddingVertical: 4,
+        marginBottom: 0,
     },
 });
 

@@ -43,7 +43,7 @@ const appTheme = {
 // MiniPlayer, which uses blur/focus events to hide when Player is on screen.
 const TabNavigator = ({ navigation }) => {
     const { bottom } = useSafeAreaInsets();
-    const tabBarHeight = 50 + bottom;
+    const tabBarHeight = 72 + bottom;
 
     return (
         <View style={{ flex: 1 }}>
@@ -58,7 +58,7 @@ const TabNavigator = ({ navigation }) => {
                         borderTopWidth:  StyleSheet.hairlineWidth,
                         borderTopColor:  'rgba(255,255,255,0.12)',
                         height:          tabBarHeight,
-                        paddingBottom:   Math.max(bottom, 8),
+                        paddingBottom:   bottom + 10,
                         paddingTop:      6,
                     },
                     tabBarLabelStyle:        { fontSize: 10, fontWeight: '600' },
@@ -90,16 +90,19 @@ const App = () => {
 
     return (
         <NavigationContainer theme={appTheme}>
-            <Stack.Navigator screenOptions={{ presentation: 'modal' }}>
+            <Stack.Navigator screenOptions={{ headerShown: false }}>
                 <Stack.Screen
                     name="MainTabs"
                     component={TabNavigator}
-                    options={{ headerShown: false }}
                 />
                 <Stack.Screen
                     name="Player"
                     component={PlayerScreen}
-                    options={{ headerShown: false }}
+                    options={{
+                        animation:        'slide_from_bottom',
+                        gestureEnabled:   true,
+                        gestureDirection: 'vertical',
+                    }}
                 />
             </Stack.Navigator>
         </NavigationContainer>

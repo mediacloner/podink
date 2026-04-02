@@ -21,9 +21,19 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     const { position, duration } = useProgress(500);
     const slideAnim              = useRef(new Animated.Value(120)).current;
 
-    const isPlaying     = state === State.Playing;
-    const hasTrack      = !!track;
-    const [tabsActive, setTabsActive] = useState(true);
+    const isPlaying = state === State.Playing;
+    const hasTrack  = !!track;
+    const isIdle    = !state || state === State.None || state === State.Stopped;
+    const [tabsActive,  setTabsActive]  = useState(true);
+    // Only allow the MiniPlayer to show after the state hook itself has observed
+    // an idle state (None/Stopped). This confirms that TrackPlayer.reset() has
+    // fully propagated through the native bridge — the promise-based approach
+    // fired too early, before the hook updates arrived from the native side.
+    const [readyToShow, setReadyToShow] = useState(false);
+
+    useEffect(() => {
+        if (!readyToShow && isIdle) setReadyToShow(true);
+    }, [isIdle, readyToShow]);
 
     // artwork: prefer the field baked into the track metadata; fall back to a
     // DB lookup in case the track was loaded before artwork was wired up.
@@ -50,7 +60,7 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     }, [stackNavigation]);
 
     // Slide up when visible, slide down when hidden.
-    const visible = hasTrack && tabsActive;
+    const visible = readyToShow && hasTrack && tabsActive && !isIdle;
     useEffect(() => {
         Animated.spring(slideAnim, {
             toValue:         visible ? 0 : 120,
@@ -106,7 +116,7 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
                         onPress={() => TrackPlayer.seekTo(Math.max(0, position - 10))}
                         hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
                     >
-                        <Icon name="rotate-ccw" size={18} color="rgba(255,255,255,0.75)" />
+                        <Icon name="rotate-ccw" size={22} color="rgba(255,255,255,0.75)" />
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -116,7 +126,7 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
                     >
                         <Icon
                             name={isPlaying ? 'pause' : 'play'}
-                            size={16}
+                            size={20}
                             color="#FFFFFF"
                             style={isPlaying ? undefined : { marginLeft: 2 }}
                         />
@@ -126,7 +136,7 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
                         onPress={openPlayer}
                         hitSlop={{ top: 10, bottom: 10, left: 8, right: 14 }}
                     >
-                        <Icon name="chevron-up" size={22} color="rgba(255,255,255,0.5)" />
+                        <Icon name="chevron-up" size={26} color="rgba(255,255,255,0.5)" />
                     </TouchableOpacity>
                 </View>
 
@@ -152,10 +162,10 @@ const styles = StyleSheet.create({
         flexDirection:   'row',
         alignItems:      'center',
         backgroundColor: '#1C1B22',
-        borderRadius:    16,
-        paddingVertical: 10,
-        paddingHorizontal: 12,
-        gap:             10,
+        borderRadius:    18,
+        paddingVertical: 14,
+        paddingHorizontal: 14,
+        gap:             12,
         borderWidth:     0.5,
         borderColor:     'rgba(255,255,255,0.1)',
         shadowColor:     '#000',
@@ -166,9 +176,9 @@ const styles = StyleSheet.create({
         overflow:        'hidden',
     },
     artwork: {
-        width:           42,
-        height:          42,
-        borderRadius:    8,
+        width:           52,
+        height:          52,
+        borderRadius:    10,
         backgroundColor: 'rgba(255,255,255,0.07)',
     },
     artworkFallback: {
@@ -178,29 +188,29 @@ const styles = StyleSheet.create({
     rightControls: {
         flexDirection: 'row',
         alignItems:    'center',
-        gap:           16,
+        gap:           18,
     },
     playBtn: {
-        width:           30,
-        height:          30,
-        borderRadius:    15,
+        width:           38,
+        height:          38,
+        borderRadius:    19,
         backgroundColor: 'rgba(255,255,255,0.12)',
         alignItems:      'center',
         justifyContent:  'center',
     },
     meta: {
         flex: 1,
-        gap:  2,
+        gap:  3,
     },
     podcast: {
-        fontSize:       10,
+        fontSize:       11,
         fontWeight:     '700',
         color:          'rgba(255,255,255,0.4)',
         textTransform:  'uppercase',
         letterSpacing:  0.5,
     },
     title: {
-        fontSize:      13,
+        fontSize:      15,
         fontWeight:    '600',
         color:         '#FFFFFF',
         letterSpacing: -0.1,
