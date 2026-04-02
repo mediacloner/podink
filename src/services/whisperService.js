@@ -3,6 +3,7 @@ import { AppState, NativeModules, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureWhisperModel } from './downloadService';
 import { saveTranscripts } from '../database/queries';
+import { log } from './logService';
 
 const QUEUE_PERSIST_KEY = '@transcription_queue_v1';
 
@@ -192,6 +193,7 @@ const _runNext = async () => {
 
     const entry = _queue.shift();
     _activeId = entry.id;
+    log('SERVICE', 'Transcription started', { id: entry.id, remainingQueue: _queue.map(e => e.id) });
     _notify();
 
     // Start foreground service before heavy work so Android doesn't ANR
@@ -272,6 +274,7 @@ const _runNext = async () => {
             await saveTranscripts(entry.id, segments);
             entry.resolve(segments);
             lastError = null;
+            log('SERVICE', 'Transcription completed', { id: entry.id, segments: segments.length });
 
             // Always release context after a successful transcription so the
             // next job begins with a clean native state. The model re-load
@@ -282,6 +285,7 @@ const _runNext = async () => {
         } catch (e) {
             _currentStop = null;
             lastError = e;
+            log('SERVICE', 'Transcription error', { id: entry.id, error: e.message, attempt, aborted: _abortCurrent });
 
             if (_abortCurrent) {
                 // Give the native Whisper thread ~500 ms to finish its own
@@ -312,6 +316,7 @@ const _runNext = async () => {
     _persistQueue();
     _processing = false;
     _activeId   = null;
+    log('SERVICE', 'Cleanup done', { id: entry.id, hadError: lastError !== null, nextInQueue: _queue.length });
     _notify();
 
     if (_queue.length === 0) {
@@ -338,8 +343,10 @@ export const enqueueTranscription = (id, audioFilePath, onProgress, onStart) => 
     // rejected because _activeId still equals id while the abort cleanup runs.
     const isBeingAborted = _activeId === id && _abortCurrent;
     if (!isBeingAborted && (_activeId === id || _queue.some(e => e.id === id))) {
+        log('SERVICE', 'Enqueue rejected (already queued)', { id });
         return Promise.reject(new Error('Already queued'));
     }
+    log('QUEUE', 'Enqueue', { id, activeId: _activeId, queueBefore: _queue.map(e => e.id), processing: _processing });
 
     if (FgService && _persistedItems.size === 0) {
         FgService.requestBatteryExemption();
@@ -359,6 +366,7 @@ export const enqueueTranscription = (id, audioFilePath, onProgress, onStart) => 
  * If it is currently being transcribed, the transcription is aborted.
  */
 export const dequeueTranscription = (id) => {
+    log('QUEUE', 'Dequeue requested', { id, activeId: _activeId, queue: _queue.map(e => e.id), processing: _processing });
     // Case 1: job is waiting in the queue — remove it
     const idx = _queue.findIndex(e => e.id === id);
     if (idx !== -1) {
@@ -392,6 +400,7 @@ export const dequeueTranscription = (id) => {
  *   - Stops the Android foreground service
  */
 export const resetService = async () => {
+    log('SERVICE', 'Reset requested', { activeId: _activeId, queue: _queue.map(e => e.id), processing: _processing });
     // Signal abort so the retry loop exits immediately if it's mid-attempt
     _abortCurrent = true;
 

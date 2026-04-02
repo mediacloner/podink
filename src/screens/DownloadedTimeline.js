@@ -16,6 +16,7 @@ import {
     getAbortingId,
 } from '../services/whisperService';
 import { deleteAudioFile } from '../services/downloadService';
+import { log } from '../services/logService';
 
 // ─── Swipeable delete row ─────────────────────────────────────────────────────
 
@@ -154,6 +155,18 @@ const DownloadedTimeline = ({ navigation }) => {
         if (!episode.local_audio_path) return;
 
         const id = episode.id;
+        log('UI', 'Transcribe tapped', { id, title: episode.title });
+        // Optimistic: show as Transcribing immediately ONLY when there is
+        // truly nothing else pending (empty queue, no running job or only
+        // an aborting job).  Two quick taps would both see getActiveId()===null
+        // (before _runNext's setTimeout fires), so we also check the queue.
+        const svcActive  = getActiveId();
+        const aborting   = getAbortingId();
+        const queueEmpty = getQueueIds().length === 0;
+        if (queueEmpty && (!svcActive || aborting === svcActive)) {
+            setActiveId(id);
+            log('UI', 'Optimistic active', { id });
+        }
         setProgressMap(prev => ({ ...prev, [id]: 0 }));
 
         try {
@@ -172,18 +185,33 @@ const DownloadedTimeline = ({ navigation }) => {
                 );
             }
         } finally {
-            setActiveId(prev => prev === id ? null : prev);
+            // When done, promote the next queued item immediately so it
+            // doesn't flash "Queued" while the service is still in cleanup.
+            const nextIds = getQueueIds();
+            if (nextIds.length > 0) {
+                setActiveId(nextIds[0]);
+            } else {
+                setActiveId(prev => prev === id ? null : prev);
+            }
             setProgressMap(prev => { const n = { ...prev }; delete n[id]; return n; });
         }
     }, []);
 
     const handleCancel = useCallback((episode) => {
         const id = episode.id;
-        // Clear UI state immediately so the button reverts right away,
-        // without waiting for the native abort to propagate back through the promise.
-        setActiveId(prev => prev === id ? null : prev);
+        log('UI', 'Cancel tapped', { id, title: episode.title });
+        const wasActive = getActiveId() === id;
         setProgressMap(prev => { const n = { ...prev }; delete n[id]; return n; });
         dequeueTranscription(id);
+        if (wasActive) {
+            // Promote the next queued item to Transcribing immediately,
+            // don't wait for the service cleanup (~500ms+) to finish.
+            const nextIds = getQueueIds();
+            setActiveId(nextIds.length > 0 ? nextIds[0] : null);
+        } else {
+            // Cancelling a queued (not active) item — activeId unchanged
+            setActiveId(prev => prev === id ? null : prev);
+        }
     }, []);
 
     const handleRemoveTranscript = async (episode) => {
