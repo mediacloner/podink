@@ -219,17 +219,9 @@ const PodcastsScreen = ({ navigation }) => {
 
                         <View style={styles.info}>
                             <Text style={styles.podcastTitle} numberOfLines={1}>{item.title}</Text>
-                            {newCount > 0 ? (
-                                <View style={styles.dotsRow}>
-                                    {Array.from({ length: newCount }).map((_, i) => (
-                                        <View key={i} style={styles.dot} />
-                                    ))}
-                                </View>
-                            ) : (
-                                <Text style={styles.podcastDesc} numberOfLines={1}>
-                                    {item.description?.replace(/<[^>]+>/g, '') || ''}
-                                </Text>
-                            )}
+                            <Text style={styles.podcastDesc} numberOfLines={1}>
+                                {item.description?.replace(/<[^>]+>/g, '') || ''}
+                            </Text>
                         </View>
 
                         {newCount > 0 && (
@@ -341,19 +333,6 @@ const styles = StyleSheet.create({
         fontSize: 13,
         color: '#636366',
         lineHeight: 18,
-    },
-
-    dotsRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 5,
-        marginTop: 2,
-    },
-    dot: {
-        width: 7,
-        height: 7,
-        borderRadius: 3.5,
-        backgroundColor: '#FF453A',
     },
 
     badge: {

@@ -8,6 +8,10 @@
   <!-- Required for react-native-track-player foreground service (media notification) -->
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+  <!-- Required for background transcription foreground service (Android 14+) -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+  <!-- Allows requesting exemption from battery optimization so transcription runs uninterrupted -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
 
   <!-- Required on Android 12+ to route audio to Bluetooth devices -->
   <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" android:minSdkVersion="31"/>
@@ -34,5 +38,9 @@
         <data android:scheme="exp+podink"/>
       </intent-filter>
     </activity>
+    <service
+        android:name=".TranscriptionService"
+        android:foregroundServiceType="dataSync"
+        android:exported="false" />
   </application>
 </manifest>
