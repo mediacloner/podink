@@ -26,12 +26,13 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import TrackPlayer, { useProgress, usePlaybackState, State } from "react-native-track-player";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const CONTENT_WIDTH   = SCREEN_WIDTH - 48;    // paddingHorizontal: 24 * 2
-const CENTER_OFFSET   = SCREEN_HEIGHT * 0.45; // active chunk sits near vertical center
+const CENTER_OFFSET   = SCREEN_HEIGHT * 0.28; // active chunk sits near vertical center of the transcript area
 const CHUNK_MARGIN    = 10;                   // matches sentenceWrap.marginBottom
 const FONT_SIZE       = 22;
 const LINE_HEIGHT     = 28;
@@ -42,9 +43,9 @@ const KEYPOINT_INTERVAL_MS   = 10 * 60 * 1000;
 const KEYPOINT_HEIGHT        = 36;            // fixed — used in both layout and scroll math
 
 // Dark theme (light text on dark bg) — kept for potential future use
-const DARK_FUTURE = "#28262E";
-const DARK_SPOKEN = "#78788C";
-const DARK_ACTIVE = "#FFFFFF";
+const DARK_FUTURE = "#3A3530"; // dark warm brown-gray — amber undertone, not cold
+const DARK_SPOKEN = "#A09078"; // warm taupe — sandy, like aged paper in low light
+const DARK_ACTIVE = "#FFF6E8"; // candlelight cream — warm white, easy on the eyes
 // Light theme (dark text on light bg) — Apple Podcasts system palette
 const LIGHT_FUTURE = "#D1D1D6"; // iOS gray 5 — barely-there future text
 const LIGHT_SPOKEN = "#8E8E93"; // iOS gray 2 — already-spoken text
@@ -60,7 +61,8 @@ const VIGNETTE_STEPS = 10;
 const VIGNETTE_TOP_H = 110;
 const VIGNETTE_BOT_H = 130;
 
-const LIST_HEADER = <View style={{ height: CENTER_OFFSET }} />;
+const HEADER_HEIGHT = SCREEN_HEIGHT * 0.10;
+const LIST_HEADER = <View style={{ height: HEADER_HEIGHT }} />;
 const LIST_FOOTER = <View style={{ height: SCREEN_HEIGHT * 0.5 }} />;
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
@@ -122,7 +124,12 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
     isPlayingSV.value = playbackState.state === State.Playing ? 1 : 0;
   }, [playbackState.state, isPlayingSV]);
 
-  const prevChunkRef = useRef(-1); // detects seek vs normal advance
+  const prevChunkRef       = useRef(-1); // detects seek vs normal advance
+  const lastScrollTargetRef = useRef(0);  // last position we actually scrolled to
+
+  // How far the active chunk must drift from the last scroll position before
+  // we trigger a new scroll. Prevents jitter on short/frequent paragraphs.
+  const SCROLL_DEAD_ZONE = LINE_HEIGHT * 1.5; // ≈ 42 px — about one short line
 
   // Manual scroll detection — suppresses auto-follow while user reads ahead.
   const isUserScrollingRef   = useRef(false);
@@ -196,7 +203,7 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
   const { itemLengths, itemOffsets } = useMemo(() => {
     const lengths = new Array(displayItems.length);
     const offsets = new Array(displayItems.length);
-    let y = CENTER_OFFSET; // first item sits after the LIST_HEADER
+    let y = HEADER_HEIGHT; // first item sits after the LIST_HEADER
     displayItems.forEach((item, i) => {
       offsets[i] = y;
       const len = item.type === "keypoint"
@@ -225,18 +232,17 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
 
   // ── UI-thread scroll via Reanimated ──────────────────────────────────────
 
-  // Normal advance: sync scrollYSV to real position then ease to target.
-  // Starting from currentScrollYRef ensures the animation begins where the
-  // user's finger left the list, not from a stale SharedValue.
+  // Normal advance: animate scrollYSV to target from wherever it currently is.
+  // scrollYSV is kept in sync with the real position after every user gesture
+  // (see onScrollEndDrag / onMomentumScrollEnd), so no snap-reset is needed here.
   const triggerScroll = useCallback((y) => {
-    runOnUI((targetY, fromY) => {
+    runOnUI((targetY) => {
       "worklet";
-      scrollYSV.value = fromY;
       scrollYSV.value = withTiming(targetY, {
         duration: 900,
         easing:   Easing.out(Easing.cubic),
       });
-    })(y, currentScrollYRef.current);
+    })(y);
   }, [scrollYSV]);
 
   // Seek (large jump): fade out → instant position reset → fade in.
@@ -280,8 +286,18 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
         const scrollY = Math.max(0, (itemOffsets[di] ?? CENTER_OFFSET) - CENTER_OFFSET);
         const isSeek  = Math.abs(ci - prevCi) > 3;
         if (isSeek) {
+          // Explicit jump — snap immediately, reset the dead-zone anchor.
+          lastScrollTargetRef.current = scrollY;
           triggerSeekScroll(scrollY);
-        } else if (!isUserScrollingRef.current) {
+        } else if (
+          !isUserScrollingRef.current &&
+          scrollY >= currentScrollYRef.current &&
+          scrollY - lastScrollTargetRef.current >= SCROLL_DEAD_ZONE
+        ) {
+          // Only scroll forward, and only when the active chunk has drifted
+          // far enough from the last scroll position. Short back-to-back
+          // paragraphs accumulate silently until they exceed the dead zone.
+          lastScrollTargetRef.current = scrollY;
           triggerScroll(scrollY);
         }
       }
@@ -310,16 +326,21 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
     runOnUI(() => { "worklet"; cancelAnimation(scrollYSV); })();
   }, [scrollYSV]);
 
-  const resumeAutoScroll = useCallback((delay) => {
+  // After user scroll ends, sync scrollYSV to the real position so the next
+  // auto-scroll animation starts exactly where the list is — no snap, no jump.
+  const resumeAutoScroll = useCallback((e, delay) => {
+    const y = e.nativeEvent.contentOffset.y;
+    currentScrollYRef.current = y;
+    runOnUI((pos) => { "worklet"; scrollYSV.value = pos; })(y);
     clearTimeout(userScrollTimeoutRef.current);
     userScrollTimeoutRef.current = setTimeout(() => {
       isUserScrollingRef.current = false;
     }, delay);
-  }, []);
+  }, [scrollYSV]);
 
   // Resume 3s after finger lifts; 1s after momentum ends (inertia finished).
-  const onScrollEndDrag     = useCallback(() => resumeAutoScroll(3000), [resumeAutoScroll]);
-  const onMomentumScrollEnd = useCallback(() => resumeAutoScroll(1000), [resumeAutoScroll]);
+  const onScrollEndDrag     = useCallback((e) => resumeAutoScroll(e, 3000), [resumeAutoScroll]);
+  const onMomentumScrollEnd = useCallback((e) => resumeAutoScroll(e, 1000), [resumeAutoScroll]);
 
   // Track real scroll position so triggerScroll always starts from here.
   const onScroll = useCallback((e) => {
@@ -329,6 +350,12 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
   // ── Translation modal ─────────────────────────────────────────────────────
 
   const [translateModal, setTranslateModal] = useState({ visible: false, text: "", contextText: "" });
+  // Tap to seek — jump playback to that chunk's start time.
+  const onChunkPress = useCallback((startMs) => {
+    TrackPlayer.seekTo(startMs / 1000);
+    TrackPlayer.play();
+  }, []);
+
   // Keep chunks accessible inside onLongPress without making it a dep.
   // This keeps onLongPress reference stable so renderItem never changes.
   const chunksRef = useRef(chunks);
@@ -356,13 +383,14 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
         activeIndexSV={activeIndexSV}
         isPlayingSV={isPlayingSV}
         onLongPress={onLongPress}
+        onPress={onChunkPress}
         cFuture={cFuture}
         cSpoken={cSpoken}
         cActive={cActive}
         glowColor={glowColor}
       />
     );
-  }, [activeChunkSV, activeIndexSV, isPlayingSV, onLongPress, cFuture, cSpoken, cActive, glowColor]);
+  }, [activeChunkSV, activeIndexSV, isPlayingSV, onLongPress, onChunkPress, cFuture, cSpoken, cActive, glowColor]);
 
   if (!segments?.length) {
     return (
@@ -452,11 +480,12 @@ const Keypoint = React.memo(({ item }) => (
 
 const chunkEqual = (p, n) =>
   p.item === n.item &&
+  p.onPress === n.onPress &&
   p.cFuture === n.cFuture && p.cSpoken === n.cSpoken &&
   p.cActive === n.cActive && p.glowColor === n.glowColor;
 
 const Chunk = React.memo(
-  ({ item, activeChunkSV, activeIndexSV, isPlayingSV, onLongPress, cFuture, cSpoken, cActive, glowColor }) => {
+  ({ item, activeChunkSV, activeIndexSV, isPlayingSV, onLongPress, onPress, cFuture, cSpoken, cActive, glowColor }) => {
     const chunkIndex = item.chunkIndex;
     const text = item.words.map(w => w.text).join("").trim();
 
@@ -477,25 +506,31 @@ const Chunk = React.memo(
 
     return (
       <Pressable
+        onPress={() => onPress(item.startMs)}
         onLongPress={() => onLongPress(text, chunkIndex)}
         delayLongPress={400}
         style={styles.sentenceWrap}
       >
-        {isWordLevel
-          ? item.words.map(w => (
-              <Word
-                key={w.globalIndex}
-                word={w}
-                activeIndexSV={activeIndexSV}
-                isPlayingSV={isPlayingSV}
-                cFuture={cFuture}
-                cSpoken={cSpoken}
-                cActive={cActive}
-                glowColor={glowColor}
-              />
-            ))
-          : <Text style={[styles.wordText, { color: isPast ? cSpoken : cFuture }]}>{text}</Text>
-        }
+        {/* Single <Text> wrapper for both modes so native text layout
+            handles line-breaking consistently — eliminates the word-jump
+            caused by switching between flexbox-wrap and text layout. */}
+        <Text style={[styles.wordText, { color: isPast ? cSpoken : cFuture }]}>
+          {isWordLevel
+            ? item.words.map(w => (
+                <Word
+                  key={w.globalIndex}
+                  word={w}
+                  activeIndexSV={activeIndexSV}
+                  isPlayingSV={isPlayingSV}
+                  cFuture={cFuture}
+                  cSpoken={cSpoken}
+                  cActive={cActive}
+                  glowColor={glowColor}
+                />
+              ))
+            : text
+          }
+        </Text>
       </Pressable>
     );
   },
@@ -549,7 +584,7 @@ const styles = StyleSheet.create({
   empty:            { flex: 1, alignItems: "center", justifyContent: "center" },
   placeholder:      { fontSize: 16, color: "#AEAEB2", textAlign: "center" },
 
-  sentenceWrap: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", marginBottom: 10 },
+  sentenceWrap: { marginBottom: 10 },
   wordText: { fontSize: 22, lineHeight: 28, fontWeight: "500" },
 
   keypointRow:  {
@@ -565,6 +600,7 @@ const styles = StyleSheet.create({
 // ─── Translation Modal ────────────────────────────────────────────────────────
 
 const TranslationModal = ({ visible, text, contextText, onClose }) => {
+  const { bottom } = useSafeAreaInsets();
   const [translationParts, setTranslationParts] = useState([]);
   const [loading,          setLoading]          = useState(false);
   const [error,            setError]            = useState(false);
@@ -630,7 +666,7 @@ const TranslationModal = ({ visible, text, contextText, onClose }) => {
               </>}
           </ScrollView>
 
-          <TouchableOpacity style={ms.closeBtn} onPress={onClose}>
+          <TouchableOpacity style={[ms.closeBtn, { marginBottom: Math.max(bottom, 16) }]} onPress={onClose}>
             <Text style={ms.closeBtnText}>Close</Text>
           </TouchableOpacity>
         </Pressable>
@@ -662,7 +698,7 @@ const ms = StyleSheet.create({
   expandBtn:         { alignSelf: "flex-start", marginBottom: 20 },
   expandBtnText:     { color: "#4FACFE", fontSize: 13, fontWeight: "600" },
   errorText:         { color: "#FF453A", fontSize: 15, marginBottom: 24 },
-  closeBtn:          { alignSelf: "center", paddingVertical: 11, paddingHorizontal: 36, marginVertical: 20,
+  closeBtn:          { alignSelf: "center", paddingVertical: 11, paddingHorizontal: 36, marginTop: 20,
                        backgroundColor: "rgba(255,255,255,0.07)", borderRadius: 22, borderWidth: 0.5, borderColor: "rgba(255,255,255,0.1)" },
   closeBtnText:      { color: "#FFFFFF", fontWeight: "600", fontSize: 15 },
 });
