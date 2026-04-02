@@ -35,7 +35,7 @@ class TranscriptionService : Service() {
         val message = intent?.getStringExtra(EXTRA_MESSAGE) ?: "Processing audio in background…"
 
         val openApp = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         val pendingIntent = PendingIntent.getActivity(
             this, 0, openApp,
