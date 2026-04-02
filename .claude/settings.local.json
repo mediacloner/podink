@@ -22,7 +22,13 @@
       "Bash(ls:*)",
       "WebFetch(domain:docs.expo.dev)",
       "Bash(npx expo:*)",
-      "Bash(npx pod-install:*)"
+      "Bash(npx pod-install:*)",
+      "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink -name AppIcon.appiconset -not -path */node_modules/*)",
+      "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink -name *.xcassets -not -path */node_modules/*)",
+      "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink -name *.xcworkspace -o -name *.xcodeproj)",
+      "Bash(sips -g all /Volumes/ExternalHD/Users/alex.sanchez/Desktop/logo.png)",
+      "Bash(cwebp -version)",
+      "Bash(ffmpeg -version)"
     ]
   }
 }

@@ -27,8 +27,16 @@ export const setupPlayer = async () => {
         });
         console.log('Player initialized');
     } catch (e) {
+        // On Android the player survives JS reloads, so setupPlayer throws
+        // "already initialized" — that's fine, we still need to reset below.
         console.log('Player setup error:', e);
     }
+
+    // Always clear any queue persisted from the previous session so the
+    // MiniPlayer doesn't appear on a fresh app launch.
+    try {
+        await TrackPlayer.reset();
+    } catch (_) {}
 };
 
 export const loadEpisodeTrack = async (episode, autoPlay = true) => {
