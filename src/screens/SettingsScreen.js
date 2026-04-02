@@ -8,6 +8,7 @@ import { File, Paths } from 'expo-file-system';
 import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { downloadAudioFile } from '../services/downloadService';
+import { resetService } from '../services/whisperService';
 
 const ALL_MODELS = [
     { id: 'tiny',       name: 'Tiny',     size: '39 MB',  desc: 'Fastest, lower accuracy' },
@@ -63,6 +64,22 @@ const SettingsScreen = () => {
         } finally {
             setIsDownloading(false);
         }
+    };
+
+    const handleResetQueue = () => {
+        Alert.alert(
+            'Reset Transcription Queue',
+            'This will cancel all pending and active transcriptions and clear the queue. Use this if the service appears stuck.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Reset', style: 'destructive', onPress: async () => {
+                        await resetService();
+                        Alert.alert('Done', 'Transcription queue has been cleared.');
+                    },
+                },
+            ],
+        );
     };
 
     const handleDelete = () => {
@@ -173,6 +190,17 @@ const SettingsScreen = () => {
                     </TouchableOpacity>
                 )
             )}
+
+            {/* Section: Troubleshooting */}
+            <Text style={styles.sectionLabel}>TROUBLESHOOTING</Text>
+
+            <TouchableOpacity style={styles.resetBtn} onPress={handleResetQueue}>
+                <Icon name="refresh-cw" size={15} color="#FF9F0A" />
+                <Text style={styles.resetBtnText}>Reset transcription queue</Text>
+            </TouchableOpacity>
+            <Text style={styles.resetHint}>
+                Use this if transcription appears frozen or stuck. Does not delete your existing transcripts.
+            </Text>
 
         </ScrollView>
     );
@@ -328,6 +356,29 @@ const styles = StyleSheet.create({
         borderColor: 'rgba(255,69,58,0.18)',
     },
     deleteBtnText: { color: '#FF453A', fontSize: 15, fontWeight: '600' },
+
+    resetBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        marginHorizontal: 16,
+        marginTop: 10,
+        paddingVertical: 15,
+        borderRadius: 14,
+        backgroundColor: 'rgba(255,159,10,0.07)',
+        borderWidth: 0.5,
+        borderColor: 'rgba(255,159,10,0.18)',
+    },
+    resetBtnText: { color: '#FF9F0A', fontSize: 15, fontWeight: '600' },
+    resetHint: {
+        fontSize: 12,
+        color: '#3A3A3C',
+        textAlign: 'center',
+        marginHorizontal: 24,
+        marginTop: 10,
+        lineHeight: 18,
+    },
 });
 
 export default SettingsScreen;
