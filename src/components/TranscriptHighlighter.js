@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import Animated, {
+  cancelAnimation,
   Easing,
   interpolate,
   interpolateColor,
@@ -126,6 +127,25 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
   const isUserScrollingRef   = useRef(false);
   const userScrollTimeoutRef = useRef(null);
 
+  // ── Smooth scroll ─────────────────────────────────────────────────────────
+  // scrollYSV is the single source of truth. Auto-scroll animates it with
+  // withTiming (custom easing) and useAnimatedReaction drives scrollTo on
+  // every frame — no bridge crossing, no platform-default animation.
+  // currentScrollYRef tracks where the user left the list so the animation
+  // always starts from the real position rather than a stale SharedValue.
+  const scrollYSV        = useSharedValue(0);
+  const currentScrollYRef = useRef(0);
+
+  useAnimatedReaction(
+    () => scrollYSV.value,
+    (y, prev) => {
+      // prev is null on the very first call, before the FlatList ref is
+      // attached — skip it to avoid the "uninitialized ref" Reanimated error.
+      if (prev === null) return;
+      scrollTo(flatListRef, 0, y, false);
+    },
+  );
+
   // ── Build chunk data ──────────────────────────────────────────────────────
 
   const chunks = useMemo(() => {
@@ -204,29 +224,33 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
 
   // ── UI-thread scroll via Reanimated ──────────────────────────────────────
 
-  // Normal advance: smooth animated scroll, no opacity change.
-  const triggerScroll = useCallback((y, animated) => {
-    runOnUI((targetY, doAnimate) => {
+  // Normal advance: sync scrollYSV to real position then ease to target.
+  // Starting from currentScrollYRef ensures the animation begins where the
+  // user's finger left the list, not from a stale SharedValue.
+  const triggerScroll = useCallback((y) => {
+    runOnUI((targetY, fromY) => {
       "worklet";
-      scrollTo(flatListRef, 0, targetY, doAnimate);
-    })(y, animated);
-  }, [flatListRef]);
+      scrollYSV.value = fromY;
+      scrollYSV.value = withTiming(targetY, {
+        duration: 900,
+        easing:   Easing.out(Easing.cubic),
+      });
+    })(y, currentScrollYRef.current);
+  }, [scrollYSV]);
 
-  // Seek (large jump): fade out → instant scroll → fade in.
-  // Runs entirely on the UI thread so there's no bridge delay between the
-  // fade-out completing and the scroll firing.
+  // Seek (large jump): fade out → instant position reset → fade in.
   const triggerSeekScroll = useCallback((y) => {
     runOnUI((targetY) => {
       "worklet";
       opacitySV.value = withTiming(0, { duration: 120 }, (finished) => {
         "worklet";
         if (finished) {
-          scrollTo(flatListRef, 0, targetY, false);
+          scrollYSV.value = targetY;
           opacitySV.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.quad) });
         }
       });
     })(y);
-  }, [flatListRef, opacitySV]);
+  }, [scrollYSV, opacitySV]);
 
   const listAnimStyle = useAnimatedStyle(() => ({ opacity: opacitySV.value }));
 
@@ -257,7 +281,7 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
         if (isSeek) {
           triggerSeekScroll(scrollY);
         } else if (!isUserScrollingRef.current) {
-          triggerScroll(scrollY, true);
+          triggerScroll(scrollY);
         }
       }
     }
@@ -281,7 +305,9 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
   const onScrollBeginDrag = useCallback(() => {
     isUserScrollingRef.current = true;
     clearTimeout(userScrollTimeoutRef.current);
-  }, []);
+    // Stop any in-flight auto-scroll animation so it doesn't fight the finger.
+    runOnUI(() => { "worklet"; cancelAnimation(scrollYSV); })();
+  }, [scrollYSV]);
 
   const resumeAutoScroll = useCallback((delay) => {
     clearTimeout(userScrollTimeoutRef.current);
@@ -291,19 +317,29 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
   }, []);
 
   // Resume 3s after finger lifts; 1s after momentum ends (inertia finished).
-  const onScrollEndDrag      = useCallback(() => resumeAutoScroll(3000), [resumeAutoScroll]);
-  const onMomentumScrollEnd  = useCallback(() => resumeAutoScroll(1000), [resumeAutoScroll]);
+  const onScrollEndDrag     = useCallback(() => resumeAutoScroll(3000), [resumeAutoScroll]);
+  const onMomentumScrollEnd = useCallback(() => resumeAutoScroll(1000), [resumeAutoScroll]);
+
+  // Track real scroll position so triggerScroll always starts from here.
+  const onScroll = useCallback((e) => {
+    currentScrollYRef.current = e.nativeEvent.contentOffset.y;
+  }, []);
 
   // ── Translation modal ─────────────────────────────────────────────────────
 
   const [translateModal, setTranslateModal] = useState({ visible: false, text: "", contextText: "" });
+  // Keep chunks accessible inside onLongPress without making it a dep.
+  // This keeps onLongPress reference stable so renderItem never changes.
+  const chunksRef = useRef(chunks);
+  useEffect(() => { chunksRef.current = chunks; }, [chunks]);
   const onLongPress = useCallback((text, chunkIndex) => {
+    const ch = chunksRef.current;
     const prevTexts = [];
-    if (chunkIndex >= 2) prevTexts.push(chunks[chunkIndex - 2].words.map(w => w.text).join("").trim());
-    if (chunkIndex >= 1) prevTexts.push(chunks[chunkIndex - 1].words.map(w => w.text).join("").trim());
+    if (chunkIndex >= 2) prevTexts.push(ch[chunkIndex - 2].words.map(w => w.text).join("").trim());
+    if (chunkIndex >= 1) prevTexts.push(ch[chunkIndex - 1].words.map(w => w.text).join("").trim());
     const contextText = [...prevTexts, text].join("\n\n");
     setTranslateModal({ visible: true, text, contextText });
-  }, [chunks]);
+  }, []);
   const closeModal  = useCallback(() => setTranslateModal({ visible: false, text: "", contextText: "" }), []);
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -356,6 +392,7 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
         removeClippedSubviews={Platform.OS === "android"}
         ListHeaderComponent={LIST_HEADER}
         ListFooterComponent={LIST_FOOTER}
+        onScroll={onScroll}
         onScrollBeginDrag={onScrollBeginDrag}
         onScrollEndDrag={onScrollEndDrag}
         onMomentumScrollEnd={onMomentumScrollEnd}
