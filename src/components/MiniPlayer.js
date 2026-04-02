@@ -23,17 +23,10 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
 
     const isPlaying = state === State.Playing;
     const hasTrack  = !!track;
-    const isIdle    = !state || state === State.None || state === State.Stopped;
-    const [tabsActive,  setTabsActive]  = useState(true);
-    // Only allow the MiniPlayer to show after the state hook itself has observed
-    // an idle state (None/Stopped). This confirms that TrackPlayer.reset() has
-    // fully propagated through the native bridge — the promise-based approach
-    // fired too early, before the hook updates arrived from the native side.
-    const [readyToShow, setReadyToShow] = useState(false);
-
-    useEffect(() => {
-        if (!readyToShow && isIdle) setReadyToShow(true);
-    }, [isIdle, readyToShow]);
+    const [tabsActive, setTabsActive] = useState(true);
+    // No userHasPlayed gate needed here — the parent (TabNavigator) only
+    // mounts this component after onUserPlay fires, so we can trust that
+    // intentional playback has already started by the time we render.
 
     // artwork: prefer the field baked into the track metadata; fall back to a
     // DB lookup in case the track was loaded before artwork was wired up.
@@ -60,15 +53,22 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     }, [stackNavigation]);
 
     // Slide up when visible, slide down when hidden.
-    const visible = readyToShow && hasTrack && tabsActive && !isIdle;
+    // hasLayout ensures the animation never starts before the component knows
+    // its real rendered position (bottom offset). Without this, the spring
+    // could begin while the layout is still being computed, causing a jump.
+    const [hasLayout, setHasLayout] = useState(false);
+    const activeState = state === State.Playing || state === State.Paused
+                     || state === State.Buffering || state === State.Loading;
+    const visible = hasTrack && tabsActive && activeState;
     useEffect(() => {
+        if (!hasLayout) return;
         Animated.spring(slideAnim, {
             toValue:         visible ? 0 : 120,
             useNativeDriver: true,
             bounciness:      4,
             speed:           14,
         }).start();
-    }, [visible]);
+    }, [visible, hasLayout]);
 
     const openPlayer = async () => {
         if (!track?.id || !stackNavigation) return;
@@ -84,6 +84,7 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
 
     return (
         <Animated.View
+            onLayout={() => setHasLayout(true)}
             pointerEvents={visible ? 'box-none' : 'none'}
             style={[
                 styles.wrapper,

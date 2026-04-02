@@ -39,6 +39,13 @@ export const setupPlayer = async () => {
     } catch (_) {}
 };
 
+// Listeners notified when the user explicitly loads a track.
+// MiniPlayer subscribes so it can gate visibility on intentional playback
+// rather than TrackPlayer's automatic session-restore events.
+const _playListeners = new Set();
+export const onUserPlay  = (cb) => { _playListeners.add(cb);    return () => _playListeners.delete(cb); };
+const _notifyUserPlay    = ()   => _playListeners.forEach(cb => cb());
+
 export const loadEpisodeTrack = async (episode, autoPlay = true) => {
     // Determine whether to use local or remote path
     // local_audio_path is already a file:// URI from expo-file-system
@@ -52,6 +59,7 @@ export const loadEpisodeTrack = async (episode, autoPlay = true) => {
         artwork: episode.image_url || undefined,
     };
 
+    _notifyUserPlay();
     await TrackPlayer.reset();
     await TrackPlayer.add(track);
     if (autoPlay) await TrackPlayer.play();

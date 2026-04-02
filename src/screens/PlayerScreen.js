@@ -4,7 +4,7 @@ import {
     ActivityIndicator, TouchableOpacity,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import TrackPlayer, { useProgress } from 'react-native-track-player';
+import TrackPlayer from 'react-native-track-player';
 import { Feather as Icon } from '@expo/vector-icons';
 import PlayerControls from '../components/PlayerControls';
 import TranscriptHighlighter from '../components/TranscriptHighlighter';
@@ -25,7 +25,6 @@ const PlayerScreen = ({ route, navigation }) => {
     const [colorInfo, setColorInfo]         = useState(null);
     const insets = useSafeAreaInsets();
     const positionSaveInterval = useRef(null);
-    useProgress();
 
     useEffect(() => {
         if (episode.image_url) {

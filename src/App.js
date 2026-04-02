@@ -1,13 +1,13 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, LogBox, StyleSheet } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather as Icon } from '@expo/vector-icons';
 
 import { initDB } from './database/db';
-import { setupPlayer } from './services/trackPlayer';
+import { setupPlayer, onUserPlay } from './services/trackPlayer';
 
 import SubscribedTimeline from './screens/SubscribedTimeline';
 import DownloadedTimeline from './screens/DownloadedTimeline';
@@ -45,6 +45,13 @@ const TabNavigator = ({ navigation }) => {
     const { bottom } = useSafeAreaInsets();
     const tabBarHeight = 72 + bottom;
 
+    // Only mount MiniPlayer after the user explicitly plays a podcast.
+    // Conditional mounting (not just hiding) is the only reliable fix —
+    // an always-mounted but "hidden" view still renders on Android with
+    // elevation, causing it to appear in the wrong position at startup.
+    const [showMiniPlayer, setShowMiniPlayer] = useState(false);
+    useEffect(() => onUserPlay(() => setShowMiniPlayer(true)), []);
+
     return (
         <View style={{ flex: 1 }}>
             <Tab.Navigator
@@ -75,9 +82,9 @@ const TabNavigator = ({ navigation }) => {
                 <Tab.Screen name="Settings" component={SettingsScreen} />
             </Tab.Navigator>
 
-            {/* MiniPlayer floats above the tab bar.
-                stackNavigation lets it detect when Player is shown/dismissed. */}
-            <MiniPlayer bottomOffset={tabBarHeight} stackNavigation={navigation} />
+            {showMiniPlayer && (
+                <MiniPlayer bottomOffset={tabBarHeight} stackNavigation={navigation} />
+            )}
         </View>
     );
 };
@@ -89,23 +96,25 @@ const App = () => {
     }, []);
 
     return (
-        <NavigationContainer theme={appTheme}>
-            <Stack.Navigator screenOptions={{ headerShown: false }}>
-                <Stack.Screen
-                    name="MainTabs"
-                    component={TabNavigator}
-                />
-                <Stack.Screen
-                    name="Player"
-                    component={PlayerScreen}
-                    options={{
-                        animation:        'slide_from_bottom',
-                        gestureEnabled:   true,
-                        gestureDirection: 'vertical',
-                    }}
-                />
-            </Stack.Navigator>
-        </NavigationContainer>
+        <SafeAreaProvider>
+            <NavigationContainer theme={appTheme}>
+                <Stack.Navigator screenOptions={{ headerShown: false }}>
+                    <Stack.Screen
+                        name="MainTabs"
+                        component={TabNavigator}
+                    />
+                    <Stack.Screen
+                        name="Player"
+                        component={PlayerScreen}
+                        options={{
+                            animation:        'slide_from_bottom',
+                            gestureEnabled:   true,
+                            gestureDirection: 'vertical',
+                        }}
+                    />
+                </Stack.Navigator>
+            </NavigationContainer>
+        </SafeAreaProvider>
     );
 };
 
