@@ -48,6 +48,16 @@ const _releaseContext = async () => {
     whisperContext  = null;
     loadedModelType = null;
     if (!ctx) return;
+
+    if (Platform.OS === 'android') {
+        // release() always throws ConcurrentModificationException on Android.
+        // We abandon the reference so _doInit creates a fresh context.
+        // This leaks ~74 MB — but only on abort/error. After successful
+        // transcription the context is reused (no release called = no leak).
+        log('SYSTEM', 'Abandoning whisper context (Android — cannot release)');
+        return;
+    }
+
     log('SYSTEM', 'Releasing whisper context…');
     await Promise.race([
         ctx.release().catch((e) => { log('SYSTEM', 'release() error (ignored)', { error: String(e) }); }),
@@ -73,7 +83,7 @@ const _doInit = async () => {
     // Already loaded with the right model — reuse it
     if (whisperContext && loadedModelType === modelType) return whisperContext;
 
-    // Wrong model loaded (user changed setting) — release first
+    // Wrong model loaded (user changed setting) — abandon old context
     if (whisperContext) await _releaseContext();
 
     log('SYSTEM', 'Loading whisper model', { modelType });
@@ -111,6 +121,7 @@ let _activeId      = null;
 let _currentStop   = null;  // stop() handle for the running transcription
 let _abortCurrent  = false; // true when dequeueTranscription cancelled the active job
 let _abortResolve  = null;  // resolves the abort promise to instantly unblock Promise.race
+let _generation    = 0;     // incremented on reset — lets orphaned _runNext detect staleness
 
 // Listeners notified whenever queue state changes (for UI polling-free updates)
 const _listeners = new Set();
@@ -131,10 +142,8 @@ const _persistQueue = () => {
  * Restore any unfinished transcriptions from the previous session.
  * Call this once on app startup after the DB is ready.
  *
- * Also installs a one-shot 90-second watchdog: if the service is still
- * "processing" 90 s after the app starts (likely stuck from a bad state
- * carried over within the same process), it auto-resets so the app is
- * never permanently blocked without the user having to go to Settings.
+ * Recovery from stuck states is handled by: _abortResolve (instant cancel),
+ * generation counter (stale _runNext detection), and the manual Reset button.
  */
 export const restoreQueue = async () => {
     log('SYSTEM', 'restoreQueue called — hard reset flags');
@@ -147,22 +156,24 @@ export const restoreQueue = async () => {
     _queue.length = 0;
     _persistedItems.clear();
 
-    // Startup watchdog: if anything gets stuck within the first session,
-    // auto-recover after 90 s so the user never has to manually reset.
-    setTimeout(async () => {
-        if (_processing) {
-            await resetService();
-        }
-    }, 90_000);
+    // The 90-second startup watchdog has been removed. Recovery is now
+    // handled by: _abortResolve (instant cancel), generation counter
+    // (stale _runNext detection), and the manual Reset button in Settings.
 
     try {
         const raw = await AsyncStorage.getItem(QUEUE_PERSIST_KEY);
         if (!raw) return;
         const items = JSON.parse(raw);
-        for (const { id, audioFilePath } of items) {
-            if (_activeId === id || _queue.some(e => e.id === id)) continue;
-            enqueueTranscription(id, audioFilePath, null, null).catch(() => {});
-        }
+        // DON'T auto-start transcriptions on restore — just remember them.
+        // Auto-starting after a crash creates zombie amplification: each crash
+        // leaves native whisper threads running, and restarting adds more.
+        // The user can manually re-transcribe from the Library screen.
+        // Clear the persisted queue so they don't re-enqueue on next restart.
+        await AsyncStorage.removeItem(QUEUE_PERSIST_KEY).catch(() => {});
+        log('SYSTEM', 'Cleared restored queue (manual re-transcribe required)', {
+            count: items.length,
+            ids: items.map(i => i.id),
+        });
     } catch (_) {}
 };
 
@@ -208,9 +219,10 @@ const _runNext = async () => {
     if (_processing || _queue.length === 0) return;
     _processing = true;
 
+    const gen   = _generation; // snapshot — if reset happens, gen !== _generation
     const entry = _queue.shift();
     _activeId = entry.id;
-    log('SERVICE', 'Transcription started', { id: entry.id, remainingQueue: _queue.map(e => e.id) });
+    log('SERVICE', 'Transcription started', { id: entry.id, gen, remainingQueue: _queue.map(e => e.id) });
     _notify();
 
     // Start foreground service before heavy work so Android doesn't ANR
@@ -228,21 +240,32 @@ const _runNext = async () => {
                 await _sleep(RETRY_DELAY_MS * attempt);
             }
 
+            // Bail if a reset happened while we were awaiting (resetService sets
+            // _abortCurrent=false so that flag alone can't catch stale runs).
+            if (gen !== _generation) throw new Error('Cancelled');
+
             const context = await initializeWhisper();
 
-            // Abort could have been requested while the model was loading.
-            // _abortResolve doesn't exist yet (set after transcribe()), so
-            // dequeueTranscription couldn't unblock us — check the flag here.
-            if (_abortCurrent) throw new Error('Cancelled');
+            // Abort could have been requested while the model was loading,
+            // OR a reset happened (generation changed).
+            if (_abortCurrent || gen !== _generation) throw new Error('Cancelled');
 
             const nativePath = entry.audioFilePath.replace('file://', '');
 
             let completedChunks = 0;
             let totalChunks     = 5;
             let lastRaw         = -1;
+            let negativeCount   = 0; // Android: whisper.rn sends only negatives
 
             const normalizeProgress = (p) => {
-                if (p < 0) return null;
+                // Android quirk: whisper.rn fires onProgress with negative
+                // values (-1, -2, …) meaning "working, no exact %".
+                // Estimate slow progress from callback count so the UI
+                // shows activity instead of "…" forever.
+                if (p < 0) {
+                    negativeCount++;
+                    return Math.min(95, negativeCount);
+                }
                 if (lastRaw >= 95 && p > 0 && p < lastRaw) {
                     totalChunks     = Math.round(100 / p);
                     completedChunks = Math.round((p / 100) * totalChunks);
@@ -253,15 +276,26 @@ const _runNext = async () => {
                 return Math.min(99, Math.round((completedChunks / totalChunks) * 100 + (p / totalChunks)));
             };
 
+            let _progressCount = 0;
             const { promise, stop } = context.transcribe(nativePath, {
                 language: 'en',
                 onProgress: (p) => {
+                    // Ignore zombie callbacks from cancelled native threads.
+                    // On Android, release() times out and the old whisper thread
+                    // keeps running, firing onProgress on stale closures.
+                    if (_activeId !== entry.id) return;
+
+                    _progressCount++;
+                    if (_progressCount <= 3 || _progressCount % 20 === 0) {
+                        log('SERVICE', 'onProgress', { id: entry.id, raw: p, count: _progressCount });
+                    }
                     const smooth = normalizeProgress(p);
                     if (smooth !== null && entry.onProgress) entry.onProgress(smooth);
                 },
             });
 
             _currentStop = stop;
+            log('SERVICE', 'transcribe() called, waiting for result…', { id: entry.id });
 
             // Abort promise: resolved instantly by dequeueTranscription() so
             // Promise.race unblocks even if the native stop() never settles the
@@ -305,10 +339,9 @@ const _runNext = async () => {
             lastError = null;
             log('SERVICE', 'Transcription completed', { id: entry.id, segments: segments.length });
 
-            // Always release context after a successful transcription so the
-            // next job begins with a clean native state. The model re-load
-            // overhead (~1-2 s) is worth the stability guarantee.
-            await _releaseContext();
+            // Reuse the context for the next transcription — on Android,
+            // release() never works and leaks memory. iOS releases in _doInit
+            // if the model changes.
             break; // success — exit retry loop
 
         } catch (e) {
@@ -319,20 +352,13 @@ const _runNext = async () => {
                 stack: e?.stack?.slice(0, 400),
             });
 
-            if (_abortCurrent) {
-                // Give the native Whisper thread ~500 ms to finish its own
-                // teardown after stop() before we call release(). Releasing
-                // immediately causes a deadlock on Android: release() blocks
-                // waiting for the thread, which is itself mid-abort.
-                await _sleep(500);
-            }
-
-            // Ensure the context is torn down before the next attempt.
-            // Calling transcribe() on a context that threw will crash natively.
+            // Abandon the context so the next attempt gets a fresh one.
+            // On Android, this nulls out refs (native can't be released).
+            // On iOS, this calls ctx.release().
             await _releaseContext();
 
-            // Don't retry a user-initiated abort or if we've exhausted retries.
-            if (_abortCurrent || attempt >= MAX_RETRIES) break;
+            // Don't retry a user-initiated abort, a reset, or exhausted retries.
+            if (_abortCurrent || gen !== _generation || attempt >= MAX_RETRIES) break;
             // Otherwise fall through to the next attempt
         }
     }
@@ -341,6 +367,13 @@ const _runNext = async () => {
 
     if (lastError !== null) {
         entry.reject(lastError);
+    }
+
+    // If a reset happened while we were running, our shared-state references
+    // are stale — resetService already cleaned everything up. Just bail.
+    if (gen !== _generation) {
+        log('SERVICE', 'Stale _runNext after reset — skipping cleanup', { id: entry.id, gen, curGen: _generation });
+        return;
     }
 
     // ── Cleanup ──────────────────────────────────────────────────────────────
@@ -434,7 +467,10 @@ export const dequeueTranscription = (id) => {
  *   - Stops the Android foreground service
  */
 export const resetService = async () => {
-    log('SERVICE', 'Reset requested', { activeId: _activeId, queue: _queue.map(e => e.id), processing: _processing });
+    log('SERVICE', 'Reset requested', { activeId: _activeId, queue: _queue.map(e => e.id), processing: _processing, gen: _generation });
+    // Bump generation so any orphaned _runNext from before the reset
+    // will bail on its next await (it captured the old generation).
+    _generation++;
     // Signal abort so the retry loop exits immediately if it's mid-attempt
     _abortCurrent = true;
 
