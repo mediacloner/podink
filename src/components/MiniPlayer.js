@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
     View, Text, Image, TouchableOpacity,
-    StyleSheet, Animated, Pressable,
+    StyleSheet, Animated, Pressable, PanResponder,
 } from 'react-native';
 import TrackPlayer, {
     useActiveTrack, usePlaybackState, useProgress, State,
 } from 'react-native-track-player';
 import { Feather as Icon } from '@expo/vector-icons';
 import { getEpisodeById } from '../database/queries';
+import { notifyUserStop } from '../services/trackPlayer';
 
 // ─── MiniPlayer ───────────────────────────────────────────────────────────────
 // Props:
@@ -20,6 +21,7 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     const { state }              = usePlaybackState();
     const { position, duration } = useProgress(500);
     const slideAnim              = useRef(new Animated.Value(120)).current;
+    const swipeX                 = useRef(new Animated.Value(0)).current;
 
     const isPlaying = state === State.Playing;
     const hasTrack  = !!track;
@@ -80,17 +82,45 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
         isPlaying ? await TrackPlayer.pause() : await TrackPlayer.play();
     };
 
+    const panResponder = useRef(PanResponder.create({
+        // Don't claim on tap — let Pressable and buttons handle it
+        onStartShouldSetPanResponder: () => false,
+        // Claim only on clear horizontal swipe
+        onMoveShouldSetPanResponder: (_, g) =>
+            Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+        onPanResponderMove: (_, g) => swipeX.setValue(g.dx),
+        onPanResponderRelease: (_, g) => {
+            if (Math.abs(g.dx) > 80 || Math.abs(g.vx) > 0.5) {
+                Animated.timing(swipeX, {
+                    toValue: (g.dx > 0 ? 1 : -1) * 500,
+                    duration: 180,
+                    useNativeDriver: true,
+                }).start(async () => {
+                    await TrackPlayer.reset();
+                    notifyUserStop(); // unmounts MiniPlayer via App.js
+                });
+            } else {
+                Animated.spring(swipeX, {
+                    toValue: 0,
+                    useNativeDriver: true,
+                    bounciness: 6,
+                }).start();
+            }
+        },
+    })).current;
+
     const progress = duration > 0 ? position / duration : 0;
 
     return (
         <Animated.View
             onLayout={() => setHasLayout(true)}
-            pointerEvents={visible ? 'box-none' : 'none'}
+            pointerEvents={visible ? 'auto' : 'none'}
+            {...panResponder.panHandlers}
             style={[
                 styles.wrapper,
                 {
                     bottom:    bottomOffset + 8,
-                    transform: [{ translateY: slideAnim }],
+                    transform: [{ translateY: slideAnim }, { translateX: swipeX }],
                 },
             ]}
         >

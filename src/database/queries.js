@@ -112,6 +112,14 @@ export const savePlayPosition = async (id, positionSeconds) => {
   );
 };
 
+export const getTotalNewEpisodesCount = async () => {
+  const db = await openDatabaseContext();
+  const row = await db.getFirstAsync(
+    'SELECT COUNT(*) as count FROM Episodes WHERE is_new = 1'
+  );
+  return row?.count ?? 0;
+};
+
 export const getNewEpisodesCountForPodcast = async (feedUrl) => {
   const db = await openDatabaseContext();
   const row = await db.getFirstAsync(
