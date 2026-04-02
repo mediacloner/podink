@@ -5,6 +5,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -24,7 +25,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
-import { useProgress, usePlaybackState, State } from "react-native-track-player";
+import TrackPlayer, { useProgress, usePlaybackState, State } from "react-native-track-player";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -583,9 +584,10 @@ const TranslationModal = ({ visible, text, contextText, onClose }) => {
       .finally(() => setLoading(false));
   }, [visible, contextText]);
 
-  const lastTranslation = translationParts[translationParts.length - 1] ?? "";
-  const contextParts    = translationParts.slice(0, -1);
-  const hasContext      = contextParts.length > 0;
+  const lastTranslation  = translationParts[translationParts.length - 1] ?? "";
+  const translatedCtx    = translationParts.slice(0, -1);
+  const englishCtx       = (contextText ?? "").split(/\n\n+/).map(p => p.trim()).filter(Boolean).slice(0, -1);
+  const hasContext       = translatedCtx.length > 0;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -597,21 +599,37 @@ const TranslationModal = ({ visible, text, contextText, onClose }) => {
             <Text style={ms.arrow}>→</Text>
             <Text style={ms.lang}>Español</Text>
           </View>
-          <Text style={ms.originalText}>{text}</Text>
-          <View style={ms.divider} />
-          {loading ? <ActivityIndicator color="#4a90e2" style={{ marginVertical: 16 }} />
-          : error  ? <Text style={ms.errorText}>Translation failed. Check your connection.</Text>
-          : <>
-              {expanded && hasContext && (
-                <Text style={ms.contextText}>{contextParts.join("\n\n")}</Text>
-              )}
-              <Text style={ms.translatedText}>{lastTranslation}</Text>
-              {hasContext && (
-                <TouchableOpacity onPress={() => setExpanded(e => !e)} style={ms.expandBtn}>
-                  <Text style={ms.expandBtnText}>{expanded ? "Hide context" : "Show context"}</Text>
-                </TouchableOpacity>
-              )}
-            </>}
+
+          {/* Scrollable body so expanded context never clips */}
+          <ScrollView
+            style={ms.scroll}
+            contentContainerStyle={ms.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Context pairs — English + translation side by side */}
+            {expanded && hasContext && translatedCtx.map((translated, i) => (
+              <View key={i} style={ms.contextBlock}>
+                <Text style={ms.contextEnglish}>{englishCtx[i] ?? ""}</Text>
+                <Text style={ms.contextTranslated}>{translated}</Text>
+                <View style={ms.contextDivider} />
+              </View>
+            ))}
+
+            {/* Current paragraph */}
+            <Text style={ms.originalText}>{text}</Text>
+            <View style={ms.divider} />
+            {loading ? <ActivityIndicator color="#4a90e2" style={{ marginVertical: 16 }} />
+            : error  ? <Text style={ms.errorText}>Translation failed. Check your connection.</Text>
+            : <>
+                <Text style={ms.translatedText}>{lastTranslation}</Text>
+                {hasContext && (
+                  <TouchableOpacity onPress={() => setExpanded(e => !e)} style={ms.expandBtn}>
+                    <Text style={ms.expandBtnText}>{expanded ? "Hide context" : "Show context"}</Text>
+                  </TouchableOpacity>
+                )}
+              </>}
+          </ScrollView>
+
           <TouchableOpacity style={ms.closeBtn} onPress={onClose}>
             <Text style={ms.closeBtnText}>Close</Text>
           </TouchableOpacity>
@@ -622,21 +640,31 @@ const TranslationModal = ({ visible, text, contextText, onClose }) => {
 };
 
 const ms = StyleSheet.create({
-  backdrop:       { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-end" },
-  sheet:          { backgroundColor: "#141416", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40, borderTopWidth: 0.5, borderTopColor: "rgba(255,255,255,0.08)" },
-  handle:         { width: 36, height: 4, backgroundColor: "#3A3A3C", borderRadius: 2, alignSelf: "center", marginBottom: 22 },
-  langRow:        { flexDirection: "row", alignItems: "center", marginBottom: 16, gap: 12 },
-  lang:           { color: "#4FACFE", fontWeight: "700", fontSize: 14 },
-  arrow:          { color: "#3A3A3C", fontSize: 14 },
-  originalText:   { color: "#636366", fontSize: 16, lineHeight: 24, marginBottom: 16 },
-  divider:        { height: 0.5, backgroundColor: "rgba(255,255,255,0.08)", marginBottom: 16 },
-  contextText:    { color: "#8E8E93", fontSize: 15, lineHeight: 22, marginBottom: 16, fontStyle: "italic" },
-  translatedText: { color: "#FFFFFF", fontSize: 19, lineHeight: 28, fontWeight: "600", marginBottom: 12, letterSpacing: -0.2 },
-  expandBtn:      { alignSelf: "flex-start", marginBottom: 20 },
-  expandBtnText:  { color: "#4FACFE", fontSize: 13, fontWeight: "600" },
-  errorText:      { color: "#FF453A", fontSize: 15, marginBottom: 24 },
-  closeBtn:       { alignSelf: "center", paddingVertical: 11, paddingHorizontal: 36, backgroundColor: "rgba(255,255,255,0.07)", borderRadius: 22, borderWidth: 0.5, borderColor: "rgba(255,255,255,0.1)" },
-  closeBtnText:   { color: "#FFFFFF", fontWeight: "600", fontSize: 15 },
+  backdrop:          { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "flex-end" },
+  sheet:             { backgroundColor: "#141416", borderTopLeftRadius: 24, borderTopRightRadius: 24,
+                       padding: 24, paddingBottom: 0, borderTopWidth: 0.5, borderTopColor: "rgba(255,255,255,0.08)",
+                       maxHeight: "85%" },
+  handle:            { width: 36, height: 4, backgroundColor: "#3A3A3C", borderRadius: 2, alignSelf: "center", marginBottom: 22 },
+  langRow:           { flexDirection: "row", alignItems: "center", marginBottom: 16, gap: 12 },
+  lang:              { color: "#4FACFE", fontWeight: "700", fontSize: 14 },
+  arrow:             { color: "#3A3A3C", fontSize: 14 },
+  scroll:            { flexShrink: 1 },
+  scrollContent:     { paddingBottom: 8 },
+  // Previous context blocks — English + translation paired
+  contextBlock:      { marginBottom: 4 },
+  contextEnglish:    { color: "#48484A", fontSize: 13, lineHeight: 20, marginBottom: 6, fontStyle: "italic" },
+  contextTranslated: { color: "#8E8E93", fontSize: 15, lineHeight: 22, marginBottom: 12 },
+  contextDivider:    { height: 0.5, backgroundColor: "rgba(255,255,255,0.06)", marginBottom: 16 },
+  // Current paragraph
+  originalText:      { color: "#636366", fontSize: 16, lineHeight: 24, marginBottom: 16 },
+  divider:           { height: 0.5, backgroundColor: "rgba(255,255,255,0.08)", marginBottom: 16 },
+  translatedText:    { color: "#FFFFFF", fontSize: 19, lineHeight: 28, fontWeight: "600", marginBottom: 12, letterSpacing: -0.2 },
+  expandBtn:         { alignSelf: "flex-start", marginBottom: 20 },
+  expandBtnText:     { color: "#4FACFE", fontSize: 13, fontWeight: "600" },
+  errorText:         { color: "#FF453A", fontSize: 15, marginBottom: 24 },
+  closeBtn:          { alignSelf: "center", paddingVertical: 11, paddingHorizontal: 36, marginVertical: 20,
+                       backgroundColor: "rgba(255,255,255,0.07)", borderRadius: 22, borderWidth: 0.5, borderColor: "rgba(255,255,255,0.1)" },
+  closeBtnText:      { color: "#FFFFFF", fontWeight: "600", fontSize: 15 },
 });
 
 export default TranscriptHighlighter;
