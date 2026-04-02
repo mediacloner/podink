@@ -4,6 +4,7 @@ import {
     StyleSheet, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { File, Paths } from 'expo-file-system';
 import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -23,6 +24,7 @@ const MODELS = Platform.OS === 'android' ? ALL_MODELS.filter(m => !m.ios) : ALL_
 
 const SettingsScreen = () => {
     const { bottom } = useSafeAreaInsets();
+    const navigation = useNavigation();
     const [selectedModel, setSelectedModel]     = useState('base');
     const [isModelDownloaded, setIsModelDownloaded] = useState(false);
     const [isDownloading, setIsDownloading]     = useState(false);
@@ -203,6 +205,21 @@ const SettingsScreen = () => {
                 Use this if transcription appears frozen or stuck. Does not delete your existing transcripts.
             </Text>
 
+            {/* Section: Debug Log */}
+            <Text style={styles.sectionLabel}>DEBUG</Text>
+
+            <TouchableOpacity
+                style={styles.logBtn}
+                onPress={() => navigation.getParent()?.navigate('DebugLog')}
+            >
+                <Icon name="file-text" size={15} color="#AF82FF" />
+                <Text style={styles.logBtnText}>Debug log</Text>
+                <Icon name="chevron-right" size={15} color="#3A3A3C" style={{ marginLeft: 'auto' }} />
+            </TouchableOpacity>
+            <Text style={styles.resetHint}>
+                Record UI interactions and service events to diagnose transcription issues.
+            </Text>
+
         </ScrollView>
     );
 };
@@ -380,6 +397,21 @@ const styles = StyleSheet.create({
         marginTop: 10,
         lineHeight: 18,
     },
+
+    logBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginHorizontal: 16,
+        marginTop: 10,
+        paddingVertical: 15,
+        paddingHorizontal: 18,
+        borderRadius: 14,
+        backgroundColor: 'rgba(175,130,255,0.07)',
+        borderWidth: 0.5,
+        borderColor: 'rgba(175,130,255,0.18)',
+    },
+    logBtnText: { color: '#AF82FF', fontSize: 15, fontWeight: '600' },
 });
 
 export default SettingsScreen;

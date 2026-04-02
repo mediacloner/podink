@@ -48,9 +48,10 @@ const _releaseContext = async () => {
     whisperContext  = null;
     loadedModelType = null;
     if (!ctx) return;
+    log('SYSTEM', 'Releasing whisper context…');
     await Promise.race([
-        ctx.release().catch(() => {}),
-        _sleep(5000),
+        ctx.release().catch((e) => { log('SYSTEM', 'release() error (ignored)', { error: String(e) }); }),
+        _sleep(5000).then(() => { log('SYSTEM', 'release() timed out (5s) — abandoned'); }),
     ]);
 };
 
@@ -75,9 +76,22 @@ const _doInit = async () => {
     // Wrong model loaded (user changed setting) — release first
     if (whisperContext) await _releaseContext();
 
-    const modelFilePath = await ensureWhisperModel(modelType);
-    whisperContext  = await initWhisper({ filePath: modelFilePath.replace('file://', '') });
+    log('SYSTEM', 'Loading whisper model', { modelType });
+    let modelFilePath;
+    try {
+        modelFilePath = await ensureWhisperModel(modelType);
+    } catch (e) {
+        log('SYSTEM', 'ensureWhisperModel FAILED', { modelType, error: e?.message || String(e) });
+        throw e;
+    }
+    try {
+        whisperContext = await initWhisper({ filePath: modelFilePath.replace('file://', '') });
+    } catch (e) {
+        log('SYSTEM', 'initWhisper FAILED', { modelType, error: e?.message || String(e) });
+        throw e;
+    }
     loadedModelType = modelType;
+    log('SYSTEM', 'Whisper model loaded', { modelType });
     return whisperContext;
 };
 
@@ -99,7 +113,7 @@ let _abortCurrent  = false; // true when dequeueTranscription cancelled the acti
 
 // Listeners notified whenever queue state changes (for UI polling-free updates)
 const _listeners = new Set();
-const _notify    = () => _listeners.forEach(fn => fn());
+const _notify    = () => { const fns = [..._listeners]; fns.forEach(fn => fn()); };
 
 // ─── Queue persistence (survives app restarts) ─────────────────────────────────
 
@@ -122,6 +136,7 @@ const _persistQueue = () => {
  * never permanently blocked without the user having to go to Settings.
  */
 export const restoreQueue = async () => {
+    log('SYSTEM', 'restoreQueue called — hard reset flags');
     // Hard-reset all runtime flags at startup. The previous JS session's
     // in-memory state is unreliable — the only source of truth is AsyncStorage.
     _processing   = false;
@@ -152,6 +167,7 @@ export const restoreQueue = async () => {
 
 // Resume queue when app comes back to foreground
 AppState.addEventListener('change', (state) => {
+    log('SYSTEM', 'AppState changed', { state, processing: _processing, activeId: _activeId, queueLen: _queue.length });
     if (state === 'active') {
         // Use setTimeout so React Native bridge has time to settle after
         // coming back from background before we hit the Whisper native layer.
@@ -285,7 +301,10 @@ const _runNext = async () => {
         } catch (e) {
             _currentStop = null;
             lastError = e;
-            log('SERVICE', 'Transcription error', { id: entry.id, error: e.message, attempt, aborted: _abortCurrent });
+            log('SERVICE', 'Transcription error', {
+                id: entry.id, error: e?.message || String(e), attempt, aborted: _abortCurrent,
+                stack: e?.stack?.slice(0, 400),
+            });
 
             if (_abortCurrent) {
                 // Give the native Whisper thread ~500 ms to finish its own

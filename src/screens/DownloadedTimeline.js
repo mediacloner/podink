@@ -116,15 +116,18 @@ const DownloadedTimeline = ({ navigation }) => {
     const syncQueue = useCallback(() => {
         const ids       = getQueueIds();
         const curActive = getActiveId();
+        const abortId   = getAbortingId();
         const prevLen    = prevQueueLenRef.current;
         const prevActive = prevActiveIdRef.current;
         prevQueueLenRef.current = ids.length;
         prevActiveIdRef.current = curActive;
         setQueuedIds(ids);
-        // Do NOT touch activeId here — it conflicts with handleCancel's immediate
-        // clear and the onStart callback. activeId is owned by those two,
-        // plus the focus-time sync below for screen remount recovery.
-        if (ids.length < prevLen || (prevActive !== null && curActive === null)) {
+        const shouldReload = ids.length < prevLen || (prevActive !== null && curActive === null);
+        log('QUEUE', 'syncQueue', {
+            svcActiveId: curActive, abortingId: abortId, queuedIds: ids,
+            prevQueueLen: prevLen, prevActiveId: prevActive, willReload: shouldReload,
+        });
+        if (shouldReload) {
             loadData();
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -138,10 +141,11 @@ const DownloadedTimeline = ({ navigation }) => {
         if (isFocused) {
             loadData();
             initializeWhisper().catch(() => {});
-            // Recover activeId if screen was remounted while a transcription was running.
-            // Suppress if the active item is being aborted (getAbortingId matches).
             const svcActive = getActiveId();
-            setActiveId(svcActive !== null && getAbortingId() !== svcActive ? svcActive : null);
+            const abortId   = getAbortingId();
+            const recovered = svcActive !== null && abortId !== svcActive ? svcActive : null;
+            log('UI', 'Screen focused', { svcActive, abortId, recoveredActiveId: recovered });
+            setActiveId(recovered);
             syncQueue();
         }
     }, [isFocused, syncQueue]);
@@ -155,17 +159,23 @@ const DownloadedTimeline = ({ navigation }) => {
         if (!episode.local_audio_path) return;
 
         const id = episode.id;
-        log('UI', 'Transcribe tapped', { id, title: episode.title });
+        const svcActive  = getActiveId();
+        const aborting   = getAbortingId();
+        const curQueue   = getQueueIds();
+        log('UI', 'Transcribe tapped', {
+            id, title: episode.title,
+            svcActiveId: svcActive, abortingId: aborting, queueIds: curQueue,
+        });
         // Optimistic: show as Transcribing immediately ONLY when there is
         // truly nothing else pending (empty queue, no running job or only
         // an aborting job).  Two quick taps would both see getActiveId()===null
         // (before _runNext's setTimeout fires), so we also check the queue.
-        const svcActive  = getActiveId();
-        const aborting   = getAbortingId();
-        const queueEmpty = getQueueIds().length === 0;
+        const queueEmpty = curQueue.length === 0;
         if (queueEmpty && (!svcActive || aborting === svcActive)) {
             setActiveId(id);
-            log('UI', 'Optimistic active', { id });
+            log('UI', 'Optimistic → Transcribing', { id });
+        } else {
+            log('UI', 'Will show as Queued', { id, reason: !queueEmpty ? 'queue not empty' : 'another job active' });
         }
         setProgressMap(prev => ({ ...prev, [id]: 0 }));
 
@@ -174,11 +184,18 @@ const DownloadedTimeline = ({ navigation }) => {
                 id,
                 episode.local_audio_path,
                 (p) => setProgressMap(prev => ({ ...prev, [id]: p })),
-                ()  => setActiveId(id),
+                () => {
+                    log('UI', 'onStart callback fired', { id });
+                    setActiveId(id);
+                },
             );
+            log('UI', 'Transcription promise resolved', { id });
             loadData();
         } catch (e) {
-            if (e.message !== 'Cancelled' && e.message !== 'Already queued') {
+            const errStr = e?.message || String(e);
+            log('UI', 'Transcription catch', { id, error: errStr, stack: e?.stack?.slice(0, 300) });
+            if (errStr !== 'Cancelled' && errStr !== 'Already queued') {
+                log('UI', '*** ERROR ALERT SHOWN ***', { id, error: errStr });
                 showAlert(
                     'Transcription Failed',
                     'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
@@ -188,8 +205,10 @@ const DownloadedTimeline = ({ navigation }) => {
             // When done, promote the next queued item immediately so it
             // doesn't flash "Queued" while the service is still in cleanup.
             const nextIds = getQueueIds();
+            log('UI', 'handleTranscribe finally', { id, nextInQueue: nextIds });
             if (nextIds.length > 0) {
                 setActiveId(nextIds[0]);
+                log('UI', 'Promoted next → Transcribing', { promoted: nextIds[0] });
             } else {
                 setActiveId(prev => prev === id ? null : prev);
             }
@@ -199,28 +218,33 @@ const DownloadedTimeline = ({ navigation }) => {
 
     const handleCancel = useCallback((episode) => {
         const id = episode.id;
-        log('UI', 'Cancel tapped', { id, title: episode.title });
-        const wasActive = getActiveId() === id;
+        const svcActive = getActiveId();
+        const wasActive = svcActive === id;
+        log('UI', 'Cancel tapped', {
+            id, title: episode.title,
+            wasActive, svcActiveId: svcActive, queueBefore: getQueueIds(),
+        });
         setProgressMap(prev => { const n = { ...prev }; delete n[id]; return n; });
         dequeueTranscription(id);
         if (wasActive) {
-            // Promote the next queued item to Transcribing immediately,
-            // don't wait for the service cleanup (~500ms+) to finish.
             const nextIds = getQueueIds();
-            setActiveId(nextIds.length > 0 ? nextIds[0] : null);
+            const promoted = nextIds.length > 0 ? nextIds[0] : null;
+            log('UI', 'Cancel active → promote next', { promoted, queueAfter: nextIds });
+            setActiveId(promoted);
         } else {
-            // Cancelling a queued (not active) item — activeId unchanged
+            log('UI', 'Cancel queued item', { id });
             setActiveId(prev => prev === id ? null : prev);
         }
     }, []);
 
     const handleRemoveTranscript = async (episode) => {
+        log('UI', 'Remove transcript', { id: episode.id, title: episode.title });
         await deleteEpisodeTranscript(episode.id);
         loadData();
     };
 
     const handleDelete = async (episode) => {
-        // Remove from queue if waiting
+        log('UI', 'Delete episode', { id: episode.id, title: episode.title });
         dequeueTranscription(episode.id);
         if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
         await deleteEpisodeLocalData(episode.id);
@@ -236,6 +260,10 @@ const DownloadedTimeline = ({ navigation }) => {
                     const isActive   = activeId === item.id;
                     const isQueued   = queuedIds.includes(item.id);
                     const progress   = progressMap[item.id] ?? 0;
+                    const btnState   = isActive ? 'Transcribing'
+                                     : (isQueued && !isActive) ? 'Queued'
+                                     : item.has_transcript ? 'HasTranscript'
+                                     : 'Idle';
 
                     return (
                         <SwipeableRow
@@ -244,7 +272,10 @@ const DownloadedTimeline = ({ navigation }) => {
                         >
                             <EpisodeItem
                                 episode={item}
-                                onPress={(ep) => navigation.navigate('Player', { episode: ep })}
+                                onPress={(ep) => {
+                                    log('UI', 'Episode tapped → Player', { id: ep.id, title: ep.title, btnState });
+                                    navigation.navigate('Player', { episode: ep });
+                                }}
                                 onTranscribe={!isQueued && !isActive ? handleTranscribe : undefined}
                                 onCancel={handleCancel}
                                 isTranscribing={isActive}

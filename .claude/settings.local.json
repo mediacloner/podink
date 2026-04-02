@@ -44,7 +44,8 @@
       "Bash(sips -z 162 162 \"$SRC\" --out \"$RES/drawable-hdpi/ic_launcher_foreground.png\")",
       "Bash(sips -z 216 216 \"$SRC\" --out \"$RES/drawable-xhdpi/ic_launcher_foreground.png\")",
       "Bash(./gradlew app:assembleDebug)",
-      "Bash(wait)"
+      "Bash(wait)",
+      "Bash(npx react-native-community/cli doctor)"
     ]
   }
 }
