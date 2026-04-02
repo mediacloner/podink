@@ -1,7 +1,7 @@
 /**
  * AppAlert — custom in-app alert that matches the app's dark design.
  *
- * Usage (imperative, callable from anywhere):
+ * Usage (callable from anywhere, no setup required in the caller):
  *
  *   import { showAlert } from '../components/AppAlert';
  *
@@ -11,22 +11,14 @@
  *     { text: 'Delete',  style: 'destructive', onPress: () => doIt() },
  *   ]);
  *
- * Register once in App.js (inside SafeAreaProvider):
+ * Mount once at the root (App.js), no ref or extra wiring needed:
  *
- *   import AppAlert, { setAlertRef } from './components/AppAlert';
- *   const alertRef = useRef();
- *   useEffect(() => setAlertRef(alertRef.current), []);
- *   <AppAlert ref={alertRef} />
+ *   import AppAlert from './components/AppAlert';
+ *   // inside JSX:
+ *   <AppAlert />
  */
 
-import React, {
-    forwardRef,
-    useCallback,
-    useEffect,
-    useImperativeHandle,
-    useRef,
-    useState,
-} from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Animated,
     Dimensions,
@@ -39,14 +31,15 @@ import {
 } from 'react-native';
 
 // ─── Imperative bridge ────────────────────────────────────────────────────────
+// The component registers _show when it mounts and clears it on unmount.
+// No external ref wiring needed — avoids the timing issues with
+// forwardRef + useImperativeHandle + parent useEffect on Android.
 
-let _ref = null;
-
-export const setAlertRef = (ref) => { _ref = ref; };
+let _show = null;
 
 export const showAlert = (title, message, buttons) => {
-    if (_ref) {
-        _ref.show(title, message ?? '', buttons ?? [{ text: 'OK' }]);
+    if (_show) {
+        _show(title ?? '', message ?? '', buttons?.length ? buttons : [{ text: 'OK' }]);
     }
 };
 
@@ -55,7 +48,7 @@ export const showAlert = (title, message, buttons) => {
 const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_WIDTH = Math.min(320, SCREEN_W - 56);
 
-const AppAlert = forwardRef((_props, ref) => {
+const AppAlert = () => {
     const [visible,  setVisible]  = useState(false);
     const [title,    setTitle]    = useState('');
     const [message,  setMessage]  = useState('');
@@ -65,56 +58,40 @@ const AppAlert = forwardRef((_props, ref) => {
     const scaleAnim    = useRef(new Animated.Value(0.88)).current;
     const opacityAnim  = useRef(new Animated.Value(0)).current;
 
-    // ── Animate in after React commits the Modal to the native layer ──────────
-    // useEffect is guaranteed to fire after commit, so the native view exists
-    // and the native-driver animations have views to connect to.
+    // Self-register when mounted so showAlert() works from anywhere
+    useEffect(() => {
+        _show = (t, m, btns) => {
+            setTitle(t);
+            setMessage(m);
+            setButtons(btns);
+            setVisible(true);
+        };
+        return () => { _show = null; };
+    }, []);
+
+    // Animate in after React commits the Modal (useEffect fires post-commit)
     useEffect(() => {
         if (!visible) return;
-
-        // Reset to starting values synchronously so the card begins invisible
         backdropAnim.setValue(0);
         scaleAnim.setValue(0.88);
         opacityAnim.setValue(0);
-
         Animated.parallel([
-            Animated.timing(backdropAnim, {
-                toValue: 1, duration: 200, useNativeDriver: true,
-            }),
-            Animated.spring(scaleAnim, {
-                toValue: 1, damping: 20, stiffness: 280, useNativeDriver: true,
-            }),
-            Animated.timing(opacityAnim, {
-                toValue: 1, duration: 160, useNativeDriver: true,
-            }),
+            Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+            Animated.spring(scaleAnim,    { toValue: 1, damping: 20, stiffness: 280, useNativeDriver: true }),
+            Animated.timing(opacityAnim,  { toValue: 1, duration: 160, useNativeDriver: true }),
         ]).start();
     }, [visible, backdropAnim, scaleAnim, opacityAnim]);
 
     const dismiss = useCallback((btn) => {
         Animated.parallel([
-            Animated.timing(backdropAnim, {
-                toValue: 0, duration: 160, useNativeDriver: true,
-            }),
-            Animated.timing(opacityAnim, {
-                toValue: 0, duration: 130, useNativeDriver: true,
-            }),
-            Animated.timing(scaleAnim, {
-                toValue: 0.92, duration: 140, useNativeDriver: true,
-            }),
+            Animated.timing(backdropAnim, { toValue: 0, duration: 160, useNativeDriver: true }),
+            Animated.timing(opacityAnim,  { toValue: 0, duration: 130, useNativeDriver: true }),
+            Animated.timing(scaleAnim,    { toValue: 0.92, duration: 140, useNativeDriver: true }),
         ]).start(() => {
             setVisible(false);
             btn?.onPress?.();
         });
     }, [backdropAnim, opacityAnim, scaleAnim]);
-
-    useImperativeHandle(ref, () => ({
-        show(t, m, btns) {
-            setTitle(t ?? '');
-            setMessage(m ?? '');
-            setButtons(btns?.length ? btns : [{ text: 'OK' }]);
-            setVisible(true);
-            // Animations are triggered by the useEffect above that watches `visible`
-        },
-    }));
 
     const handleBackdropPress = useCallback(() => {
         const cancel = buttons.find(b => b.style === 'cancel');
@@ -123,9 +100,6 @@ const AppAlert = forwardRef((_props, ref) => {
 
     const horizontal = buttons.length <= 2;
 
-    // The Modal is always mounted — only its visibility is toggled.
-    // This is critical on Android: mounting a Modal with visible=true for the
-    // first time can be unreliable; keeping it mounted avoids the issue.
     return (
         <Modal
             transparent
@@ -134,17 +108,14 @@ const AppAlert = forwardRef((_props, ref) => {
             statusBarTranslucent
             onRequestClose={handleBackdropPress}
         >
-            {/* Dimmed backdrop */}
             <Animated.View style={[s.backdrop, { opacity: backdropAnim }]} />
             <Pressable style={StyleSheet.absoluteFill} onPress={handleBackdropPress} />
 
-            {/* Card — centred via absolute positioning so Pressable above covers edges */}
             <View style={s.centerer} pointerEvents="box-none">
                 <Animated.View style={[
                     s.card,
                     { opacity: opacityAnim, transform: [{ scale: scaleAnim }] },
                 ]}>
-                    {/* Text */}
                     <View style={s.textBlock}>
                         <Text style={s.title}>{title}</Text>
                         {!!message && <Text style={s.message}>{message}</Text>}
@@ -152,7 +123,6 @@ const AppAlert = forwardRef((_props, ref) => {
 
                     <View style={s.dividerH} />
 
-                    {/* Buttons */}
                     <View style={horizontal ? s.btnRow : s.btnCol}>
                         {buttons.map((btn, idx) => {
                             const isDestructive = btn.style === 'destructive';
@@ -186,7 +156,7 @@ const AppAlert = forwardRef((_props, ref) => {
             </View>
         </Modal>
     );
-});
+};
 
 export default AppAlert;
 
@@ -215,7 +185,6 @@ const s = StyleSheet.create({
         shadowRadius: 24,
         elevation: 16,
     },
-
     textBlock: {
         paddingHorizontal: 24,
         paddingTop: 24,
@@ -223,38 +192,18 @@ const s = StyleSheet.create({
         alignItems: 'center',
         gap: 8,
     },
-    title: {
-        fontSize: 17,
-        fontWeight: '700',
-        color: '#FFFFFF',
-        textAlign: 'center',
-        letterSpacing: -0.2,
-    },
-    message: {
-        fontSize: 14,
-        color: '#AEAEB2',
-        textAlign: 'center',
-        lineHeight: 20,
-    },
+    title:   { fontSize: 17, fontWeight: '700', color: '#FFFFFF', textAlign: 'center', letterSpacing: -0.2 },
+    message: { fontSize: 14, color: '#AEAEB2', textAlign: 'center', lineHeight: 20 },
 
-    dividerH: {
-        height: StyleSheet.hairlineWidth,
-        backgroundColor: 'rgba(255,255,255,0.08)',
-    },
-    dividerV: {
-        width: StyleSheet.hairlineWidth,
-        backgroundColor: 'rgba(255,255,255,0.08)',
-    },
+    dividerH: { height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.08)' },
+    dividerV: { width:  StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.08)' },
 
-    btnRow: { flexDirection: 'row' },
-    btnCol: { flexDirection: 'column' },
+    btnRow:  { flexDirection: 'row' },
+    btnCol:  { flexDirection: 'column' },
     btnFlex: { flex: 1 },
-    btn: {
-        paddingVertical: 16,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    btnText:        { fontSize: 15, fontWeight: '600' },
+    btn:     { paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
+    btnText: { fontSize: 15, fontWeight: '600' },
+
     btnDefault:     { color: '#4FACFE' },
     btnCancel:      { color: '#AEAEB2', fontWeight: '400' },
     btnDestructive: { color: '#FF453A' },

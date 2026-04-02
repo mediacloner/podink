@@ -110,7 +110,6 @@ const EpisodeItem = ({
                   >
                     <Icon name="clock" size={11} color="#FF9F0A" />
                     <Text style={styles.pillQueuedText}>Queued</Text>
-                    <Icon name="x" size={11} color="#FF453A" />
                   </TouchableOpacity>
                 ) : onTranscribe && !episode.has_transcript ? (
                   <TouchableOpacity
