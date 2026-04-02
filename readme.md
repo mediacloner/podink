@@ -1,39 +1,164 @@
-# Offline Podcast & Transcription App
+# Podink
 
-## 1. Project Overview
-A React Native mobile application that allows users to subscribe to RSS podcast feeds, download audio files for offline listening, and generate synchronised text transcripts entirely on-device without relying on cloud APIs.
+A React Native podcast app with on-device AI transcription, word-by-word transcript highlighting, and offline playback.
 
-## 2. Core Features
-* **Feed Management:** Parse and subscribe to standard podcast RSS feeds.
-* **Local Storage:** Download and manage `.mp3` or `.m4a` audio files directly on the device file system.
-* **On-Device Transcription:** Utilise a local machine learning model to generate transcripts from downloaded audio files.
-* **Subscribed Timeline:** A feed displaying all newly released episodes from subscribed podcasts, ordered chronologically.
-* **Downloaded Timeline:** A separate library view showing only episodes that are downloaded and available for offline playback and transcription.
-* **Synchronised Playback:** An audio player with an interactive, scrolling transcript that highlights words in real-time, mirroring the Apple Podcasts experience.
+## Features
 
-## 3. Recommended Technology Stack
-* **Framework:** React Native (Bare Workflow - required for native C++ linking)
-* **Local Database:** WatermelonDB or SQLite
-* **File Storage:** `react-native-fs`
-* **Audio Playback:** `react-native-track-player`
-* **Transcription:** `whisper.rn` (Whisper.cpp)
+### Core Podcast
+- Subscribe via RSS URL or Apple Podcasts link
+- Browse episodes from all subscribed feeds
+- Stream episodes or download for offline listening
+- Resume playback from where you left off (position saved every 5s)
+- Background audio with lock screen / notification controls
 
-## 4. Application Architecture & Data Flow
+### Playback
+- Full-screen player with artwork, episode info, and transcript
+- Mini player floating above tab bar — quick controls without leaving the current screen
+- Skip ±10 seconds, seek slider, time display
+- Dynamic header color extracted from podcast artwork
 
-### The Download & Transcription Pipeline
-1. **Fetch & Parse:** The app polls the RSS feed and updates the database with new episode metadata.
-2. **Download:** The user selects an episode. The app streams the audio file to the device's local storage.
-3. **Model Verification:** Before transcribing, the app checks if the necessary Whisper ML model (e.g., `ggml-tiny.bin`) is present on the device.
-4. **Transcription Execution:** Once downloaded, the user taps 'Transcribe'. The app passes the local audio file path to `whisper.rn`.
-5. **Data Output:** The Whisper model outputs an array of text segments paired with start and end timestamps.
-6. **Storage:** This timestamped JSON or VTT data is saved to the local database linked to the episode ID.
+### On-Device Transcription (Whisper)
+- Fully offline — no audio ever leaves the device
+- 5 model options: Tiny, Base, Base Q8, Small, Small Q8
+- FIFO queue — transcribe multiple episodes sequentially
+- Real-time progress per episode
 
-### The UI/UX Views
-* **The Subscribed Timeline:** Pulls directly from the database's `Episodes` table, filtering for the latest release dates across all active subscriptions.
-* **The Downloaded Timeline:** Filters the `Episodes` table where the `is_downloaded` flag is true, allowing offline users to immediately see accessible content.
-* **The Player & Transcript View:** Uses `react-native-track-player` to get the current playback position in milliseconds. A FlatList or ScrollView listens to this timecode and automatically scrolls to the matching transcript segment, highlighting the active text block.
+### Transcript Features
+- Word-by-word highlight synchronized to playback position
+- Auto-scroll keeps active text centered (pauses on manual scroll)
+- Tap any sentence to jump playback to that timestamp
+- 10-minute navigation markers
+- Translation modal (long-press a sentence → English + Spanish via Google Translate)
 
-## 5. Technical Challenges & Considerations
-* **App Size & Model Storage:** Offline transcription requires shipping or downloading a machine learning model. The 'Tiny' Whisper model is roughly 75MB. You will need to build a UI to prompt the user to download this model upon first use.
-* **Battery & Thermal Throttling:** Running audio processing locally is heavily demanding on the CPU/GPU. You must warn users that transcription will consume significant battery life and may warm up the device.
-* **Format Conversion:** Whisper.cpp typically requires a specific audio format (like 16kHz WAV). You may need to use `react-native-ffmpeg` to invisibly convert downloaded mp3s into a compatible format before passing them to the transcription engine.
+---
+
+## Tech Stack
+
+| Category | Library | Version |
+|---|---|---|
+| Framework | React Native | 0.83.4 |
+| Build system | Expo | ~55.0.9 |
+| Navigation | React Navigation (bottom-tabs + native-stack) | 6.x |
+| Audio playback | react-native-track-player | 4.1.2 |
+| Transcription | whisper.rn | 0.5.5 |
+| Animations | react-native-reanimated | 4.2.1 |
+| Database | expo-sqlite | ~55.0.11 |
+| File system | expo-file-system | ~55.0.12 |
+| Preferences | @react-native-async-storage | 2.2.0 |
+| Network info | @react-native-community/netinfo | ^11.3.0 |
+| RSS parsing | react-native-rss-parser | ^1.5.1 |
+| Image colors | react-native-image-colors | ^2.6.0 |
+
+---
+
+## Project Structure
+
+```
+src/
+├── api/
+│   ├── rssParser.js              # RSS feed parsing & episode normalization
+│   └── podcastResolver.js        # Resolves Apple Podcasts URLs → RSS feed URLs
+├── components/
+│   ├── EpisodeItem.js            # Episode list row with download/transcribe actions
+│   ├── MiniPlayer.js             # Floating compact player above tab bar
+│   ├── PlayerControls.js         # Full-screen playback controls (slider, skip, play/pause)
+│   └── TranscriptHighlighter.js  # Word-synced transcript with auto-scroll & translation
+├── database/
+│   ├── db.js                     # SQLite schema initialization
+│   └── queries.js                # All DB read/write operations
+├── screens/
+│   ├── SubscribedTimeline.js     # "Discover" tab — browse & add podcast feeds
+│   ├── DownloadedTimeline.js     # "Library" tab — manage downloads & transcription queue
+│   ├── PodcastsScreen.js         # "My Podcasts" tab — subscriptions list
+│   ├── PlayerScreen.js           # Full-screen player modal
+│   └── SettingsScreen.js         # Whisper model management
+└── services/
+    ├── trackPlayer.js            # react-native-track-player wrapper
+    ├── playbackService.js        # Background playback event handler
+    ├── whisperService.js         # Whisper transcription queue & model management
+    ├── downloadService.js        # Audio & model downloads with progress
+    └── colorExtractor.js         # Dominant color extraction from artwork
+```
+
+---
+
+## Database Schema
+
+**Episodes**
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT | Primary key |
+| title | TEXT | |
+| description | TEXT | |
+| podcast_title | TEXT | |
+| podcast_feed_url | TEXT | |
+| release_date | TEXT | |
+| audio_url | TEXT | Remote URL |
+| local_audio_path | TEXT | Set when downloaded |
+| is_downloaded | INTEGER | 0 or 1 |
+| has_transcript | INTEGER | 0 or 1 |
+| play_position | INTEGER | Seconds |
+
+**Podcasts**
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER | Auto-increment |
+| title | TEXT | |
+| description | TEXT | |
+| feed_url | TEXT | Unique |
+| image_url | TEXT | |
+| subscribed_at | TIMESTAMP | |
+
+**Transcripts**
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER | Auto-increment |
+| episode_id | TEXT | FK → Episodes.id |
+| start_time | INTEGER | Milliseconds |
+| end_time | INTEGER | Milliseconds |
+| text | TEXT | Segment text |
+
+---
+
+## Building
+
+### Prerequisites
+- Node.js 18+
+- Android Studio with NDK `27.1.12297006`
+- Java 17+
+
+### Install dependencies
+```bash
+npm install
+```
+
+### Run in development
+```bash
+npm run android
+```
+
+### Build release APK
+```bash
+cd android && ./gradlew assembleRelease
+```
+
+Output: `android/app/build/outputs/apk/release/app-release.apk`
+
+---
+
+## Versions
+
+| Version | versionCode | Notes |
+|---|---|---|
+| 1.0.0 | 1 | Initial release |
+| 1.1.0 | 2 | Current |
+
+---
+
+## Notes
+
+- **Whisper models** are downloaded on-demand from Settings. Android avoids quantized (Q8) models by default due to compatibility issues.
+- **MiniPlayer** is only mounted after the first play event to avoid Android elevation/visibility bugs.
+- **Transcript auto-scroll** detects manual user scrolling and pauses; it resumes after a short idle timeout.
+- **Spotify links** are not supported — Spotify does not expose RSS feeds.
+- The release signing config currently uses the debug keystore. For production distribution, replace with a proper release keystore.
