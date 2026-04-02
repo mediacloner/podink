@@ -1,8 +1,10 @@
 import { initWhisper } from 'whisper.rn';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureWhisperModel } from './downloadService';
 import { saveTranscripts } from '../database/queries';
+
+const QUEUE_PERSIST_KEY = '@transcription_queue_v1';
 
 // ─── Whisper context singleton ────────────────────────────────────────────────
 
@@ -51,6 +53,37 @@ let _processing = false;
 // Listeners notified whenever queue state changes (for UI polling-free updates)
 const _listeners = new Set();
 const _notify = () => _listeners.forEach(fn => fn());
+
+// ─── Queue persistence (survives app restarts) ────────────────────────────────
+
+// Persisted map: id -> audioFilePath for all pending + active items
+const _persistedItems = new Map();
+
+const _persistQueue = () => {
+    const items = Array.from(_persistedItems.entries()).map(([id, audioFilePath]) => ({ id, audioFilePath }));
+    AsyncStorage.setItem(QUEUE_PERSIST_KEY, JSON.stringify(items)).catch(() => {});
+};
+
+/**
+ * Restore any unfinished transcriptions from the previous session.
+ * Call this once on app startup after the DB is ready.
+ */
+export const restoreQueue = async () => {
+    try {
+        const raw = await AsyncStorage.getItem(QUEUE_PERSIST_KEY);
+        if (!raw) return;
+        const items = JSON.parse(raw);
+        for (const { id, audioFilePath } of items) {
+            if (_activeId === id || _queue.some(e => e.id === id)) continue;
+            enqueueTranscription(id, audioFilePath, null, null).catch(() => {});
+        }
+    } catch (_) {}
+};
+
+// Resume queue when app comes back to foreground (handles mid-queue backgrounding)
+AppState.addEventListener('change', (state) => {
+    if (state === 'active') _runNext();
+});
 
 export const onQueueChange = (fn) => {
     _listeners.add(fn);
@@ -114,6 +147,8 @@ const _runNext = async () => {
     } catch (e) {
         entry.reject(e);
     } finally {
+        _persistedItems.delete(entry.id);
+        _persistQueue();
         _processing = false;
         _activeId = null;
         _notify();
@@ -137,6 +172,8 @@ export const enqueueTranscription = (id, audioFilePath, onProgress, onStart) => 
     }
 
     return new Promise((resolve, reject) => {
+        _persistedItems.set(id, audioFilePath);
+        _persistQueue();
         _queue.push({ id, audioFilePath, onProgress, onStart, resolve, reject });
         _notify();
         _runNext();
@@ -151,6 +188,8 @@ export const dequeueTranscription = (id) => {
     if (idx !== -1) {
         _queue[idx].reject(new Error('Cancelled'));
         _queue.splice(idx, 1);
+        _persistedItems.delete(id);
+        _persistQueue();
         _notify();
     }
 };
