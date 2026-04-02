@@ -96,9 +96,9 @@ const EpisodeItem = ({
                     onPress={() => onCancel?.(episode)}
                     activeOpacity={0.7}
                   >
-                    <Icon name="x" size={12} color="#FF453A" />
+                    <Icon name="x" size={12} color="#FF9F0A" />
                     <Text style={styles.pillCancelText}>
-                      {transcribeProgress > 0 ? `${transcribeProgress}%` : "…"}
+                      Transcribe {transcribeProgress > 0 ? `${transcribeProgress}%` : "…"}
                     </Text>
                   </TouchableOpacity>
                 ) : isQueued && !episode.has_transcript ? (
@@ -233,11 +233,11 @@ const styles = StyleSheet.create({
   },
   pillQueuedText: { fontSize: 12, fontWeight: "600", color: "#FF9F0A" },
   pillCancelling: {
-    backgroundColor: "rgba(255,69,58,0.10)",
+    backgroundColor: "rgba(255,159,10,0.10)",
     borderWidth: 0.5,
-    borderColor: "rgba(255,69,58,0.25)",
+    borderColor: "rgba(255,159,10,0.25)",
   },
-  pillCancelText: { fontSize: 12, fontWeight: "700", color: "#FF453A" },
+  pillCancelText: { fontSize: 12, fontWeight: "700", color: "#FF9F0A" },
   pillGreen: {
     backgroundColor: "rgba(52,199,89,0.10)",
     borderWidth: 0.5,
