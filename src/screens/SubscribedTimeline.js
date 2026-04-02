@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
     View, FlatList, StyleSheet, TextInput,
-    TouchableOpacity, Text, ActivityIndicator, Alert,
+    TouchableOpacity, Text, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, Easing,
 } from 'react-native-reanimated';
 import NetInfo from '@react-native-community/netinfo';
+import { showAlert } from '../components/AppAlert';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
@@ -98,7 +99,7 @@ const SubscribedTimeline = ({ navigation }) => {
 
     const handleDownload = async (episode) => {
         if (!isConnected) {
-            Alert.alert('Offline', 'You need an internet connection to download episodes.');
+            showAlert('Offline', 'You need an internet connection to download episodes.');
             return;
         }
         if (!episode.audio_url) return;
@@ -115,7 +116,7 @@ const SubscribedTimeline = ({ navigation }) => {
             loadData();
         } catch (e) {
             console.error('Download failed', e);
-            Alert.alert('Error', 'Failed to download episode.');
+            showAlert('Error', 'Failed to download episode.');
         } finally {
             setDownloads(prev => { const n = { ...prev }; delete n[episode.id]; return n; });
         }
@@ -125,7 +126,7 @@ const SubscribedTimeline = ({ navigation }) => {
     useEffect(() => {
         const svc = detectService(rssUrl);
         if (svc === 'Spotify' && prevServiceRef.current !== 'Spotify') {
-            Alert.alert(
+            showAlert(
                 'Spotify not supported',
                 'Spotify does not provide public RSS feeds. Try finding the podcast on Apple Podcasts or the show\'s website.',
             );
@@ -165,7 +166,7 @@ const SubscribedTimeline = ({ navigation }) => {
 
     const handleAddFeed = async () => {
         if (!isConnected) {
-            Alert.alert('Offline', 'You need an internet connection to add a feed.');
+            showAlert('Offline', 'You need an internet connection to add a feed.');
             return;
         }
         if (!rssUrl.trim()) return;
@@ -192,7 +193,7 @@ const SubscribedTimeline = ({ navigation }) => {
             loadData();
             togglePanel();
         } catch (e) {
-            Alert.alert('Could not add podcast', e.message || 'Check the link and try again.');
+            showAlert('Could not add podcast', e.message || 'Check the link and try again.');
             console.error(e);
         } finally {
             setIsFetching(false);
