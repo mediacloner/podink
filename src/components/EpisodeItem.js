@@ -98,8 +98,9 @@ const EpisodeItem = ({
                   >
                     <Icon name="x" size={12} color="#FF9F0A" />
                     <Text style={styles.pillCancelText}>
-                      Transcribe {transcribeProgress > 0 ? `${transcribeProgress}%` : "…"}
+                      {transcribeProgress > 0 ? `${transcribeProgress}%` : "Processing…"}
                     </Text>
+                    <ActivityIndicator size={10} color="#FF9F0A" style={{ marginLeft: 2 }} />
                   </TouchableOpacity>
                 ) : isQueued && !episode.has_transcript ? (
                   // Waiting in queue — tap to remove
