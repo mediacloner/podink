@@ -194,7 +194,7 @@ const DownloadedTimeline = ({ navigation }) => {
         } catch (e) {
             const errStr = e?.message || String(e);
             log('UI', 'Transcription catch', { id, error: errStr, stack: e?.stack?.slice(0, 300) });
-            if (errStr !== 'Cancelled' && errStr !== 'Already queued') {
+            if (errStr !== 'Cancelled' && errStr !== 'Already queued' && errStr !== 'Queue reset') {
                 log('UI', '*** ERROR ALERT SHOWN ***', { id, error: errStr });
                 showAlert(
                     'Transcription Failed',
