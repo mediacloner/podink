@@ -47,6 +47,12 @@ export const initDB = async () => {
       );`
     );
 
+    // Migrate: add is_new column if missing
+    const cols = await db.getAllAsync(`PRAGMA table_info(Episodes)`);
+    if (!cols.some(c => c.name === 'is_new')) {
+        await db.execAsync(`ALTER TABLE Episodes ADD COLUMN is_new INTEGER DEFAULT 0`);
+    }
+
     // Create Transcripts table (segments of an episode)
     await db.execAsync(
       `CREATE TABLE IF NOT EXISTS Transcripts (

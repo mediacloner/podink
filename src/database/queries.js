@@ -22,9 +22,10 @@ export const getSubscribedEpisodes = async () => {
 
 export const saveEpisode = async (episode) => {
   const db = await openDatabaseContext();
+  // INSERT OR IGNORE preserves is_new, is_downloaded, local_audio_path, etc. for existing episodes
   await db.runAsync(
-    `INSERT OR REPLACE INTO Episodes (id, title, description, podcast_title, podcast_feed_url, release_date, audio_url, is_downloaded)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR IGNORE INTO Episodes (id, title, description, podcast_title, podcast_feed_url, release_date, audio_url, is_downloaded, is_new)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     [
       episode.id,
       episode.title,
@@ -55,10 +56,7 @@ export const getPodcasts = async () => {
 export const deletePodcast = async (feedUrl) => {
   const db = await openDatabaseContext();
   await db.runAsync('DELETE FROM Podcasts WHERE feed_url = ?', [feedUrl]);
-  await db.runAsync(
-    `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0 WHERE podcast_feed_url = ?`,
-    [feedUrl]
-  );
+  await db.runAsync('DELETE FROM Episodes WHERE podcast_feed_url = ?', [feedUrl]);
 };
 
 export const updateEpisodeLocalPath = async (id, localPath) => {
@@ -112,6 +110,64 @@ export const savePlayPosition = async (id, positionSeconds) => {
     `UPDATE Episodes SET play_position = ? WHERE id = ?`,
     [positionSeconds, id]
   );
+};
+
+export const getNewEpisodesCountForPodcast = async (feedUrl) => {
+  const db = await openDatabaseContext();
+  const row = await db.getFirstAsync(
+    'SELECT COUNT(*) as count FROM Episodes WHERE podcast_feed_url = ? AND is_new = 1',
+    [feedUrl]
+  );
+  return Math.min(row?.count ?? 0, 5);
+};
+
+export const getLatestEpisodesForPodcast = async (feedUrl, limit = 5) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(`
+    SELECT e.*, p.image_url
+    FROM Episodes e
+    LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
+    WHERE e.podcast_feed_url = ?
+    ORDER BY e.release_date DESC
+    LIMIT ?
+  `, [feedUrl, limit]);
+};
+
+export const markPodcastEpisodesAsSeen = async (feedUrl) => {
+  const db = await openDatabaseContext();
+  await db.runAsync('UPDATE Episodes SET is_new = 0 WHERE podcast_feed_url = ?', [feedUrl]);
+};
+
+// Keep only the latest maxNew episodes marked as new; mark the rest as seen
+export const capNewEpisodes = async (feedUrl, maxNew = 5) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(`
+    UPDATE Episodes SET is_new = 0
+    WHERE podcast_feed_url = ?
+      AND is_new = 1
+      AND id NOT IN (
+        SELECT id FROM Episodes
+        WHERE podcast_feed_url = ? AND is_new = 1
+        ORDER BY release_date DESC
+        LIMIT ?
+      )
+  `, [feedUrl, feedUrl, maxNew]);
+};
+
+export const pruneOldEpisodesForPodcast = async (feedUrl, maxKeep) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(`
+    DELETE FROM Episodes
+    WHERE podcast_feed_url = ?
+      AND is_downloaded = 0
+      AND has_transcript = 0
+      AND id NOT IN (
+        SELECT id FROM Episodes
+        WHERE podcast_feed_url = ?
+        ORDER BY release_date DESC
+        LIMIT ?
+      )
+  `, [feedUrl, feedUrl, maxKeep]);
 };
 
 export const getEpisodeById = async (id) => {

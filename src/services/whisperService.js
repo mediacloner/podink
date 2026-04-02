@@ -2,6 +2,7 @@ import { initWhisper } from 'whisper.rn';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureWhisperModel } from './downloadService';
+import { saveTranscripts } from '../database/queries';
 
 // ─── Whisper context singleton ────────────────────────────────────────────────
 
@@ -108,6 +109,7 @@ const _runNext = async () => {
             end:   seg.t1 * 10,
             text:  seg.text,
         }));
+        await saveTranscripts(entry.id, segments);
         entry.resolve(segments);
     } catch (e) {
         entry.reject(e);
