@@ -22,6 +22,8 @@ const _stopFgService = () => {
     if (FgService) FgService.stop();
 };
 
+const _sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 // ─── Whisper context management ────────────────────────────────────────────────
 //
 // The native Whisper context must be explicitly released before re-initializing.
@@ -31,14 +33,24 @@ let whisperContext   = null;
 let loadedModelType  = null;
 let initializingPromise = null;
 
-/** Release the native Whisper context and clear all references. */
+/**
+ * Release the native Whisper context and clear all references.
+ *
+ * A 5-second hard timeout prevents a permanent hang: calling release()
+ * immediately after stop() can deadlock on Android — release() waits for the
+ * native transcription thread, which is itself waiting to finish its abort
+ * sequence. If release() doesn't return within 5 s we abandon the reference
+ * and continue so the queue can recover.
+ */
 const _releaseContext = async () => {
     const ctx = whisperContext;
     whisperContext  = null;
     loadedModelType = null;
-    if (ctx) {
-        try { await ctx.release(); } catch (_) {}
-    }
+    if (!ctx) return;
+    await Promise.race([
+        ctx.release().catch(() => {}),
+        _sleep(5000),
+    ]);
 };
 
 const _doInit = async () => {
@@ -99,8 +111,30 @@ const _persistQueue = () => {
 /**
  * Restore any unfinished transcriptions from the previous session.
  * Call this once on app startup after the DB is ready.
+ *
+ * Also installs a one-shot 90-second watchdog: if the service is still
+ * "processing" 90 s after the app starts (likely stuck from a bad state
+ * carried over within the same process), it auto-resets so the app is
+ * never permanently blocked without the user having to go to Settings.
  */
 export const restoreQueue = async () => {
+    // Hard-reset all runtime flags at startup. The previous JS session's
+    // in-memory state is unreliable — the only source of truth is AsyncStorage.
+    _processing   = false;
+    _activeId     = null;
+    _abortCurrent = false;
+    _currentStop  = null;
+    _queue.length = 0;
+    _persistedItems.clear();
+
+    // Startup watchdog: if anything gets stuck within the first session,
+    // auto-recover after 90 s so the user never has to manually reset.
+    setTimeout(async () => {
+        if (_processing) {
+            await resetService();
+        }
+    }, 90_000);
+
     try {
         const raw = await AsyncStorage.getItem(QUEUE_PERSIST_KEY);
         if (!raw) return;
@@ -242,6 +276,15 @@ const _runNext = async () => {
         } catch (e) {
             _currentStop = null;
             lastError = e;
+
+            if (_abortCurrent) {
+                // Give the native Whisper thread ~500 ms to finish its own
+                // teardown after stop() before we call release(). Releasing
+                // immediately causes a deadlock on Android: release() blocks
+                // waiting for the thread, which is itself mid-abort.
+                await _sleep(500);
+            }
+
             // Ensure the context is torn down before the next attempt.
             // Calling transcribe() on a context that threw will crash natively.
             await _releaseContext();
@@ -277,8 +320,6 @@ const _runNext = async () => {
     }
 };
 
-const _sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
 // ─── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -286,7 +327,11 @@ const _sleep = (ms) => new Promise(r => setTimeout(r, ms));
  * segments when this episode's turn comes and transcription completes.
  */
 export const enqueueTranscription = (id, audioFilePath, onProgress, onStart) => {
-    if (_activeId === id || _queue.some(e => e.id === id)) {
+    // Allow re-enqueue if the active job for this ID is already being aborted.
+    // Without this, tapping "Transcribe" immediately after "Cancel" is silently
+    // rejected because _activeId still equals id while the abort cleanup runs.
+    const isBeingAborted = _activeId === id && _abortCurrent;
+    if (!isBeingAborted && (_activeId === id || _queue.some(e => e.id === id))) {
         return Promise.reject(new Error('Already queued'));
     }
 
