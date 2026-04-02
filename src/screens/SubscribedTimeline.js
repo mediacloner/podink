@@ -16,6 +16,7 @@ import { getSubscribedEpisodes, saveEpisode, updateEpisodeLocalPath, savePodcast
 import { downloadAudioFile } from '../services/downloadService';
 import { fetchPodcastFeed } from '../api/rssParser';
 import { resolveToRssUrl, detectService } from '../api/podcastResolver';
+import { log } from '../services/logService';
 
 const PANEL_HEIGHT = 64; // inputRow height when open
 const MAX_EPISODES_PER_PODCAST = 50;
@@ -98,6 +99,7 @@ const SubscribedTimeline = ({ navigation }) => {
     };
 
     const handleDownload = async (episode) => {
+        log('UI', 'Download tapped', { id: episode.id, title: episode.title });
         if (!isConnected) {
             showAlert('Offline', 'You need an internet connection to download episodes.');
             return;
@@ -112,9 +114,11 @@ const SubscribedTimeline = ({ navigation }) => {
                 filename,
                 (p) => setDownloads(prev => ({ ...prev, [episode.id]: p })),
             );
+            log('UI', 'Download completed', { id: episode.id });
             await updateEpisodeLocalPath(episode.id, localPath);
             loadData();
         } catch (e) {
+            log('UI', 'Download failed', { id: episode.id, error: e.message });
             console.error('Download failed', e);
             showAlert('Error', 'Failed to download episode.');
         } finally {
@@ -165,6 +169,7 @@ const SubscribedTimeline = ({ navigation }) => {
     };
 
     const handleAddFeed = async () => {
+        log('UI', 'Add feed tapped', { url: rssUrl });
         if (!isConnected) {
             showAlert('Offline', 'You need an internet connection to add a feed.');
             return;

@@ -24,6 +24,33 @@ let _enabled  = false;
 let _logs     = [];     // { ts, cat, msg, data? }
 let _listeners = new Set();
 
+// ─── Internal (must be declared before public API uses them) ─────────────────
+
+// Synchronous notify — only used by setLoggingEnabled / clearLogs (user actions).
+const _notify = () => { const fns = [..._listeners]; fns.forEach(fn => fn()); };
+
+// Deferred notify — used by log() to avoid a synchronous cascade:
+// whisperService._notify → syncQueue → log() → logService._notify → React setState
+// That chain floods the native bridge and causes ConcurrentModificationException.
+let _notifyTimer = null;
+const _notifyDeferred = () => {
+    if (_notifyTimer) return;
+    _notifyTimer = setTimeout(() => {
+        _notifyTimer = null;
+        const fns = [..._listeners];
+        fns.forEach(fn => fn());
+    }, 100);
+};
+
+let _persistTimer = null;
+const _persistDebounced = () => {
+    if (_persistTimer) return;
+    _persistTimer = setTimeout(() => {
+        _persistTimer = null;
+        AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(_logs)).catch(() => {});
+    }, 2000);
+};
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export const isLoggingEnabled = () => _enabled;
@@ -31,6 +58,11 @@ export const isLoggingEnabled = () => _enabled;
 export const setLoggingEnabled = async (on) => {
     _enabled = on;
     await AsyncStorage.setItem(ENABLED_KEY, JSON.stringify(on)).catch(() => {});
+    // When turning off, wipe all logs from memory and storage
+    if (!on) {
+        _logs = [];
+        await AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
+    }
     _notify();
 };
 
@@ -45,7 +77,7 @@ export const log = (category, message, data) => {
     _logs.push(entry);
     if (_logs.length > MAX_ENTRIES) _logs = _logs.slice(-MAX_ENTRIES);
     _persistDebounced();
-    _notify();
+    _notifyDeferred();
 };
 
 export const getLogs = () => _logs;
@@ -79,17 +111,4 @@ export const restoreLogs = async () => {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (raw) _logs = JSON.parse(raw);
     } catch (_) {}
-};
-
-// ─── Internal ────────────────────────────────────────────────────────────────
-
-const _notify = () => _listeners.forEach(fn => fn());
-
-let _persistTimer = null;
-const _persistDebounced = () => {
-    if (_persistTimer) return;
-    _persistTimer = setTimeout(() => {
-        _persistTimer = null;
-        AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(_logs)).catch(() => {});
-    }, 2000);
 };

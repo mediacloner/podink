@@ -11,6 +11,7 @@ import { initDB } from './database/db';
 import AppAlert from './components/AppAlert';
 import { setupPlayer, onUserPlay, onUserStop } from './services/trackPlayer';
 import { restoreQueue } from './services/whisperService';
+import { restoreLogs } from './services/logService';
 import { getTotalNewEpisodesCount } from './database/queries';
 
 import SubscribedTimeline from './screens/SubscribedTimeline';
@@ -18,6 +19,7 @@ import DownloadedTimeline from './screens/DownloadedTimeline';
 import PlayerScreen from './screens/PlayerScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import PodcastsScreen from './screens/PodcastsScreen';
+import LogScreen from './screens/LogScreen';
 import MiniPlayer from './components/MiniPlayer';
 
 LogBox.ignoreLogs(['Attempted to import the module']);
@@ -124,6 +126,7 @@ const TabNavigator = ({ navigation }) => {
 
 const App = () => {
     useEffect(() => {
+        restoreLogs();
         initDB().then(() => {
             console.log('Database Initialized');
             restoreQueue();
@@ -148,6 +151,11 @@ const App = () => {
                             gestureEnabled:   true,
                             gestureDirection: 'vertical',
                         }}
+                    />
+                    <Stack.Screen
+                        name="DebugLog"
+                        component={LogScreen}
+                        options={{ headerShown: true }}
                     />
                 </Stack.Navigator>
             </NavigationContainer>
