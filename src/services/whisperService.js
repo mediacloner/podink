@@ -1,8 +1,26 @@
 import { initWhisper } from 'whisper.rn';
-import { Platform } from 'react-native';
+import { AppState, NativeModules, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureWhisperModel } from './downloadService';
 import { saveTranscripts } from '../database/queries';
+
+const QUEUE_PERSIST_KEY = '@transcription_queue_v1';
+
+// Android-only foreground service — keeps the process alive during background transcription
+const FgService = Platform.OS === 'android' ? NativeModules.TranscriptionService : null;
+
+const _startFgService = () => {
+    if (!FgService) return;
+    const count = _persistedItems.size;
+    FgService.start(
+        'Transcribing podcasts',
+        `Processing ${count} episode${count !== 1 ? 's' : ''}…`
+    );
+};
+
+const _stopFgService = () => {
+    if (FgService) FgService.stop();
+};
 
 // ─── Whisper context singleton ────────────────────────────────────────────────
 
@@ -52,6 +70,37 @@ let _processing = false;
 const _listeners = new Set();
 const _notify = () => _listeners.forEach(fn => fn());
 
+// ─── Queue persistence (survives app restarts) ────────────────────────────────
+
+// Persisted map: id -> audioFilePath for all pending + active items
+const _persistedItems = new Map();
+
+const _persistQueue = () => {
+    const items = Array.from(_persistedItems.entries()).map(([id, audioFilePath]) => ({ id, audioFilePath }));
+    AsyncStorage.setItem(QUEUE_PERSIST_KEY, JSON.stringify(items)).catch(() => {});
+};
+
+/**
+ * Restore any unfinished transcriptions from the previous session.
+ * Call this once on app startup after the DB is ready.
+ */
+export const restoreQueue = async () => {
+    try {
+        const raw = await AsyncStorage.getItem(QUEUE_PERSIST_KEY);
+        if (!raw) return;
+        const items = JSON.parse(raw);
+        for (const { id, audioFilePath } of items) {
+            if (_activeId === id || _queue.some(e => e.id === id)) continue;
+            enqueueTranscription(id, audioFilePath, null, null).catch(() => {});
+        }
+    } catch (_) {}
+};
+
+// Resume queue when app comes back to foreground (handles mid-queue backgrounding)
+AppState.addEventListener('change', (state) => {
+    if (state === 'active') _runNext();
+});
+
 export const onQueueChange = (fn) => {
     _listeners.add(fn);
     return () => _listeners.delete(fn);
@@ -73,6 +122,7 @@ const _runNext = async () => {
     _activeId = entry.id;
     _notify();
 
+    _startFgService();
     if (entry.onStart) entry.onStart();
 
     try {
@@ -114,9 +164,14 @@ const _runNext = async () => {
     } catch (e) {
         entry.reject(e);
     } finally {
+        _persistedItems.delete(entry.id);
+        _persistQueue();
         _processing = false;
         _activeId = null;
         _notify();
+        if (_queue.length === 0) {
+            _stopFgService();
+        }
         _runNext();
     }
 };
@@ -136,7 +191,14 @@ export const enqueueTranscription = (id, audioFilePath, onProgress, onStart) => 
         return Promise.reject(new Error('Already queued'));
     }
 
+    // Ask Android to exempt the app from battery optimization on first enqueue
+    if (FgService && _persistedItems.size === 0) {
+        FgService.requestBatteryExemption();
+    }
+
     return new Promise((resolve, reject) => {
+        _persistedItems.set(id, audioFilePath);
+        _persistQueue();
         _queue.push({ id, audioFilePath, onProgress, onStart, resolve, reject });
         _notify();
         _runNext();
@@ -151,6 +213,8 @@ export const dequeueTranscription = (id) => {
     if (idx !== -1) {
         _queue[idx].reject(new Error('Cancelled'));
         _queue.splice(idx, 1);
+        _persistedItems.delete(id);
+        _persistQueue();
         _notify();
     }
 };

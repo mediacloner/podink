@@ -29,7 +29,22 @@
       "Bash(sips -g all /Volumes/ExternalHD/Users/alex.sanchez/Desktop/logo.png)",
       "Bash(cwebp -version)",
       "Bash(ffmpeg -version)",
-      "Bash(./gradlew assembleRelease)"
+      "Bash(./gradlew assembleRelease)",
+      "Bash(git fetch:*)",
+      "Bash(sort -k2)",
+      "Bash(uniq -f1 -c)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(RES=/Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink/android/app/src/main/res)",
+      "Bash(SRC=/Volumes/ExternalHD/Users/alex.sanchez/Desktop/oklogo.png)",
+      "Bash(__NEW_LINE_65eab726dbb7ae35__ sips:*)",
+      "Bash(sips -z 162 162 \"$SRC\" --out \"$RES/drawable-hdpi/ic_launcher_foreground.png\")",
+      "Bash(sips -z 216 216 \"$SRC\" --out \"$RES/drawable-xhdpi/ic_launcher_foreground.png\")",
+      "Bash(./gradlew app:assembleDebug)",
+      "Bash(wait)"
     ]
   }
 }
