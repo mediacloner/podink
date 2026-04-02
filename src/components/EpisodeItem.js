@@ -20,6 +20,7 @@ const EpisodeItem = ({
   onPress,
   onDownload,
   onTranscribe,
+  onCancel,
   onDelete,
   isTranscribing,
   transcribeProgress,
@@ -88,26 +89,36 @@ const EpisodeItem = ({
               </View>
 
               <View style={styles.actionRow}>
-                {isQueued && !episode.has_transcript ? (
-                  <View style={[styles.pill, styles.pillQueued]}>
+                {isTranscribing ? (
+                  // Actively transcribing — tap to cancel
+                  <TouchableOpacity
+                    style={[styles.pill, styles.pillCancelling]}
+                    onPress={() => onCancel?.(episode)}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="x" size={12} color="#FF453A" />
+                    <Text style={styles.pillCancelText}>
+                      {transcribeProgress > 0 ? `${transcribeProgress}%` : "…"}
+                    </Text>
+                  </TouchableOpacity>
+                ) : isQueued && !episode.has_transcript ? (
+                  // Waiting in queue — tap to remove
+                  <TouchableOpacity
+                    style={[styles.pill, styles.pillQueued]}
+                    onPress={() => onCancel?.(episode)}
+                    activeOpacity={0.7}
+                  >
                     <Icon name="clock" size={11} color="#FF9F0A" />
                     <Text style={styles.pillQueuedText}>Queued</Text>
-                  </View>
+                    <Icon name="x" size={11} color="#FF9F0A" />
+                  </TouchableOpacity>
                 ) : onTranscribe && !episode.has_transcript ? (
                   <TouchableOpacity
-                    style={[styles.pill, styles.pillSolid, isTranscribing && styles.pillDisabled]}
+                    style={[styles.pill, styles.pillSolid]}
                     onPress={() => onTranscribe(episode)}
-                    disabled={!!isTranscribing}
                   >
-                    {isTranscribing
-                      ? <ActivityIndicator size="small" color="#fff" style={{ width: 13 }} />
-                      : <Icon name="zap" size={13} color="#fff" />
-                    }
-                    <Text style={styles.pillSolidText}>
-                      {isTranscribing
-                        ? transcribeProgress > 0 ? `${transcribeProgress}%` : "…"
-                        : "Transcribe"}
-                    </Text>
+                    <Icon name="zap" size={13} color="#fff" />
+                    <Text style={styles.pillSolidText}>Transcribe</Text>
                   </TouchableOpacity>
                 ) : episode.has_transcript ? (
                   <View style={styles.pill}>
@@ -221,6 +232,12 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,159,10,0.25)",
   },
   pillQueuedText: { fontSize: 12, fontWeight: "600", color: "#FF9F0A" },
+  pillCancelling: {
+    backgroundColor: "rgba(255,69,58,0.10)",
+    borderWidth: 0.5,
+    borderColor: "rgba(255,69,58,0.25)",
+  },
+  pillCancelText: { fontSize: 12, fontWeight: "700", color: "#FF453A" },
   pillGreen: {
     backgroundColor: "rgba(52,199,89,0.10)",
     borderWidth: 0.5,

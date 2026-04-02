@@ -163,6 +163,15 @@ const DownloadedTimeline = ({ navigation }) => {
         }
     }, []);
 
+    const handleCancel = useCallback((episode) => {
+        const id = episode.id;
+        // Clear UI state immediately so the button reverts right away,
+        // without waiting for the native abort to propagate back through the promise.
+        setActiveId(prev => prev === id ? null : prev);
+        setProgressMap(prev => { const n = { ...prev }; delete n[id]; return n; });
+        dequeueTranscription(id);
+    }, []);
+
     const handleRemoveTranscript = async (episode) => {
         await deleteEpisodeTranscript(episode.id);
         loadData();
@@ -194,7 +203,8 @@ const DownloadedTimeline = ({ navigation }) => {
                             <EpisodeItem
                                 episode={item}
                                 onPress={(ep) => navigation.navigate('Player', { episode: ep })}
-                                onTranscribe={!isQueued ? handleTranscribe : undefined}
+                                onTranscribe={!isQueued && !isActive ? handleTranscribe : undefined}
+                                onCancel={handleCancel}
                                 isTranscribing={isActive}
                                 transcribeProgress={isActive ? progress : 0}
                                 isQueued={isQueued && !isActive}

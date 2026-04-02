@@ -216,6 +216,13 @@ const _runNext = async () => {
             }
             _currentStop = null;
 
+            // The user cancelled while transcription was running.
+            // whisper.rn resolves (not rejects) when stop() is called, returning
+            // whatever partial segments were ready. Discard them and treat as cancel.
+            if (_abortCurrent) {
+                throw new Error('Cancelled');
+            }
+
             const segments = (result.segments || []).map(seg => ({
                 start: seg.t0 * 10,
                 end:   seg.t1 * 10,
