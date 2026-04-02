@@ -64,10 +64,13 @@ const LIST_FOOTER = <View style={{ height: SCREEN_HEIGHT * 0.5 }} />;
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
 function formatTime(ms) {
-  const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:00` : `${m}:00`;
+  const s  = Math.floor(ms / 1000);
+  const h  = Math.floor(s / 3600);
+  const m  = Math.floor((s % 3600) / 60);
+  const sc = s % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(sc).padStart(2, "0")}`
+    : `${m}:${String(sc).padStart(2, "0")}`;
 }
 
 // O(log n) binary search — last word whose startMs ≤ posMs.
