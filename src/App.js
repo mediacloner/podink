@@ -9,6 +9,7 @@ import { useIsFocused } from '@react-navigation/native';
 
 import { initDB } from './database/db';
 import { setupPlayer, onUserPlay, onUserStop } from './services/trackPlayer';
+import { restoreQueue } from './services/whisperService';
 import { getTotalNewEpisodesCount } from './database/queries';
 
 import SubscribedTimeline from './screens/SubscribedTimeline';
@@ -122,7 +123,10 @@ const TabNavigator = ({ navigation }) => {
 
 const App = () => {
     useEffect(() => {
-        initDB().then(() => console.log('Database Initialized'));
+        initDB().then(() => {
+            console.log('Database Initialized');
+            restoreQueue();
+        });
         setupPlayer().then(() => console.log('Track Player Ready'));
     }, []);
 

@@ -29,7 +29,15 @@
       "Bash(sips -g all /Volumes/ExternalHD/Users/alex.sanchez/Desktop/logo.png)",
       "Bash(cwebp -version)",
       "Bash(ffmpeg -version)",
-      "Bash(./gradlew assembleRelease)"
+      "Bash(./gradlew assembleRelease)",
+      "Bash(git fetch:*)",
+      "Bash(sort -k2)",
+      "Bash(uniq -f1 -c)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
