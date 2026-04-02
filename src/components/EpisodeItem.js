@@ -26,6 +26,7 @@ const EpisodeItem = ({
   isDownloading,
   downloadProgress,
   isQueued,
+  cardStyle,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const rotation = useSharedValue(0);
@@ -47,15 +48,11 @@ const EpisodeItem = ({
   });
 
   return (
-    <View style={styles.card}>
-      {/* Row: info (tap = play) + actions side by side, no nesting */}
-      <View style={styles.row}>
-        {/* Left: tap to open player */}
-        <TouchableOpacity
-          style={styles.infoTouch}
-          onPress={() => onPress(episode)}
-          activeOpacity={0.7}
-        >
+    <View style={[styles.card, cardStyle]}>
+      {/* Main row: tap anywhere = navigate to player */}
+      <TouchableOpacity onPress={() => onPress(episode)} activeOpacity={0.7} style={styles.row}>
+        {/* Left info — plain View, tap bubbles up to outer row */}
+        <View style={styles.infoTouch}>
           <Text style={styles.podcastLabel} numberOfLines={1}>
             {episode.podcast_title}
           </Text>
@@ -63,15 +60,14 @@ const EpisodeItem = ({
             {episode.title}
           </Text>
           <Text style={styles.date}>{formattedDate}</Text>
-        </TouchableOpacity>
+        </View>
 
-        {/* Right: independent action buttons — collapsable={false} prevents Android from
-            collapsing this non-touchable View, which breaks child hit-testing */}
+        {/* Right: action buttons intercept their own touches */}
         <View style={styles.right} collapsable={false}>
           {!episode.is_downloaded ? (
             <TouchableOpacity
               style={[styles.pill, styles.pillBlue, isDownloading && styles.pillDisabled]}
-              onPress={() => onDownload(episode)}
+              onPress={() => onDownload?.(episode)}
               disabled={isDownloading}
             >
               {isDownloading
@@ -128,18 +124,15 @@ const EpisodeItem = ({
               </View>
             </View>
           )}
-
-          <TouchableOpacity
-            style={styles.chevron}
-            onPress={toggleExpand}
-            hitSlop={{ top: 8, bottom: 8, left: 10, right: 10 }}
-          >
-            <Animated.View style={chevronStyle}>
-              <Icon name="chevron-down" size={16} color="#3A3A3C" />
-            </Animated.View>
-          </TouchableOpacity>
         </View>
-      </View>
+      </TouchableOpacity>
+
+      {/* Bottom strip (~20%): tap = expand/collapse description */}
+      <TouchableOpacity onPress={toggleExpand} style={[styles.expandStrip, expanded && styles.expandStripOpen]} activeOpacity={0.6}>
+        <Animated.View style={chevronStyle}>
+          <Icon name="chevron-down" size={15} color="#3A3A3C" />
+        </Animated.View>
+      </TouchableOpacity>
 
       {/* Expanded description */}
       {expanded && (
@@ -166,11 +159,12 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 16,
+    paddingBottom: 10,
     gap: 14,
   },
 
-  /* Info — independent touchable, no nesting */
+  /* Info */
   infoTouch: { flex: 1, gap: 4 },
   podcastLabel: {
     fontSize: 11,
@@ -188,7 +182,18 @@ const styles = StyleSheet.create({
   date: { fontSize: 12, color: "#636366" },
 
   /* Right column */
-  right: { alignItems: "flex-end", justifyContent: "space-between", minWidth: 90 },
+  right: { alignItems: "flex-end", justifyContent: "center", minWidth: 90 },
+
+  /* Bottom expand strip */
+  expandStrip: {
+    alignItems: "center",
+    justifyContent: "center",
+    height: 24,
+  },
+  expandStripOpen: {
+    borderTopWidth: 0.5,
+    borderTopColor: "rgba(255,255,255,0.04)",
+  },
 
   /* Pills */
   pill: {
@@ -233,8 +238,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-
-  chevron: { marginTop: 10 },
 
   /* Description */
   description: { paddingHorizontal: 20, paddingBottom: 16 },

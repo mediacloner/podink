@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
-import { getDownloadedEpisodes, saveTranscripts, deleteEpisodeLocalData, deleteEpisodeTranscript } from '../database/queries';
+import { getDownloadedEpisodes, deleteEpisodeLocalData, deleteEpisodeTranscript } from '../database/queries';
 import {
     initializeWhisper,
     enqueueTranscription,
@@ -131,13 +131,12 @@ const DownloadedTimeline = ({ navigation }) => {
         setProgressMap(prev => ({ ...prev, [id]: 0 }));
 
         try {
-            const segments = await enqueueTranscription(
+            await enqueueTranscription(
                 id,
                 episode.local_audio_path,
                 (p) => setProgressMap(prev => ({ ...prev, [id]: p })),
                 ()  => setActiveId(id),
             );
-            await saveTranscripts(id, segments);
             loadData();
         } catch (e) {
             if (e.message !== 'Cancelled' && e.message !== 'Already queued') {

@@ -11,12 +11,14 @@ import NetInfo from '@react-native-community/netinfo';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
-import { getSubscribedEpisodes, saveEpisode, updateEpisodeLocalPath, savePodcast } from '../database/queries';
+import { getSubscribedEpisodes, saveEpisode, updateEpisodeLocalPath, savePodcast, getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes, getNewEpisodesCountForPodcast } from '../database/queries';
+import { notifyNewEpisodes } from '../services/notificationService';
 import { downloadAudioFile } from '../services/downloadService';
 import { fetchPodcastFeed } from '../api/rssParser';
 import { resolveToRssUrl, detectService } from '../api/podcastResolver';
 
 const PANEL_HEIGHT = 64; // inputRow height when open
+const MAX_EPISODES_PER_PODCAST = 50;
 
 const SubscribedTimeline = ({ navigation }) => {
     const { bottom } = useSafeAreaInsets();
@@ -27,7 +29,9 @@ const SubscribedTimeline = ({ navigation }) => {
     // { [episodeId]: progress 0-100 }  — supports concurrent downloads
     const [downloads, setDownloads] = useState({});
     const [panelOpen, setPanelOpen]           = useState(false);
+    const [isRefreshing, setIsRefreshing]     = useState(false);
     const inputRef = useRef(null);
+    const hasRefreshedOnMount = useRef(false);
     const isFocused = useIsFocused();
 
     const heightSV  = useSharedValue(0);
@@ -61,7 +65,13 @@ const SubscribedTimeline = ({ navigation }) => {
     }, []);
 
     useEffect(() => {
-        if (isFocused) loadData();
+        if (isFocused) {
+            loadData();
+            if (!hasRefreshedOnMount.current) {
+                hasRefreshedOnMount.current = true;
+                handleRefresh();
+            }
+        }
     }, [isFocused]);
 
     useEffect(() => {
@@ -112,6 +122,52 @@ const SubscribedTimeline = ({ navigation }) => {
         }
     };
 
+    const prevServiceRef = useRef('RSS');
+    useEffect(() => {
+        const svc = detectService(rssUrl);
+        if (svc === 'Spotify' && prevServiceRef.current !== 'Spotify') {
+            Alert.alert(
+                'Spotify not supported',
+                'Spotify does not provide public RSS feeds. Try finding the podcast on Apple Podcasts or the show\'s website.',
+            );
+        }
+        prevServiceRef.current = svc;
+    }, [rssUrl]);
+
+    const handleRefresh = async () => {
+        if (!isConnected) return;
+        setIsRefreshing(true);
+        try {
+            const podcasts = await getPodcasts();
+            const updatedPodcasts = [];
+            for (const podcast of podcasts) {
+                try {
+                    const feedData = await fetchPodcastFeed(podcast.feed_url);
+                    const latest = feedData.episodes.slice(0, MAX_EPISODES_PER_PODCAST);
+                    for (const ep of latest) {
+                        await saveEpisode({
+                            ...ep,
+                            podcast_title:    podcast.title,
+                            podcast_feed_url: podcast.feed_url,
+                            description:      ep.description || '',
+                            audio_url:        ep.enclosure,
+                        });
+                    }
+                    await pruneOldEpisodesForPodcast(podcast.feed_url, MAX_EPISODES_PER_PODCAST);
+                    await capNewEpisodes(podcast.feed_url);
+                    const newCount = await getNewEpisodesCountForPodcast(podcast.feed_url);
+                    if (newCount > 0) updatedPodcasts.push({ title: podcast.title, newCount });
+                } catch (_) {
+                    // skip broken feeds silently
+                }
+            }
+            await notifyNewEpisodes(updatedPodcasts);
+            await loadData();
+        } finally {
+            setIsRefreshing(false);
+        }
+    };
+
     const handleAddFeed = async () => {
         if (!isConnected) {
             Alert.alert('Offline', 'You need an internet connection to add a feed.');
@@ -128,7 +184,7 @@ const SubscribedTimeline = ({ navigation }) => {
                 feed_url:    rss,
                 image_url:   feedData.image,
             });
-            for (const ep of feedData.episodes) {
+            for (const ep of feedData.episodes.slice(0, MAX_EPISODES_PER_PODCAST)) {
                 await saveEpisode({
                     ...ep,
                     podcast_title:    feedData.title,
@@ -199,6 +255,8 @@ const SubscribedTimeline = ({ navigation }) => {
             <FlatList
                 data={episodes}
                 keyExtractor={item => item.id.toString()}
+                onRefresh={handleRefresh}
+                refreshing={isRefreshing}
                 renderItem={({ item }) => (
                     <EpisodeItem
                         episode={item}
