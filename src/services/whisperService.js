@@ -110,6 +110,7 @@ let _processing    = false;
 let _activeId      = null;
 let _currentStop   = null;  // stop() handle for the running transcription
 let _abortCurrent  = false; // true when dequeueTranscription cancelled the active job
+let _abortResolve  = null;  // resolves the abort promise to instantly unblock Promise.race
 
 // Listeners notified whenever queue state changes (for UI polling-free updates)
 const _listeners = new Set();
@@ -228,6 +229,12 @@ const _runNext = async () => {
             }
 
             const context = await initializeWhisper();
+
+            // Abort could have been requested while the model was loading.
+            // _abortResolve doesn't exist yet (set after transcribe()), so
+            // dequeueTranscription couldn't unblock us — check the flag here.
+            if (_abortCurrent) throw new Error('Cancelled');
+
             const nativePath = entry.audioFilePath.replace('file://', '');
 
             let completedChunks = 0;
@@ -256,6 +263,11 @@ const _runNext = async () => {
 
             _currentStop = stop;
 
+            // Abort promise: resolved instantly by dequeueTranscription() so
+            // Promise.race unblocks even if the native stop() never settles the
+            // transcribe promise (confirmed Android bug via debug logs).
+            const abortGuard = new Promise((resolve) => { _abortResolve = resolve; });
+
             // Watchdog: if Whisper hangs and the promise never settles,
             // fire stop() after the timeout and let the catch/retry path handle it.
             let _watchdog = null;
@@ -268,15 +280,16 @@ const _runNext = async () => {
 
             let result;
             try {
-                result = await Promise.race([promise, timeoutGuard]);
+                result = await Promise.race([promise, timeoutGuard, abortGuard]);
             } finally {
                 clearTimeout(_watchdog);
+                _abortResolve = null;
             }
             _currentStop = null;
 
             // The user cancelled while transcription was running.
-            // whisper.rn resolves (not rejects) when stop() is called, returning
-            // whatever partial segments were ready. Discard them and treat as cancel.
+            // On Android, stop() often does NOT cause the transcribe promise to
+            // settle — the abortGuard wins the race instead. Either way, discard.
             if (_abortCurrent) {
                 throw new Error('Cancelled');
             }
@@ -397,12 +410,14 @@ export const dequeueTranscription = (id) => {
     }
 
     // Case 2: job is actively transcribing — abort the native side
-    if (_activeId === id && _currentStop) {
+    if (_activeId === id) {
         _abortCurrent = true; // suppress retries for this abort
-        _currentStop();
-        _currentStop = null;
+        if (_currentStop) { _currentStop(); _currentStop = null; }
+        // Resolve the abort promise to instantly unblock Promise.race in _runNext.
+        // On Android, stop() does NOT reliably settle the transcribe promise,
+        // so this is the primary abort mechanism.
+        if (_abortResolve) { _abortResolve(); _abortResolve = null; }
         _notify(); // let UI know abort started so it can clear the active state immediately
-        // _runNext's catch block will handle cleanup and reject the promise
     }
 };
 
@@ -428,6 +443,8 @@ export const resetService = async () => {
         try { _currentStop(); } catch (_) {}
         _currentStop = null;
     }
+    // Unblock Promise.race if still waiting
+    if (_abortResolve) { _abortResolve(); _abortResolve = null; }
 
     // Reject every waiting promise so callers don't hang
     for (const entry of _queue) {
