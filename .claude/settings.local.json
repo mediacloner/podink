@@ -28,7 +28,8 @@
       "Bash(find /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink -name *.xcworkspace -o -name *.xcodeproj)",
       "Bash(sips -g all /Volumes/ExternalHD/Users/alex.sanchez/Desktop/logo.png)",
       "Bash(cwebp -version)",
-      "Bash(ffmpeg -version)"
+      "Bash(ffmpeg -version)",
+      "Bash(./gradlew assembleRelease)"
     ]
   }
 }
