@@ -1,10 +1,26 @@
 import { initWhisper } from 'whisper.rn';
-import { AppState, Platform } from 'react-native';
+import { AppState, NativeModules, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ensureWhisperModel } from './downloadService';
 import { saveTranscripts } from '../database/queries';
 
 const QUEUE_PERSIST_KEY = '@transcription_queue_v1';
+
+// Android-only foreground service — keeps the process alive during background transcription
+const FgService = Platform.OS === 'android' ? NativeModules.TranscriptionService : null;
+
+const _startFgService = () => {
+    if (!FgService) return;
+    const count = _persistedItems.size;
+    FgService.start(
+        'Transcribing podcasts',
+        `Processing ${count} episode${count !== 1 ? 's' : ''}…`
+    );
+};
+
+const _stopFgService = () => {
+    if (FgService) FgService.stop();
+};
 
 // ─── Whisper context singleton ────────────────────────────────────────────────
 
@@ -106,6 +122,7 @@ const _runNext = async () => {
     _activeId = entry.id;
     _notify();
 
+    _startFgService();
     if (entry.onStart) entry.onStart();
 
     try {
@@ -152,6 +169,9 @@ const _runNext = async () => {
         _processing = false;
         _activeId = null;
         _notify();
+        if (_queue.length === 0) {
+            _stopFgService();
+        }
         _runNext();
     }
 };
@@ -169,6 +189,11 @@ export const enqueueTranscription = (id, audioFilePath, onProgress, onStart) => 
     // Don't add duplicates
     if (_activeId === id || _queue.some(e => e.id === id)) {
         return Promise.reject(new Error('Already queued'));
+    }
+
+    // Ask Android to exempt the app from battery optimization on first enqueue
+    if (FgService && _persistedItems.size === 0) {
+        FgService.requestBatteryExemption();
     }
 
     return new Promise((resolve, reject) => {

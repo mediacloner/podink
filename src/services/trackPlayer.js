@@ -1,4 +1,10 @@
-import TrackPlayer, { Capability, AppKilledPlaybackBehavior } from 'react-native-track-player';
+import TrackPlayer, {
+    Capability,
+    AppKilledPlaybackBehavior,
+    IOSCategory,
+    IOSCategoryMode,
+    IOSCategoryOptions,
+} from 'react-native-track-player';
 
 export const setupPlayer = async () => {
     try {
@@ -7,6 +13,10 @@ export const setupPlayer = async () => {
             android: {
                 audioContentType: 'music',
             },
+            // iOS: Playback category is required for lock screen controls and background audio
+            iosCategory: IOSCategory.Playback,
+            iosCategoryMode: IOSCategoryMode.Default,
+            iosCategoryOptions: [IOSCategoryOptions.AllowBluetooth, IOSCategoryOptions.AllowAirPlay],
         });
         await TrackPlayer.updateOptions({
             capabilities: [
@@ -14,15 +24,26 @@ export const setupPlayer = async () => {
                 Capability.Pause,
                 Capability.SkipToNext,
                 Capability.SkipToPrevious,
+                Capability.SeekTo,
                 Capability.Stop,
+            ],
+            // Explicit lock screen / notification buttons
+            notificationCapabilities: [
+                Capability.Play,
+                Capability.Pause,
+                Capability.SkipToNext,
+                Capability.SkipToPrevious,
+                Capability.SeekTo,
             ],
             compactCapabilities: [
                 Capability.Play,
                 Capability.Pause,
+                Capability.SkipToNext,
             ],
-            // Stop audio when user force-closes the app from the recent apps tray
+            progressUpdateEventInterval: 1,
+            // Keep playing when user force-closes the app from the recent apps tray
             android: {
-                appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
+                appKilledPlaybackBehavior: AppKilledPlaybackBehavior.ContinuePlayback,
             },
         });
         console.log('Player initialized');
