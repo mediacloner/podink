@@ -11,8 +11,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
-import { getSubscribedEpisodes, saveEpisode, updateEpisodeLocalPath, savePodcast, getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes, getNewEpisodesCountForPodcast } from '../database/queries';
-import { notifyNewEpisodes } from '../services/notificationService';
+import { getSubscribedEpisodes, saveEpisode, updateEpisodeLocalPath, savePodcast, getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes } from '../database/queries';
 import { downloadAudioFile } from '../services/downloadService';
 import { fetchPodcastFeed } from '../api/rssParser';
 import { resolveToRssUrl, detectService } from '../api/podcastResolver';
@@ -139,7 +138,6 @@ const SubscribedTimeline = ({ navigation }) => {
         setIsRefreshing(true);
         try {
             const podcasts = await getPodcasts();
-            const updatedPodcasts = [];
             for (const podcast of podcasts) {
                 try {
                     const feedData = await fetchPodcastFeed(podcast.feed_url);
@@ -155,13 +153,10 @@ const SubscribedTimeline = ({ navigation }) => {
                     }
                     await pruneOldEpisodesForPodcast(podcast.feed_url, MAX_EPISODES_PER_PODCAST);
                     await capNewEpisodes(podcast.feed_url);
-                    const newCount = await getNewEpisodesCountForPodcast(podcast.feed_url);
-                    if (newCount > 0) updatedPodcasts.push({ title: podcast.title, newCount });
                 } catch (_) {
                     // skip broken feeds silently
                 }
             }
-            await notifyNewEpisodes(updatedPodcasts);
             await loadData();
         } finally {
             setIsRefreshing(false);

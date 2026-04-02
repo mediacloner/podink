@@ -43,8 +43,12 @@ export const setupPlayer = async () => {
 // MiniPlayer subscribes so it can gate visibility on intentional playback
 // rather than TrackPlayer's automatic session-restore events.
 const _playListeners = new Set();
-export const onUserPlay  = (cb) => { _playListeners.add(cb);    return () => _playListeners.delete(cb); };
-const _notifyUserPlay    = ()   => _playListeners.forEach(cb => cb());
+export const onUserPlay   = (cb) => { _playListeners.add(cb);    return () => _playListeners.delete(cb); };
+const _notifyUserPlay     = ()   => _playListeners.forEach(cb => cb());
+
+const _stopListeners = new Set();
+export const onUserStop   = (cb) => { _stopListeners.add(cb);    return () => _stopListeners.delete(cb); };
+export const notifyUserStop = ()  => _stopListeners.forEach(cb => cb());
 
 export const loadEpisodeTrack = async (episode, autoPlay = true) => {
     // Determine whether to use local or remote path

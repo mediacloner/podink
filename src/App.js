@@ -5,9 +5,11 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather as Icon } from '@expo/vector-icons';
+import { useIsFocused } from '@react-navigation/native';
 
 import { initDB } from './database/db';
-import { setupPlayer, onUserPlay } from './services/trackPlayer';
+import { setupPlayer, onUserPlay, onUserStop } from './services/trackPlayer';
+import { getTotalNewEpisodesCount } from './database/queries';
 
 import SubscribedTimeline from './screens/SubscribedTimeline';
 import DownloadedTimeline from './screens/DownloadedTimeline';
@@ -39,6 +41,27 @@ const appTheme = {
     },
 };
 
+const PodcastsTabIcon = ({ color, size }) => {
+    const [hasNew, setHasNew] = useState(false);
+
+    useEffect(() => {
+        const check = async () => {
+            const count = await getTotalNewEpisodesCount();
+            setHasNew(count > 0);
+        };
+        check();
+        const interval = setInterval(check, 5000);
+        return () => clearInterval(interval);
+    }, []);
+
+    return (
+        <View>
+            <Icon name="headphones" size={size} color={color} />
+            {hasNew && <View style={styles.dot} />}
+        </View>
+    );
+};
+
 // TabNavigator receives `navigation` from the Stack so we can pass it to
 // MiniPlayer, which uses blur/focus events to hide when Player is on screen.
 const TabNavigator = ({ navigation }) => {
@@ -51,6 +74,7 @@ const TabNavigator = ({ navigation }) => {
     // elevation, causing it to appear in the wrong position at startup.
     const [showMiniPlayer, setShowMiniPlayer] = useState(false);
     useEffect(() => onUserPlay(() => setShowMiniPlayer(true)), []);
+    useEffect(() => onUserStop(() => setShowMiniPlayer(false)), []);
 
     return (
         <View style={{ flex: 1 }}>
@@ -77,7 +101,14 @@ const TabNavigator = ({ navigation }) => {
                 })}
             >
                 <Tab.Screen name="Timeline" component={SubscribedTimeline} options={{ title: 'Discover' }} />
-                <Tab.Screen name="Podcasts" component={PodcastsScreen}     options={{ title: 'My Podcasts' }} />
+                <Tab.Screen
+                    name="Podcasts"
+                    component={PodcastsScreen}
+                    options={{
+                        title: 'My Podcasts',
+                        tabBarIcon: ({ color, size }) => <PodcastsTabIcon color={color} size={size} />,
+                    }}
+                />
                 <Tab.Screen name="Library"  component={DownloadedTimeline}  options={{ title: 'Library' }} />
                 <Tab.Screen name="Settings" component={SettingsScreen} />
             </Tab.Navigator>
@@ -117,5 +148,17 @@ const App = () => {
         </SafeAreaProvider>
     );
 };
+
+const styles = StyleSheet.create({
+    dot: {
+        position:        'absolute',
+        top:             0,
+        right:           -2,
+        width:           7,
+        height:          7,
+        borderRadius:    3.5,
+        backgroundColor: '#FF453A',
+    },
+});
 
 export default App;
