@@ -24,8 +24,8 @@ export const saveEpisode = async (episode) => {
   const db = await openDatabaseContext();
   // INSERT OR IGNORE preserves is_new, is_downloaded, local_audio_path, etc. for existing episodes
   await db.runAsync(
-    `INSERT OR IGNORE INTO Episodes (id, title, description, podcast_title, podcast_feed_url, release_date, audio_url, is_downloaded, is_new)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+    `INSERT OR IGNORE INTO Episodes (id, title, description, podcast_title, podcast_feed_url, release_date, audio_url, is_downloaded, is_new, duration)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [
       episode.id,
       episode.title,
@@ -35,6 +35,7 @@ export const saveEpisode = async (episode) => {
       episode.release_date,
       episode.audio_url || episode.enclosure,
       episode.is_downloaded ? 1 : 0,
+      episode.duration || 0,
     ]
   );
 };
@@ -81,6 +82,26 @@ export const saveTranscripts = async (episodeId, segments) => {
   });
 };
 
+/** Insert segments without setting has_transcript flag (used for incremental saves). */
+export const saveTranscriptsIncremental = async (episodeId, segments) => {
+  if (!segments.length) return;
+  const db = await openDatabaseContext();
+  await db.withTransactionAsync(async () => {
+    for (const segment of segments) {
+      await db.runAsync(
+        `INSERT INTO Transcripts (episode_id, start_time, end_time, text) VALUES (?, ?, ?, ?)`,
+        [episodeId, segment.start, segment.end, segment.text]
+      );
+    }
+  });
+};
+
+/** Mark episode as having a complete transcript. */
+export const finalizeTranscript = async (episodeId) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(`UPDATE Episodes SET has_transcript = 1 WHERE id = ?`, [episodeId]);
+};
+
 export const getTranscriptsForEpisode = async (episodeId) => {
   const db = await openDatabaseContext();
   return db.getAllAsync(
@@ -91,8 +112,10 @@ export const getTranscriptsForEpisode = async (episodeId) => {
 
 export const deleteEpisodeTranscript = async (id) => {
   const db = await openDatabaseContext();
-  await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
-  await db.runAsync(`UPDATE Episodes SET has_transcript = 0 WHERE id = ?`, [id]);
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
+    await db.runAsync(`UPDATE Episodes SET has_transcript = 0 WHERE id = ?`, [id]);
+  });
 };
 
 export const deleteEpisodeLocalData = async (id) => {

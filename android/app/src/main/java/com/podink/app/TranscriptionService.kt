@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 
 class TranscriptionService : Service() {
@@ -18,12 +19,32 @@ class TranscriptionService : Service() {
         const val ACTION_STOP     = "STOP"
         const val EXTRA_TITLE     = "title"
         const val EXTRA_MESSAGE   = "message"
+        const val WAKE_LOCK_TAG   = "podink:transcription"
+        const val WAKE_LOCK_TIMEOUT_MS = 60L * 60 * 1000 // 60 min max
     }
+
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    private fun releaseWakeLock() {
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+        }
+        wakeLock = null
+    }
+
+    private fun acquireWakeLock() {
+        releaseWakeLock()
+        val pm = getSystemService(PowerManager::class.java)
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
+            acquire(WAKE_LOCK_TIMEOUT_MS)
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
@@ -60,6 +81,7 @@ class TranscriptionService : Service() {
             .build()
 
         startForeground(NOTIFICATION_ID, notification)
+        acquireWakeLock()
 
         // START_NOT_STICKY: if the system kills this service it will NOT be
         // restarted automatically. The JS layer handles re-queuing via
@@ -78,6 +100,7 @@ class TranscriptionService : Service() {
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
+        releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
