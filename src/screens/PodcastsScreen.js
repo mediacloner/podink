@@ -14,6 +14,7 @@ import {
     getPodcasts, deletePodcast,
     getNewEpisodesCountForPodcast, getLatestEpisodesForPodcast,
     markPodcastEpisodesAsSeen, capNewEpisodes, updateEpisodeLocalPath,
+    pruneOldEpisodesForPodcast,
 } from '../database/queries';
 import { downloadAudioFile } from '../services/downloadService';
 import {
@@ -119,6 +120,7 @@ const PodcastsScreen = ({ navigation }) => {
         const counts = {};
         await Promise.all(data.map(async p => {
             await capNewEpisodes(p.feed_url, MAX_NEW);
+            await pruneOldEpisodesForPodcast(p.feed_url, 50);
             counts[p.feed_url] = await getNewEpisodesCountForPodcast(p.feed_url);
         }));
         setNewCountMap(counts);
@@ -185,11 +187,19 @@ const PodcastsScreen = ({ navigation }) => {
                 episode.local_audio_path,
                 (p) => setProgressMap(prev => ({ ...prev, [id]: p })),
                 ()  => setActiveId(id),
+                episode.duration || 0,
             );
             await refreshEpisodesFor(episode.podcast_feed_url);
         } catch (e) {
-            if (e.message !== 'Cancelled' && e.message !== 'Already queued') {
-                showAlert('Transcription Failed', 'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.');
+            const errStr = e?.message || String(e);
+            if (errStr !== 'Cancelled' && errStr !== 'Already queued' && errStr !== 'Queue reset') {
+                const isAudioError = errStr.includes('Audio file') || errStr.includes('audio file') || errStr.includes('unrecognized header');
+                showAlert(
+                    isAudioError ? 'Invalid Audio File' : 'Transcription Failed',
+                    isAudioError
+                        ? 'This audio file appears to be corrupted or missing. Try deleting and re-downloading the episode.'
+                        : 'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
+                );
             }
         } finally {
             setActiveId(prev => prev === id ? null : prev);
