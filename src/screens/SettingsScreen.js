@@ -1,31 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Platform, View, Text, TouchableOpacity,
+    View, Text, TouchableOpacity,
     StyleSheet, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { File, Paths } from 'expo-file-system';
 import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { downloadAudioFile } from '../services/downloadService';
+import { SHERPA_MODELS, ensureSherpaModel, isSherpaModelDownloaded, deleteSherpaModel } from '../services/downloadService';
 import { resetService } from '../services/whisperService';
 import { showAlert } from '../components/AppAlert';
 
-const ALL_MODELS = [
-    { id: 'tiny',       name: 'Tiny',     size: '39 MB',  desc: 'Fastest, lower accuracy' },
-    { id: 'base',       name: 'Base',     size: '74 MB',  desc: 'Best balance of speed and accuracy', recommended: true },
-    { id: 'base.q8_0',  name: 'Base Q8',  size: '39 MB',  desc: 'Same quality as Base, ~2× faster', ios: true },
-    { id: 'small',      name: 'Small',    size: '241 MB', desc: 'Highest accuracy, slower' },
-    { id: 'small.q8_0', name: 'Small Q8', size: '120 MB', desc: 'Same quality as Small, ~2× faster', ios: true },
-];
-
-const MODELS = Platform.OS === 'android' ? ALL_MODELS.filter(m => !m.ios) : ALL_MODELS;
+const MODELS = Object.entries(SHERPA_MODELS).map(([id, m]) => ({
+    id,
+    name: m.label,
+    size: `~${m.totalSizeMB} MB`,
+    desc: m.desc,
+    recommended: m.recommended || false,
+}));
 
 const SettingsScreen = () => {
     const { bottom } = useSafeAreaInsets();
     const navigation = useNavigation();
-    const [selectedModel, setSelectedModel]     = useState('base');
+    const [selectedModel, setSelectedModel]     = useState('moonshine_base');
     const [isModelDownloaded, setIsModelDownloaded] = useState(false);
     const [isDownloading, setIsDownloading]     = useState(false);
     const [downloadProgress, setDownloadProgress] = useState(0);
@@ -36,7 +33,13 @@ const SettingsScreen = () => {
     const loadPreference = async () => {
         try {
             const saved = await AsyncStorage.getItem('@whisper_model');
-            if (saved) setSelectedModel(saved);
+            // Migrate old whisper model keys to new defaults
+            if (saved && SHERPA_MODELS[saved]) {
+                setSelectedModel(saved);
+            } else if (saved) {
+                // Old whisper key (base, tiny, etc.) — reset to default
+                await AsyncStorage.setItem('@whisper_model', 'moonshine_base');
+            }
         } catch (e) {}
     };
 
@@ -47,21 +50,18 @@ const SettingsScreen = () => {
         } catch (e) {}
     };
 
-    const getModelFile = (modelId) => new File(Paths.document, `ggml-${modelId}.bin`);
-
-    const checkModelStatus = (modelId) => {
-        setIsModelDownloaded(getModelFile(modelId).exists);
+    const checkModelStatus = async (modelId) => {
+        setIsModelDownloaded(await isSherpaModelDownloaded(modelId));
     };
 
     const handleDownload = async () => {
         setIsDownloading(true);
         setDownloadProgress(0);
-        const fileName = `ggml-${selectedModel}.bin`;
-        const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${fileName}`;
         try {
-            await downloadAudioFile(url, fileName, (p) => setDownloadProgress(p));
+            await ensureSherpaModel(selectedModel, (p) => setDownloadProgress(p));
             setIsModelDownloaded(true);
-            showAlert('Done', `${selectedModel} model is ready.`);
+            const model = SHERPA_MODELS[selectedModel];
+            showAlert('Done', `${model.label} model is ready.`);
         } catch {
             showAlert('Download Failed', 'Check your connection and try again.');
         } finally {
@@ -86,15 +86,15 @@ const SettingsScreen = () => {
     };
 
     const handleDelete = () => {
+        const model = SHERPA_MODELS[selectedModel];
         showAlert(
             'Delete Model',
-            `Remove the ${selectedModel} model from your device?`,
+            `Remove the ${model?.label || selectedModel} model from your device?`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                    text: 'Delete', style: 'destructive', onPress: () => {
-                        const file = getModelFile(selectedModel);
-                        if (file.exists) file.delete();
+                    text: 'Delete', style: 'destructive', onPress: async () => {
+                        await deleteSherpaModel(selectedModel);
                         setIsModelDownloaded(false);
                     }
                 }
@@ -157,7 +157,7 @@ const SettingsScreen = () => {
 
             <View style={styles.card}>
                 <View style={styles.statusRow}>
-                    <Text style={styles.statusName}>{selectedModel}</Text>
+                    <Text style={styles.statusName}>{SHERPA_MODELS[selectedModel]?.label || selectedModel}</Text>
                     <View style={[styles.statusPill, isModelDownloaded ? styles.pillGreen : styles.pillRed]}>
                         <Icon
                             name={isModelDownloaded ? 'check' : 'x'}

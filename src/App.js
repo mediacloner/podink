@@ -10,7 +10,8 @@ import { useIsFocused } from '@react-navigation/native';
 import { initDB } from './database/db';
 import AppAlert from './components/AppAlert';
 import { setupPlayer, onUserPlay, onUserStop } from './services/trackPlayer';
-import { restoreQueue } from './services/whisperService';
+import { restoreQueue, initializeWhisper } from './services/whisperService';
+import { cleanupOldWhisperModels } from './services/downloadService';
 import { restoreLogs } from './services/logService';
 import { getTotalNewEpisodesCount } from './database/queries';
 
@@ -130,6 +131,9 @@ const App = () => {
         initDB().then(() => {
             console.log('Database Initialized');
             restoreQueue();
+            cleanupOldWhisperModels();
+            // Pre-warm STT model so the first transcription doesn't pay cold-start.
+            initializeWhisper();
         });
         setupPlayer().then(() => console.log('Track Player Ready'));
     }, []);

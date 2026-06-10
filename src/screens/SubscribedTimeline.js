@@ -16,6 +16,7 @@ import { getSubscribedEpisodes, saveEpisode, updateEpisodeLocalPath, savePodcast
 import { downloadAudioFile } from '../services/downloadService';
 import { fetchPodcastFeed } from '../api/rssParser';
 import { resolveToRssUrl, detectService } from '../api/podcastResolver';
+import { notifyLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
 
 const PANEL_HEIGHT = 64; // inputRow height when open
@@ -117,6 +118,7 @@ const SubscribedTimeline = ({ navigation }) => {
             log('UI', 'Download completed', { id: episode.id });
             await updateEpisodeLocalPath(episode.id, localPath);
             loadData();
+            notifyLibraryChange();
         } catch (e) {
             log('UI', 'Download failed', { id: episode.id, error: e.message });
             console.error('Download failed', e);

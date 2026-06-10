@@ -20,6 +20,7 @@ import { downloadAudioFile } from '../services/downloadService';
 import {
     initializeWhisper, enqueueTranscription, onQueueChange, getQueueIds,
 } from '../services/whisperService';
+import { notifyLibraryChange } from '../services/libraryEvents';
 
 const DELETE_WIDTH = 80;
 const SWIPE_THRESHOLD = 50;
@@ -103,7 +104,6 @@ const PodcastsScreen = ({ navigation }) => {
     useEffect(() => {
         if (isFocused) {
             loadPodcasts();
-            initializeWhisper().catch(() => {});
         } else {
             const feedUrl = expandedRef.current;
             if (feedUrl) {
@@ -154,12 +154,15 @@ const PodcastsScreen = ({ navigation }) => {
         setEpisodesMap(prev => ({ ...prev, [feedUrl]: eps }));
     };
 
-    const handleDownload = useCallback(async (episode) => {
+    // Download an episode's audio. Returns the local URI on success, or null if
+    // the download fails or is rejected. Notifies the Library so it picks up
+    // the new downloaded episode without waiting for a tab focus.
+    const downloadEpisode = useCallback(async (episode) => {
         if (!isConnected) {
             showAlert('Offline', 'You need an internet connection to download episodes.');
-            return;
+            return null;
         }
-        if (!episode.audio_url) return;
+        if (!episode.audio_url) return null;
         const safeId = episode.id.toString().replace(/[^a-zA-Z0-9]/g, '_');
         setDownloads(prev => ({ ...prev, [episode.id]: 0 }));
         try {
@@ -170,26 +173,39 @@ const PodcastsScreen = ({ navigation }) => {
             );
             await updateEpisodeLocalPath(episode.id, localPath);
             await refreshEpisodesFor(episode.podcast_feed_url);
+            notifyLibraryChange();
+            return localPath;
         } catch (e) {
             showAlert('Error', 'Failed to download episode.');
+            return null;
         } finally {
             setDownloads(prev => { const n = { ...prev }; delete n[episode.id]; return n; });
         }
     }, [isConnected]);
 
+    const handleDownload = downloadEpisode;
+
+    // Single tap from the feed: download if needed, then transcribe. Library
+    // refreshes after both phases via notifyLibraryChange (download path) and
+    // the queue subscription (enqueue path).
     const handleTranscribe = useCallback(async (episode) => {
-        if (!episode.local_audio_path) return;
         const id = episode.id;
+        let localPath = episode.local_audio_path;
+        if (!localPath) {
+            localPath = await downloadEpisode(episode);
+            if (!localPath) return;
+        }
         setProgressMap(prev => ({ ...prev, [id]: 0 }));
         try {
             await enqueueTranscription(
                 id,
-                episode.local_audio_path,
+                localPath,
                 (p) => setProgressMap(prev => ({ ...prev, [id]: p })),
                 ()  => setActiveId(id),
                 episode.duration || 0,
             );
             await refreshEpisodesFor(episode.podcast_feed_url);
+            notifyLibraryChange();
         } catch (e) {
             const errStr = e?.message || String(e);
             if (errStr !== 'Cancelled' && errStr !== 'Already queued' && errStr !== 'Queue reset') {
@@ -205,7 +221,7 @@ const PodcastsScreen = ({ navigation }) => {
             setActiveId(prev => prev === id ? null : prev);
             setProgressMap(prev => { const n = { ...prev }; delete n[id]; return n; });
         }
-    }, []);
+    }, [downloadEpisode]);
 
     const renderPodcast = ({ item }) => {
         const newCount = newCountMap[item.feed_url] ?? 0;

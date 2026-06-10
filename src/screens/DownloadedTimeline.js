@@ -16,6 +16,7 @@ import {
     getAbortingId,
 } from '../services/whisperService';
 import { deleteAudioFile } from '../services/downloadService';
+import { onLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
 
 // ─── Swipeable delete row ─────────────────────────────────────────────────────
@@ -28,22 +29,37 @@ const SwipeableRow = ({ children, onDelete, onRemoveTranscript }) => {
     const translateX = useRef(new Animated.Value(0)).current;
     const openRef    = useRef(null); // track without re-render
 
+    // The panResponder is created once via useRef and freezes its closure.
+    // Mirror the props in refs so the gesture handler always sees the latest
+    // values — otherwise a row that mounts without a transcript captures
+    // onRemoveTranscript=undefined forever, and right-swipe is silently
+    // suppressed even after transcription completes.
+    const removeRef = useRef(onRemoveTranscript);
+    const deleteRef = useRef(onDelete);
+    useEffect(() => { removeRef.current = onRemoveTranscript; }, [onRemoveTranscript]);
+    useEffect(() => { deleteRef.current = onDelete; }, [onDelete]);
+
     const close = () => {
         Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
         openRef.current = null;
     };
 
     const fireDelete = () => {
-        Animated.timing(translateX, { toValue: -400, duration: 200, useNativeDriver: true }).start(onDelete);
+        Animated.timing(translateX, { toValue: -400, duration: 200, useNativeDriver: true })
+            .start(() => deleteRef.current?.());
     };
 
     const fireRemove = () => {
-        Animated.timing(translateX, { toValue: 400, duration: 200, useNativeDriver: true }).start(() => {
-            onRemoveTranscript();
-            // snap back after removal (list will refresh)
-            translateX.setValue(0);
-            openRef.current = null;
-        });
+        // 1) Slide the row a short distance right to acknowledge the tap
+        // 2) Trigger the async remove (DB delete + list reload runs in parallel)
+        // 3) Smoothly slide the row back to its origin so the user sees a clean
+        //    "tap → ack → snap back" instead of a jarring teleport.
+        openRef.current = null;
+        Animated.timing(translateX, { toValue: ACTION_WIDTH * 1.5, duration: 160, useNativeDriver: true })
+            .start(() => {
+                removeRef.current?.();
+                Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 0, speed: 18 }).start();
+            });
     };
 
     const panResponder = useRef(PanResponder.create({
@@ -54,7 +70,7 @@ const SwipeableRow = ({ children, onDelete, onRemoveTranscript }) => {
                        : openRef.current === 'right' ?  ACTION_WIDTH : 0;
             const next = base + g.dx;
             // left swipe → delete (negative), right swipe → transcript (positive, only if available)
-            const clamped = onRemoveTranscript
+            const clamped = removeRef.current
                 ? Math.max(-ACTION_WIDTH, Math.min(ACTION_WIDTH, next))
                 : Math.max(-ACTION_WIDTH, Math.min(0, next));
             translateX.setValue(clamped);
@@ -67,7 +83,7 @@ const SwipeableRow = ({ children, onDelete, onRemoveTranscript }) => {
             if (delta < -THRESHOLD) {
                 Animated.spring(translateX, { toValue: -ACTION_WIDTH, useNativeDriver: true, bounciness: 4 }).start();
                 openRef.current = 'left';
-            } else if (onRemoveTranscript && delta > THRESHOLD) {
+            } else if (removeRef.current && delta > THRESHOLD) {
                 Animated.spring(translateX, { toValue: ACTION_WIDTH, useNativeDriver: true, bounciness: 4 }).start();
                 openRef.current = 'right';
             } else {
@@ -106,41 +122,28 @@ const DownloadedTimeline = ({ navigation }) => {
     const [progressMap, setProgressMap]   = useState({}); // { [id]: 0-99 }
     const isFocused = useIsFocused();
 
-    // Sync queue state from the service.
-    // We also reload the episode list when queue shrinks (transcription completed)
-    // so the transcript badge appears without requiring a manual screen refresh.
-    // This is especially important for items restored from a previous session,
-    // which don't have UI callbacks attached.
-    const prevQueueLenRef  = useRef(0);
-    const prevActiveIdRef  = useRef(null);
+    // Sync queue state from the service. Any change to the transcription queue
+    // — enqueue, dequeue, complete — also reloads the episode list so the
+    // Library reflects work started or finished from any tab (and items
+    // restored from a previous session whose UI callbacks didn't survive).
     const syncQueue = useCallback(() => {
         const ids       = getQueueIds();
         const curActive = getActiveId();
         const abortId   = getAbortingId();
-        const prevLen    = prevQueueLenRef.current;
-        const prevActive = prevActiveIdRef.current;
-        prevQueueLenRef.current = ids.length;
-        prevActiveIdRef.current = curActive;
         setQueuedIds(ids);
-        const shouldReload = ids.length < prevLen || (prevActive !== null && curActive === null);
-        log('QUEUE', 'syncQueue', {
-            svcActiveId: curActive, abortingId: abortId, queuedIds: ids,
-            prevQueueLen: prevLen, prevActiveId: prevActive, willReload: shouldReload,
-        });
-        if (shouldReload) {
-            loadData();
-        }
+        log('QUEUE', 'syncQueue', { svcActiveId: curActive, abortingId: abortId, queuedIds: ids });
+        loadData();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
-        const unsub = onQueueChange(syncQueue);
-        return unsub;
+        const unsubQueue = onQueueChange(syncQueue);
+        const unsubLib   = onLibraryChange(syncQueue);
+        return () => { unsubQueue(); unsubLib(); };
     }, [syncQueue]);
 
     useEffect(() => {
         if (isFocused) {
             loadData();
-            initializeWhisper().catch(() => {});
             const svcActive = getActiveId();
             const abortId   = getAbortingId();
             const recovered = svcActive !== null && abortId !== svcActive ? svcActive : null;
@@ -188,6 +191,7 @@ const DownloadedTimeline = ({ navigation }) => {
                     log('UI', 'onStart callback fired', { id });
                     setActiveId(id);
                 },
+                episode.duration || 0,
             );
             log('UI', 'Transcription promise resolved', { id });
             loadData();
@@ -196,9 +200,12 @@ const DownloadedTimeline = ({ navigation }) => {
             log('UI', 'Transcription catch', { id, error: errStr, stack: e?.stack?.slice(0, 300) });
             if (errStr !== 'Cancelled' && errStr !== 'Already queued' && errStr !== 'Queue reset') {
                 log('UI', '*** ERROR ALERT SHOWN ***', { id, error: errStr });
+                const isAudioError = errStr.includes('Audio file') || errStr.includes('audio file') || errStr.includes('unrecognized header');
                 showAlert(
-                    'Transcription Failed',
-                    'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
+                    isAudioError ? 'Invalid Audio File' : 'Transcription Failed',
+                    isAudioError
+                        ? 'This audio file appears to be corrupted or missing. Try deleting and re-downloading the episode.'
+                        : 'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
                 );
             }
         } finally {
