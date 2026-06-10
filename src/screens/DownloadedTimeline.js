@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, PanResponder, View, FlatList, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Animated, PanResponder, View, FlatList, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { showAlert } from '../components/AppAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
@@ -11,8 +12,12 @@ import {
     dequeueTranscription,
     onQueueChange,
     getQueueIds,
+    getActiveId,
+    getAbortingId,
 } from '../services/whisperService';
 import { deleteAudioFile } from '../services/downloadService';
+import { onLibraryChange } from '../services/libraryEvents';
+import { log } from '../services/logService';
 
 // ─── Swipeable delete row ─────────────────────────────────────────────────────
 
@@ -24,22 +29,37 @@ const SwipeableRow = ({ children, onDelete, onRemoveTranscript }) => {
     const translateX = useRef(new Animated.Value(0)).current;
     const openRef    = useRef(null); // track without re-render
 
+    // The panResponder is created once via useRef and freezes its closure.
+    // Mirror the props in refs so the gesture handler always sees the latest
+    // values — otherwise a row that mounts without a transcript captures
+    // onRemoveTranscript=undefined forever, and right-swipe is silently
+    // suppressed even after transcription completes.
+    const removeRef = useRef(onRemoveTranscript);
+    const deleteRef = useRef(onDelete);
+    useEffect(() => { removeRef.current = onRemoveTranscript; }, [onRemoveTranscript]);
+    useEffect(() => { deleteRef.current = onDelete; }, [onDelete]);
+
     const close = () => {
         Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
         openRef.current = null;
     };
 
     const fireDelete = () => {
-        Animated.timing(translateX, { toValue: -400, duration: 200, useNativeDriver: true }).start(onDelete);
+        Animated.timing(translateX, { toValue: -400, duration: 200, useNativeDriver: true })
+            .start(() => deleteRef.current?.());
     };
 
     const fireRemove = () => {
-        Animated.timing(translateX, { toValue: 400, duration: 200, useNativeDriver: true }).start(() => {
-            onRemoveTranscript();
-            // snap back after removal (list will refresh)
-            translateX.setValue(0);
-            openRef.current = null;
-        });
+        // 1) Slide the row a short distance right to acknowledge the tap
+        // 2) Trigger the async remove (DB delete + list reload runs in parallel)
+        // 3) Smoothly slide the row back to its origin so the user sees a clean
+        //    "tap → ack → snap back" instead of a jarring teleport.
+        openRef.current = null;
+        Animated.timing(translateX, { toValue: ACTION_WIDTH * 1.5, duration: 160, useNativeDriver: true })
+            .start(() => {
+                removeRef.current?.();
+                Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 0, speed: 18 }).start();
+            });
     };
 
     const panResponder = useRef(PanResponder.create({
@@ -50,7 +70,7 @@ const SwipeableRow = ({ children, onDelete, onRemoveTranscript }) => {
                        : openRef.current === 'right' ?  ACTION_WIDTH : 0;
             const next = base + g.dx;
             // left swipe → delete (negative), right swipe → transcript (positive, only if available)
-            const clamped = onRemoveTranscript
+            const clamped = removeRef.current
                 ? Math.max(-ACTION_WIDTH, Math.min(ACTION_WIDTH, next))
                 : Math.max(-ACTION_WIDTH, Math.min(0, next));
             translateX.setValue(clamped);
@@ -63,7 +83,7 @@ const SwipeableRow = ({ children, onDelete, onRemoveTranscript }) => {
             if (delta < -THRESHOLD) {
                 Animated.spring(translateX, { toValue: -ACTION_WIDTH, useNativeDriver: true, bounciness: 4 }).start();
                 openRef.current = 'left';
-            } else if (onRemoveTranscript && delta > THRESHOLD) {
+            } else if (removeRef.current && delta > THRESHOLD) {
                 Animated.spring(translateX, { toValue: ACTION_WIDTH, useNativeDriver: true, bounciness: 4 }).start();
                 openRef.current = 'right';
             } else {
@@ -102,22 +122,36 @@ const DownloadedTimeline = ({ navigation }) => {
     const [progressMap, setProgressMap]   = useState({}); // { [id]: 0-99 }
     const isFocused = useIsFocused();
 
-    // Sync queue state from the service
+    // Sync queue state from the service. Any change to the transcription queue
+    // — enqueue, dequeue, complete — also reloads the episode list so the
+    // Library reflects work started or finished from any tab (and items
+    // restored from a previous session whose UI callbacks didn't survive).
     const syncQueue = useCallback(() => {
-        setQueuedIds(getQueueIds());
-    }, []);
+        const ids       = getQueueIds();
+        const curActive = getActiveId();
+        const abortId   = getAbortingId();
+        setQueuedIds(ids);
+        log('QUEUE', 'syncQueue', { svcActiveId: curActive, abortingId: abortId, queuedIds: ids });
+        loadData();
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
-        const unsub = onQueueChange(syncQueue);
-        return unsub;
+        const unsubQueue = onQueueChange(syncQueue);
+        const unsubLib   = onLibraryChange(syncQueue);
+        return () => { unsubQueue(); unsubLib(); };
     }, [syncQueue]);
 
     useEffect(() => {
         if (isFocused) {
             loadData();
-            initializeWhisper().catch(() => {});
+            const svcActive = getActiveId();
+            const abortId   = getAbortingId();
+            const recovered = svcActive !== null && abortId !== svcActive ? svcActive : null;
+            log('UI', 'Screen focused', { svcActive, abortId, recoveredActiveId: recovered });
+            setActiveId(recovered);
+            syncQueue();
         }
-    }, [isFocused]);
+    }, [isFocused, syncQueue]);
 
     const loadData = async () => {
         const data = await getDownloadedEpisodes();
@@ -128,6 +162,24 @@ const DownloadedTimeline = ({ navigation }) => {
         if (!episode.local_audio_path) return;
 
         const id = episode.id;
+        const svcActive  = getActiveId();
+        const aborting   = getAbortingId();
+        const curQueue   = getQueueIds();
+        log('UI', 'Transcribe tapped', {
+            id, title: episode.title,
+            svcActiveId: svcActive, abortingId: aborting, queueIds: curQueue,
+        });
+        // Optimistic: show as Transcribing immediately ONLY when there is
+        // truly nothing else pending (empty queue, no running job or only
+        // an aborting job).  Two quick taps would both see getActiveId()===null
+        // (before _runNext's setTimeout fires), so we also check the queue.
+        const queueEmpty = curQueue.length === 0;
+        if (queueEmpty && (!svcActive || aborting === svcActive)) {
+            setActiveId(id);
+            log('UI', 'Optimistic → Transcribing', { id });
+        } else {
+            log('UI', 'Will show as Queued', { id, reason: !queueEmpty ? 'queue not empty' : 'another job active' });
+        }
         setProgressMap(prev => ({ ...prev, [id]: 0 }));
 
         try {
@@ -135,29 +187,71 @@ const DownloadedTimeline = ({ navigation }) => {
                 id,
                 episode.local_audio_path,
                 (p) => setProgressMap(prev => ({ ...prev, [id]: p })),
-                ()  => setActiveId(id),
+                () => {
+                    log('UI', 'onStart callback fired', { id });
+                    setActiveId(id);
+                },
+                episode.duration || 0,
             );
+            log('UI', 'Transcription promise resolved', { id });
             loadData();
         } catch (e) {
-            if (e.message !== 'Cancelled' && e.message !== 'Already queued') {
-                Alert.alert(
-                    'Transcription Failed',
-                    'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
+            const errStr = e?.message || String(e);
+            log('UI', 'Transcription catch', { id, error: errStr, stack: e?.stack?.slice(0, 300) });
+            if (errStr !== 'Cancelled' && errStr !== 'Already queued' && errStr !== 'Queue reset') {
+                log('UI', '*** ERROR ALERT SHOWN ***', { id, error: errStr });
+                const isAudioError = errStr.includes('Audio file') || errStr.includes('audio file') || errStr.includes('unrecognized header');
+                showAlert(
+                    isAudioError ? 'Invalid Audio File' : 'Transcription Failed',
+                    isAudioError
+                        ? 'This audio file appears to be corrupted or missing. Try deleting and re-downloading the episode.'
+                        : 'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
                 );
             }
         } finally {
-            setActiveId(prev => prev === id ? null : prev);
+            // When done, promote the next queued item immediately so it
+            // doesn't flash "Queued" while the service is still in cleanup.
+            const nextIds = getQueueIds();
+            log('UI', 'handleTranscribe finally', { id, nextInQueue: nextIds });
+            if (nextIds.length > 0) {
+                setActiveId(nextIds[0]);
+                log('UI', 'Promoted next → Transcribing', { promoted: nextIds[0] });
+            } else {
+                setActiveId(prev => prev === id ? null : prev);
+            }
             setProgressMap(prev => { const n = { ...prev }; delete n[id]; return n; });
         }
     }, []);
 
+    const handleCancel = useCallback((episode) => {
+        const id = episode.id;
+        const svcActive = getActiveId();
+        const wasActive = svcActive === id;
+        log('UI', 'Cancel tapped', {
+            id, title: episode.title,
+            wasActive, svcActiveId: svcActive, queueBefore: getQueueIds(),
+        });
+        setProgressMap(prev => { const n = { ...prev }; delete n[id]; return n; });
+        dequeueTranscription(id);
+        if (wasActive) {
+            const nextIds = getQueueIds();
+            const promoted = nextIds.length > 0 ? nextIds[0] : null;
+            log('UI', 'Cancel active → promote next', { promoted, queueAfter: nextIds });
+            setActiveId(promoted);
+        } else {
+            log('UI', 'Cancel queued item', { id });
+            setActiveId(prev => prev === id ? null : prev);
+        }
+    }, []);
+
     const handleRemoveTranscript = async (episode) => {
+        log('UI', 'Remove transcript', { id: episode.id, title: episode.title });
         await deleteEpisodeTranscript(episode.id);
         loadData();
     };
 
     const handleDelete = async (episode) => {
-        // Remove from queue if waiting
+        log('UI', 'Delete episode', { id: episode.id, title: episode.title });
         dequeueTranscription(episode.id);
         if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
         await deleteEpisodeLocalData(episode.id);
@@ -173,6 +267,10 @@ const DownloadedTimeline = ({ navigation }) => {
                     const isActive   = activeId === item.id;
                     const isQueued   = queuedIds.includes(item.id);
                     const progress   = progressMap[item.id] ?? 0;
+                    const btnState   = isActive ? 'Transcribing'
+                                     : (isQueued && !isActive) ? 'Queued'
+                                     : item.has_transcript ? 'HasTranscript'
+                                     : 'Idle';
 
                     return (
                         <SwipeableRow
@@ -181,8 +279,12 @@ const DownloadedTimeline = ({ navigation }) => {
                         >
                             <EpisodeItem
                                 episode={item}
-                                onPress={(ep) => navigation.navigate('Player', { episode: ep })}
-                                onTranscribe={!isQueued ? handleTranscribe : undefined}
+                                onPress={(ep) => {
+                                    log('UI', 'Episode tapped → Player', { id: ep.id, title: ep.title, btnState });
+                                    navigation.navigate('Player', { episode: ep });
+                                }}
+                                onTranscribe={!isQueued && !isActive ? handleTranscribe : undefined}
+                                onCancel={handleCancel}
                                 isTranscribing={isActive}
                                 transcribeProgress={isActive ? progress : 0}
                                 isQueued={isQueued && !isActive}

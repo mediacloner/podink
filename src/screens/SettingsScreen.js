@@ -1,27 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Platform, View, Text, TouchableOpacity,
-    StyleSheet, Alert, ActivityIndicator, ScrollView,
+    View, Text, TouchableOpacity,
+    StyleSheet, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { File, Paths } from 'expo-file-system';
+import { useNavigation } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { downloadAudioFile } from '../services/downloadService';
+import { SHERPA_MODELS, ensureSherpaModel, isSherpaModelDownloaded, deleteSherpaModel } from '../services/downloadService';
+import { resetService } from '../services/whisperService';
+import { showAlert } from '../components/AppAlert';
 
-const ALL_MODELS = [
-    { id: 'tiny',       name: 'Tiny',     size: '39 MB',  desc: 'Fastest, lower accuracy' },
-    { id: 'base',       name: 'Base',     size: '74 MB',  desc: 'Best balance of speed and accuracy', recommended: true },
-    { id: 'base.q8_0',  name: 'Base Q8',  size: '39 MB',  desc: 'Same quality as Base, ~2× faster', ios: true },
-    { id: 'small',      name: 'Small',    size: '241 MB', desc: 'Highest accuracy, slower' },
-    { id: 'small.q8_0', name: 'Small Q8', size: '120 MB', desc: 'Same quality as Small, ~2× faster', ios: true },
-];
-
-const MODELS = Platform.OS === 'android' ? ALL_MODELS.filter(m => !m.ios) : ALL_MODELS;
+const MODELS = Object.entries(SHERPA_MODELS).map(([id, m]) => ({
+    id,
+    name: m.label,
+    size: `~${m.totalSizeMB} MB`,
+    desc: m.desc,
+    recommended: m.recommended || false,
+}));
 
 const SettingsScreen = () => {
     const { bottom } = useSafeAreaInsets();
-    const [selectedModel, setSelectedModel]     = useState('base');
+    const navigation = useNavigation();
+    const [selectedModel, setSelectedModel]     = useState('moonshine_base');
     const [isModelDownloaded, setIsModelDownloaded] = useState(false);
     const [isDownloading, setIsDownloading]     = useState(false);
     const [downloadProgress, setDownloadProgress] = useState(0);
@@ -32,7 +33,13 @@ const SettingsScreen = () => {
     const loadPreference = async () => {
         try {
             const saved = await AsyncStorage.getItem('@whisper_model');
-            if (saved) setSelectedModel(saved);
+            // Migrate old whisper model keys to new defaults
+            if (saved && SHERPA_MODELS[saved]) {
+                setSelectedModel(saved);
+            } else if (saved) {
+                // Old whisper key (base, tiny, etc.) — reset to default
+                await AsyncStorage.setItem('@whisper_model', 'moonshine_base');
+            }
         } catch (e) {}
     };
 
@@ -43,38 +50,51 @@ const SettingsScreen = () => {
         } catch (e) {}
     };
 
-    const getModelFile = (modelId) => new File(Paths.document, `ggml-${modelId}.bin`);
-
-    const checkModelStatus = (modelId) => {
-        setIsModelDownloaded(getModelFile(modelId).exists);
+    const checkModelStatus = async (modelId) => {
+        setIsModelDownloaded(await isSherpaModelDownloaded(modelId));
     };
 
     const handleDownload = async () => {
         setIsDownloading(true);
         setDownloadProgress(0);
-        const fileName = `ggml-${selectedModel}.bin`;
-        const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${fileName}`;
         try {
-            await downloadAudioFile(url, fileName, (p) => setDownloadProgress(p));
+            await ensureSherpaModel(selectedModel, (p) => setDownloadProgress(p));
             setIsModelDownloaded(true);
-            Alert.alert('Done', `${selectedModel} model is ready.`);
+            const model = SHERPA_MODELS[selectedModel];
+            showAlert('Done', `${model.label} model is ready.`);
         } catch {
-            Alert.alert('Download Failed', 'Check your connection and try again.');
+            showAlert('Download Failed', 'Check your connection and try again.');
         } finally {
             setIsDownloading(false);
         }
     };
 
-    const handleDelete = () => {
-        Alert.alert(
-            'Delete Model',
-            `Remove the ${selectedModel} model from your device?`,
+    const handleResetQueue = () => {
+        showAlert(
+            'Reset Transcription Queue',
+            'This will cancel all pending and active transcriptions and clear the queue. Use this if the service appears stuck.',
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                    text: 'Delete', style: 'destructive', onPress: () => {
-                        const file = getModelFile(selectedModel);
-                        if (file.exists) file.delete();
+                    text: 'Reset', style: 'destructive', onPress: async () => {
+                        await resetService();
+                        showAlert('Done', 'Transcription queue has been cleared.');
+                    },
+                },
+            ],
+        );
+    };
+
+    const handleDelete = () => {
+        const model = SHERPA_MODELS[selectedModel];
+        showAlert(
+            'Delete Model',
+            `Remove the ${model?.label || selectedModel} model from your device?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete', style: 'destructive', onPress: async () => {
+                        await deleteSherpaModel(selectedModel);
                         setIsModelDownloaded(false);
                     }
                 }
@@ -137,7 +157,7 @@ const SettingsScreen = () => {
 
             <View style={styles.card}>
                 <View style={styles.statusRow}>
-                    <Text style={styles.statusName}>{selectedModel}</Text>
+                    <Text style={styles.statusName}>{SHERPA_MODELS[selectedModel]?.label || selectedModel}</Text>
                     <View style={[styles.statusPill, isModelDownloaded ? styles.pillGreen : styles.pillRed]}>
                         <Icon
                             name={isModelDownloaded ? 'check' : 'x'}
@@ -173,6 +193,32 @@ const SettingsScreen = () => {
                     </TouchableOpacity>
                 )
             )}
+
+            {/* Section: Troubleshooting */}
+            <Text style={styles.sectionLabel}>TROUBLESHOOTING</Text>
+
+            <TouchableOpacity style={styles.resetBtn} onPress={handleResetQueue}>
+                <Icon name="refresh-cw" size={15} color="#FF9F0A" />
+                <Text style={styles.resetBtnText}>Reset transcription queue</Text>
+            </TouchableOpacity>
+            <Text style={styles.resetHint}>
+                Use this if transcription appears frozen or stuck. Does not delete your existing transcripts.
+            </Text>
+
+            {/* Section: Debug Log */}
+            <Text style={styles.sectionLabel}>DEBUG</Text>
+
+            <TouchableOpacity
+                style={styles.logBtn}
+                onPress={() => navigation.getParent()?.navigate('DebugLog')}
+            >
+                <Icon name="file-text" size={15} color="#AF82FF" />
+                <Text style={styles.logBtnText}>Debug log</Text>
+                <Icon name="chevron-right" size={15} color="#3A3A3C" style={{ marginLeft: 'auto' }} />
+            </TouchableOpacity>
+            <Text style={styles.resetHint}>
+                Record UI interactions and service events to diagnose transcription issues.
+            </Text>
 
         </ScrollView>
     );
@@ -328,6 +374,44 @@ const styles = StyleSheet.create({
         borderColor: 'rgba(255,69,58,0.18)',
     },
     deleteBtnText: { color: '#FF453A', fontSize: 15, fontWeight: '600' },
+
+    resetBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        marginHorizontal: 16,
+        marginTop: 10,
+        paddingVertical: 15,
+        borderRadius: 14,
+        backgroundColor: 'rgba(255,159,10,0.07)',
+        borderWidth: 0.5,
+        borderColor: 'rgba(255,159,10,0.18)',
+    },
+    resetBtnText: { color: '#FF9F0A', fontSize: 15, fontWeight: '600' },
+    resetHint: {
+        fontSize: 12,
+        color: '#3A3A3C',
+        textAlign: 'center',
+        marginHorizontal: 24,
+        marginTop: 10,
+        lineHeight: 18,
+    },
+
+    logBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginHorizontal: 16,
+        marginTop: 10,
+        paddingVertical: 15,
+        paddingHorizontal: 18,
+        borderRadius: 14,
+        backgroundColor: 'rgba(175,130,255,0.07)',
+        borderWidth: 0.5,
+        borderColor: 'rgba(175,130,255,0.18)',
+    },
+    logBtnText: { color: '#AF82FF', fontSize: 15, fontWeight: '600' },
 });
 
 export default SettingsScreen;

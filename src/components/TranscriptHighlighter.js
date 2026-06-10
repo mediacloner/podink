@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Dimensions,
+  InteractionManager,
   Modal,
   Platform,
   Pressable,
@@ -96,6 +97,17 @@ function estimateChunkHeight(words) {
   return lines * LINE_HEIGHT;
 }
 
+// Stable identity for the "no transcript yet" computed state so the FlatList
+// doesn't keep tearing down/up its internal data when segments are empty.
+const EMPTY_COMPUTED = Object.freeze({
+  chunks: [],
+  displayItems: [],
+  itemLengths: [],
+  itemOffsets: [],
+  chunkDisplayIndex: {},
+  wordTimings: [],
+});
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) => {
@@ -154,81 +166,149 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
     },
   );
 
-  // ── Build chunk data ──────────────────────────────────────────────────────
+  // ── Build chunk data (async, batched) ────────────────────────────────────
+  //
+  // For long episodes (75-min ≈ 67k word segments) the synchronous version of
+  // this pipeline pegged the JS thread for 5–10 seconds, blocking touch input
+  // and playback ticks (RN even logs a "VirtualizedList: large list slow to
+  // update" warning with prevDt ~7000 ms). We now build everything in one
+  // async pass, yielding to the main thread between batches, then publish all
+  // derived state atomically so FlatList mounts once already laid out.
+  //
+  // EMPTY_COMPUTED is reused as the steady "no transcript" state — keeping it
+  // outside the closure prevents identity churn that would otherwise force
+  // FlatList to re-virtualize.
 
-  const chunks = useMemo(() => {
-    if (!segments?.length) return [];
-    const result = [];
-    let cur = [], startMs = 0, gi = 0;
-    segments.forEach((seg, si) => {
-      const raw  = seg.text.trim();
-      if (!raw) return;
-      const sMs  = seg.start_time ?? seg.start ?? 0;
-      const eMs  = seg.end_time   ?? seg.end   ?? sMs + 2000;
-      const ws   = raw.split(/\s+/).filter(Boolean);
-      const tpw  = (eMs - sMs) / Math.max(1, ws.length);
+  const [computed, setComputed] = useState(EMPTY_COMPUTED);
+  const [isBuilding, setIsBuilding] = useState(false);
+  const { chunks, displayItems, itemLengths, itemOffsets, chunkDisplayIndex, wordTimings } = computed;
 
-      ws.forEach((w, wi) => {
-        if (!cur.length) startMs = sMs + wi * tpw;
-        cur.push({ text: w + " ", startMs: sMs + wi * tpw, globalIndex: gi++ });
+  useEffect(() => {
+    if (!segments?.length) {
+      setComputed(EMPTY_COMPUTED);
+      setIsBuilding(false);
+      return;
+    }
 
-        const last = wi === ws.length - 1;
-        const sent = w.endsWith(".") || w.endsWith("?") || w.endsWith("!");
-        if (sent || cur.length >= 35 || (si === segments.length - 1 && last)) {
-          result.push({ id: `c${result.length}`, words: cur, startMs, chunkIndex: result.length });
-          cur = [];
+    let cancelled = false;
+    setIsBuilding(true);
+
+    // Phase 1: chunk-build, yielding every BATCH segments so input/playback
+    // ticks can interleave. ~5k seg/batch keeps each batch < 50 ms on mid-tier
+    // Android while still finishing a 75-min transcript in ~14 hops.
+    const BATCH = 5000;
+    const builtChunks = [];
+    let cur = [], chunkStartMs = 0, gi = 0;
+    let i = 0;
+
+    const buildChunksBatch = () => {
+      if (cancelled) return;
+      const end = Math.min(i + BATCH, segments.length);
+      for (; i < end; i++) {
+        const seg = segments[i];
+        const raw = seg.text?.trim();
+        if (!raw) continue;
+        const sMs  = seg.start_time ?? seg.start ?? 0;
+        const eMs  = seg.end_time   ?? seg.end   ?? sMs + 2000;
+        const ws   = raw.split(/\s+/).filter(Boolean);
+
+        const totalUnits = ws.reduce((sum, w) => sum + w.length + 1, 0) || 1;
+        const dur = eMs - sMs;
+        let unitsSoFar = 0;
+
+        for (let wi = 0; wi < ws.length; wi++) {
+          const w = ws[wi];
+          const wordStartMs = sMs + (unitsSoFar / totalUnits) * dur;
+          unitsSoFar += w.length + 1;
+
+          if (!cur.length) chunkStartMs = wordStartMs;
+          cur.push({ text: w + " ", startMs: wordStartMs, globalIndex: gi++ });
+
+          const last = wi === ws.length - 1;
+          const sent = w.endsWith(".") || w.endsWith("?") || w.endsWith("!");
+          if (sent || cur.length >= 35 || (i === segments.length - 1 && last)) {
+            builtChunks.push({
+              id: `c${builtChunks.length}`,
+              words: cur,
+              startMs: chunkStartMs,
+              chunkIndex: builtChunks.length,
+            });
+            cur = [];
+          }
         }
-      });
-    });
-    return result;
-  }, [segments]);
-
-  // Interleave chunks with 10-minute keypoint markers.
-  const displayItems = useMemo(() => {
-    const items = [];
-    let nextKp = KEYPOINT_INTERVAL_MS;
-    chunks.forEach(chunk => {
-      while (chunk.startMs >= nextKp) {
-        items.push({ type: "keypoint", id: `kp${nextKp}`, timeMs: nextKp, label: formatTime(nextKp) });
-        nextKp += KEYPOINT_INTERVAL_MS;
       }
-      items.push({ type: "chunk", ...chunk });
-    });
-    return items;
-  }, [chunks]);
 
-  // Pre-compute estimated item lengths and their cumulative offsets (including header).
-  // itemOffsets[i] = distance from top of scroll content to item i.
-  // getItemLayout returns these — FlatList can then virtualize any position without renders.
-  const { itemLengths, itemOffsets } = useMemo(() => {
-    const lengths = new Array(displayItems.length);
-    const offsets = new Array(displayItems.length);
-    let y = HEADER_HEIGHT; // first item sits after the LIST_HEADER
-    displayItems.forEach((item, i) => {
-      offsets[i] = y;
-      const len = item.type === "keypoint"
-        ? KEYPOINT_HEIGHT + CHUNK_MARGIN
-        : estimateChunkHeight(item.words) + CHUNK_MARGIN;
-      lengths[i] = len;
-      y += len;
-    });
-    return { itemLengths: lengths, itemOffsets: offsets };
-  }, [displayItems]);
+      if (i < segments.length) {
+        // Yield for one task tick, then continue.
+        setTimeout(buildChunksBatch, 0);
+        return;
+      }
 
-  // chunkIndex → position inside displayItems (accounts for keypoints before it).
-  const chunkDisplayIndex = useMemo(() => {
-    const map = {};
-    displayItems.forEach((item, i) => { if (item.type === "chunk") map[item.chunkIndex] = i; });
-    return map;
-  }, [displayItems]);
+      // Phase 2: derive layout/index/timing data in one pass over the chunks.
+      // Each is O(M) over ~6k items so ~10 ms total — small enough to do
+      // synchronously without another yield.
+      const _displayItems = [];
+      let nextKp = KEYPOINT_INTERVAL_MS;
+      for (const chunk of builtChunks) {
+        while (chunk.startMs >= nextKp) {
+          _displayItems.push({
+            type: "keypoint",
+            id: `kp${nextKp}`,
+            timeMs: nextKp,
+            label: formatTime(nextKp),
+          });
+          nextKp += KEYPOINT_INTERVAL_MS;
+        }
+        _displayItems.push({ type: "chunk", ...chunk });
+      }
 
-  const wordTimings = useMemo(() => {
-    const arr = [];
-    chunks.forEach(ch => ch.words.forEach(w => {
-      arr[w.globalIndex] = { startMs: w.startMs, chunkIndex: ch.chunkIndex };
-    }));
-    return arr;
-  }, [chunks]);
+      const _itemLengths = new Array(_displayItems.length);
+      const _itemOffsets = new Array(_displayItems.length);
+      let y = HEADER_HEIGHT;
+      for (let j = 0; j < _displayItems.length; j++) {
+        const item = _displayItems[j];
+        _itemOffsets[j] = y;
+        const len = item.type === "keypoint"
+          ? KEYPOINT_HEIGHT + CHUNK_MARGIN
+          : estimateChunkHeight(item.words) + CHUNK_MARGIN;
+        _itemLengths[j] = len;
+        y += len;
+      }
+
+      const _chunkDisplayIndex = {};
+      for (let j = 0; j < _displayItems.length; j++) {
+        const item = _displayItems[j];
+        if (item.type === "chunk") _chunkDisplayIndex[item.chunkIndex] = j;
+      }
+
+      const _wordTimings = new Array(gi);
+      for (const ch of builtChunks) {
+        for (const w of ch.words) {
+          _wordTimings[w.globalIndex] = { startMs: w.startMs, chunkIndex: ch.chunkIndex };
+        }
+      }
+
+      if (cancelled) return;
+      setComputed({
+        chunks: builtChunks,
+        displayItems: _displayItems,
+        itemLengths: _itemLengths,
+        itemOffsets: _itemOffsets,
+        chunkDisplayIndex: _chunkDisplayIndex,
+        wordTimings: _wordTimings,
+      });
+      setIsBuilding(false);
+    };
+
+    // Wait for the player open animation + initial layout to settle before
+    // hogging the JS thread — keeps the screen transition silky.
+    const handle = InteractionManager.runAfterInteractions(buildChunksBatch);
+
+    return () => {
+      cancelled = true;
+      if (handle?.cancel) handle.cancel();
+    };
+  }, [segments]);
 
   // ── UI-thread scroll via Reanimated ──────────────────────────────────────
 
@@ -396,6 +476,17 @@ const TranscriptHighlighter = ({ segments, fadeTo = BG, textTheme = 'dark' }) =>
     return (
       <View style={styles.empty}>
         <Text style={styles.placeholder}>No Transcript Available</Text>
+      </View>
+    );
+  }
+
+  // Async build is still in flight — show a centred indicator so the user
+  // knows transcript is preparing, instead of showing a blank pane.
+  if (isBuilding && displayItems.length === 0) {
+    return (
+      <View style={styles.empty}>
+        <ActivityIndicator size="small" color="#4FACFE" />
+        <Text style={[styles.placeholder, { marginTop: 12 }]}>Preparing transcript…</Text>
       </View>
     );
   }

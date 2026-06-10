@@ -53,6 +53,11 @@ export const initDB = async () => {
         await db.execAsync(`ALTER TABLE Episodes ADD COLUMN is_new INTEGER DEFAULT 0`);
     }
 
+    // Migrate: add duration column if missing (seconds, from RSS itunes:duration)
+    if (!cols.some(c => c.name === 'duration')) {
+        await db.execAsync(`ALTER TABLE Episodes ADD COLUMN duration INTEGER DEFAULT 0`);
+    }
+
     // Create Transcripts table (segments of an episode)
     await db.execAsync(
       `CREATE TABLE IF NOT EXISTS Transcripts (

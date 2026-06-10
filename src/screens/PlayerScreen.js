@@ -3,6 +3,7 @@ import {
     View, StyleSheet, Text, Image,
     ActivityIndicator, TouchableOpacity,
 } from 'react-native';
+import { useKeepAwake } from 'expo-keep-awake';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TrackPlayer from 'react-native-track-player';
 import { Feather as Icon } from '@expo/vector-icons';
@@ -19,6 +20,7 @@ const DARK = '#0B0A11'; // deep dark base — richer than pure black
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 const PlayerScreen = ({ route, navigation }) => {
+    useKeepAwake();
     const { episode } = route.params;
     const [segments, setSegments]           = useState([]);
     const [loadingStatus, setLoadingStatus] = useState('');
