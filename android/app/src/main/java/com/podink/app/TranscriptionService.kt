@@ -17,10 +17,12 @@ class TranscriptionService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_START    = "START"
         const val ACTION_STOP     = "STOP"
-        const val EXTRA_TITLE     = "title"
-        const val EXTRA_MESSAGE   = "message"
-        const val WAKE_LOCK_TAG   = "podink:transcription"
-        const val WAKE_LOCK_TIMEOUT_MS = 60L * 60 * 1000 // 60 min max
+        const val EXTRA_TITLE        = "title"
+        const val EXTRA_MESSAGE      = "message"
+        const val EXTRA_DURATION_SEC = "durationSec"
+        const val WAKE_LOCK_TAG      = "podink:transcription"
+        const val WAKE_LOCK_DEFAULT_TIMEOUT_MS = 60L * 60 * 1000      // unknown duration: 60 min
+        const val WAKE_LOCK_MAX_TIMEOUT_MS     = 3L * 60 * 60 * 1000  // 3 h hard cap
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -34,11 +36,11 @@ class TranscriptionService : Service() {
         wakeLock = null
     }
 
-    private fun acquireWakeLock() {
+    private fun acquireWakeLock(timeoutMs: Long) {
         releaseWakeLock()
         val pm = getSystemService(PowerManager::class.java)
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG).apply {
-            acquire(WAKE_LOCK_TIMEOUT_MS)
+            acquire(timeoutMs)
         }
     }
 
@@ -63,6 +65,17 @@ class TranscriptionService : Service() {
         val title   = intent.getStringExtra(EXTRA_TITLE)   ?: "Transcribing podcasts"
         val message = intent.getStringExtra(EXTRA_MESSAGE) ?: "Processing audio in background…"
 
+        // Wake-lock budget scaled to the episode: transcription runs ~2-4x
+        // realtime, so half the audio duration plus headroom covers it. The
+        // JS layer re-starts the service per progress window, which re-acquires
+        // the lock and resets this deadline.
+        val durationSec = intent.getDoubleExtra(EXTRA_DURATION_SEC, 0.0)
+        val wakeLockBudgetMs = if (durationSec > 0) {
+            ((durationSec * 500).toLong() + 10L * 60 * 1000).coerceAtMost(WAKE_LOCK_MAX_TIMEOUT_MS)
+        } else {
+            WAKE_LOCK_DEFAULT_TIMEOUT_MS
+        }
+
         val openApp = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
@@ -81,7 +94,7 @@ class TranscriptionService : Service() {
             .build()
 
         startForeground(NOTIFICATION_ID, notification)
-        acquireWakeLock()
+        acquireWakeLock(wakeLockBudgetMs)
 
         // START_NOT_STICKY: if the system kills this service it will NOT be
         // restarted automatically. The JS layer handles re-queuing via

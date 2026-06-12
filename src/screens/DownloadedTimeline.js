@@ -1,13 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, PanResponder, View, FlatList, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, View, FlatList, StyleSheet } from 'react-native';
 import { showAlert } from '../components/AppAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
-import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
+import SwipeableRow, { closeOpenRow } from '../components/SwipeableRow';
+import EmptyState from '../components/EmptyState';
 import { getDownloadedEpisodes, deleteEpisodeLocalData, deleteEpisodeTranscript } from '../database/queries';
 import {
-    initializeWhisper,
     enqueueTranscription,
     dequeueTranscription,
     onQueueChange,
@@ -16,155 +16,80 @@ import {
     getAbortingId,
 } from '../services/whisperService';
 import { deleteAudioFile } from '../services/downloadService';
-import { onLibraryChange } from '../services/libraryEvents';
+import { onLibraryChange, notifyLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
-
-// ─── Swipeable delete row ─────────────────────────────────────────────────────
-
-const ACTION_WIDTH  = 80;
-const THRESHOLD     = 50;
-
-// open: null | 'left' | 'right'
-const SwipeableRow = ({ children, onDelete, onRemoveTranscript }) => {
-    const translateX = useRef(new Animated.Value(0)).current;
-    const openRef    = useRef(null); // track without re-render
-
-    // The panResponder is created once via useRef and freezes its closure.
-    // Mirror the props in refs so the gesture handler always sees the latest
-    // values — otherwise a row that mounts without a transcript captures
-    // onRemoveTranscript=undefined forever, and right-swipe is silently
-    // suppressed even after transcription completes.
-    const removeRef = useRef(onRemoveTranscript);
-    const deleteRef = useRef(onDelete);
-    useEffect(() => { removeRef.current = onRemoveTranscript; }, [onRemoveTranscript]);
-    useEffect(() => { deleteRef.current = onDelete; }, [onDelete]);
-
-    const close = () => {
-        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
-        openRef.current = null;
-    };
-
-    const fireDelete = () => {
-        Animated.timing(translateX, { toValue: -400, duration: 200, useNativeDriver: true })
-            .start(() => deleteRef.current?.());
-    };
-
-    const fireRemove = () => {
-        // 1) Slide the row a short distance right to acknowledge the tap
-        // 2) Trigger the async remove (DB delete + list reload runs in parallel)
-        // 3) Smoothly slide the row back to its origin so the user sees a clean
-        //    "tap → ack → snap back" instead of a jarring teleport.
-        openRef.current = null;
-        Animated.timing(translateX, { toValue: ACTION_WIDTH * 1.5, duration: 160, useNativeDriver: true })
-            .start(() => {
-                removeRef.current?.();
-                Animated.spring(translateX, { toValue: 0, useNativeDriver: true, bounciness: 0, speed: 18 }).start();
-            });
-    };
-
-    const panResponder = useRef(PanResponder.create({
-        onMoveShouldSetPanResponder: (_, g) =>
-            Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy * 1.5),
-        onPanResponderMove: (_, g) => {
-            const base = openRef.current === 'left'  ? -ACTION_WIDTH
-                       : openRef.current === 'right' ?  ACTION_WIDTH : 0;
-            const next = base + g.dx;
-            // left swipe → delete (negative), right swipe → transcript (positive, only if available)
-            const clamped = removeRef.current
-                ? Math.max(-ACTION_WIDTH, Math.min(ACTION_WIDTH, next))
-                : Math.max(-ACTION_WIDTH, Math.min(0, next));
-            translateX.setValue(clamped);
-        },
-        onPanResponderRelease: (_, g) => {
-            const base  = openRef.current === 'left'  ? -ACTION_WIDTH
-                        : openRef.current === 'right' ?  ACTION_WIDTH : 0;
-            const delta = base + g.dx;
-
-            if (delta < -THRESHOLD) {
-                Animated.spring(translateX, { toValue: -ACTION_WIDTH, useNativeDriver: true, bounciness: 4 }).start();
-                openRef.current = 'left';
-            } else if (removeRef.current && delta > THRESHOLD) {
-                Animated.spring(translateX, { toValue: ACTION_WIDTH, useNativeDriver: true, bounciness: 4 }).start();
-                openRef.current = 'right';
-            } else {
-                close();
-            }
-        },
-    })).current;
-
-    return (
-        <View style={s.swipeContainer}>
-            {/* Left side: remove transcript (revealed on right-swipe) */}
-            {onRemoveTranscript && (
-                <TouchableOpacity style={s.transcriptAction} onPress={fireRemove} activeOpacity={0.8}>
-                    <Icon name="x-circle" size={20} color="#fff" />
-                    <Text style={s.actionLabel}>Transcript</Text>
-                </TouchableOpacity>
-            )}
-            {/* Right side: delete episode (revealed on left-swipe) */}
-            <TouchableOpacity style={s.deleteAction} onPress={fireDelete} activeOpacity={0.8}>
-                <Icon name="trash-2" size={20} color="#fff" />
-            </TouchableOpacity>
-            <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}>
-                {children}
-            </Animated.View>
-        </View>
-    );
-};
-
-// ─── Screen ───────────────────────────────────────────────────────────────────
+import { colors } from '../theme';
 
 const DownloadedTimeline = ({ navigation }) => {
     const { bottom } = useSafeAreaInsets();
-    const [episodes, setEpisodes]         = useState([]);
-    const [activeId, setActiveId]         = useState(null);
-    const [queuedIds, setQueuedIds]       = useState([]);
-    const [progressMap, setProgressMap]   = useState({}); // { [id]: 0-99 }
+    const [episodes, setEpisodes] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [activeId, setActiveId] = useState(null);
+    const [queuedIds, setQueuedIds] = useState([]);
     const isFocused = useIsFocused();
+
+    const loadData = useCallback(async () => {
+        try {
+            const data = await getDownloadedEpisodes();
+            setEpisodes(data);
+        } finally {
+            setIsLoading(false);
+        }
+    }, []);
 
     // Sync queue state from the service. Any change to the transcription queue
     // — enqueue, dequeue, complete — also reloads the episode list so the
     // Library reflects work started or finished from any tab (and items
     // restored from a previous session whose UI callbacks didn't survive).
     const syncQueue = useCallback(() => {
-        const ids       = getQueueIds();
+        const ids = getQueueIds();
         const curActive = getActiveId();
-        const abortId   = getAbortingId();
+        const abortId = getAbortingId();
         setQueuedIds(ids);
+        // Reconcile activeId to service truth (same rule as the focus handler):
+        // trust a real running job; clear only when the service is idle AND the
+        // queue is empty. During the optimistic window (item enqueued, queued,
+        // but _runNext's setTimeout hasn't marked it active yet) the queue is
+        // non-empty, so we leave the optimistic activeId alone — no flash.
+        if (curActive !== null && abortId !== curActive) {
+            setActiveId(curActive);
+        } else if (ids.length === 0) {
+            setActiveId(null);
+        }
         log('QUEUE', 'syncQueue', { svcActiveId: curActive, abortingId: abortId, queuedIds: ids });
         loadData();
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [loadData]);
 
     useEffect(() => {
         const unsubQueue = onQueueChange(syncQueue);
-        const unsubLib   = onLibraryChange(syncQueue);
+        // Library events are payload-aware: per-window transcript progress is
+        // handled inside each row, so skip the full reload for those ticks.
+        const unsubLib = onLibraryChange((payload) => {
+            if (payload?.type === 'transcript-progress') return;
+            loadData();
+        });
         return () => { unsubQueue(); unsubLib(); };
-    }, [syncQueue]);
+    }, [syncQueue, loadData]);
 
     useEffect(() => {
         if (isFocused) {
             loadData();
             const svcActive = getActiveId();
-            const abortId   = getAbortingId();
+            const abortId = getAbortingId();
             const recovered = svcActive !== null && abortId !== svcActive ? svcActive : null;
             log('UI', 'Screen focused', { svcActive, abortId, recoveredActiveId: recovered });
             setActiveId(recovered);
-            syncQueue();
+            setQueuedIds(getQueueIds());
         }
-    }, [isFocused, syncQueue]);
-
-    const loadData = async () => {
-        const data = await getDownloadedEpisodes();
-        setEpisodes(data);
-    };
+    }, [isFocused, loadData]);
 
     const handleTranscribe = useCallback(async (episode) => {
         if (!episode.local_audio_path) return;
 
         const id = episode.id;
-        const svcActive  = getActiveId();
-        const aborting   = getAbortingId();
-        const curQueue   = getQueueIds();
+        const svcActive = getActiveId();
+        const aborting = getAbortingId();
+        const curQueue = getQueueIds();
         log('UI', 'Transcribe tapped', {
             id, title: episode.title,
             svcActiveId: svcActive, abortingId: aborting, queueIds: curQueue,
@@ -180,15 +105,20 @@ const DownloadedTimeline = ({ navigation }) => {
         } else {
             log('UI', 'Will show as Queued', { id, reason: !queueEmpty ? 'queue not empty' : 'another job active' });
         }
-        setProgressMap(prev => ({ ...prev, [id]: 0 }));
 
+        // Tracks whether THIS job actually started running (vs. being cancelled
+        // while still queued). Only the job that truly ran may hand off to the
+        // next queued item in finally; otherwise we'd promote an item that is
+        // still queued behind a different, still-active job.
+        let becameActive = false;
         try {
             await enqueueTranscription(
                 id,
                 episode.local_audio_path,
-                (p) => setProgressMap(prev => ({ ...prev, [id]: p })),
+                () => {},
                 () => {
                     log('UI', 'onStart callback fired', { id });
+                    becameActive = true;
                     setActiveId(id);
                 },
                 episode.duration || 0,
@@ -209,19 +139,25 @@ const DownloadedTimeline = ({ navigation }) => {
                 );
             }
         } finally {
-            // When done, promote the next queued item immediately so it
-            // doesn't flash "Queued" while the service is still in cleanup.
-            const nextIds = getQueueIds();
-            log('UI', 'handleTranscribe finally', { id, nextInQueue: nextIds });
-            if (nextIds.length > 0) {
-                setActiveId(nextIds[0]);
-                log('UI', 'Promoted next → Transcribing', { promoted: nextIds[0] });
+            if (becameActive) {
+                // This job actually ran and is now finishing: optimistically
+                // promote the next queued item so it doesn't flash "Queued"
+                // during service cleanup. syncQueue (onQueueChange) corrects
+                // this to the service's real active job a moment later.
+                const nextIds = getQueueIds();
+                const next = nextIds.length > 0 ? nextIds[0] : null;
+                setActiveId(next);
+                log('UI', 'handleTranscribe finally (was active)', { id, promoted: next });
             } else {
-                setActiveId(prev => prev === id ? null : prev);
+                // Never started (cancelled while queued, or another job is
+                // active): don't promote anything — that would clobber the
+                // genuinely-active job. Just drop our own optimistic id and
+                // defer to the service's current active job.
+                setActiveId(prev => (prev === id ? getActiveId() : prev));
+                log('UI', 'handleTranscribe finally (never active)', { id });
             }
-            setProgressMap(prev => { const n = { ...prev }; delete n[id]; return n; });
         }
-    }, []);
+    }, [loadData]);
 
     const handleCancel = useCallback((episode) => {
         const id = episode.id;
@@ -231,7 +167,6 @@ const DownloadedTimeline = ({ navigation }) => {
             id, title: episode.title,
             wasActive, svcActiveId: svcActive, queueBefore: getQueueIds(),
         });
-        setProgressMap(prev => { const n = { ...prev }; delete n[id]; return n; });
         dequeueTranscription(id);
         if (wasActive) {
             const nextIds = getQueueIds();
@@ -244,111 +179,102 @@ const DownloadedTimeline = ({ navigation }) => {
         }
     }, []);
 
-    const handleRemoveTranscript = async (episode) => {
+    const handleRemoveTranscript = useCallback(async (episode) => {
         log('UI', 'Remove transcript', { id: episode.id, title: episode.title });
         await deleteEpisodeTranscript(episode.id);
+        notifyLibraryChange({ type: 'transcript-delete', episodeId: episode.id });
         loadData();
-    };
+    }, [loadData]);
 
-    const handleDelete = async (episode) => {
+    const handleDelete = useCallback(async (episode) => {
         log('UI', 'Delete episode', { id: episode.id, title: episode.title });
-        dequeueTranscription(episode.id);
-        if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
-        await deleteEpisodeLocalData(episode.id);
+        try {
+            dequeueTranscription(episode.id);
+            if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
+            await deleteEpisodeLocalData(episode.id);
+            notifyLibraryChange({ type: 'episode-delete', episodeId: episode.id });
+        } catch (e) {
+            log('UI', 'Delete failed', { id: episode.id, error: e?.message || String(e) });
+            showAlert('Delete failed', 'Could not remove this episode. Please try again.');
+            loadData();
+            return false; // signal SwipeableRow to spring the row back
+        }
         loadData();
-    };
+    }, [loadData]);
+
+    const handleOpenEpisode = useCallback((episode) => {
+        log('UI', 'Episode tapped → Player', { id: episode.id, title: episode.title });
+        navigation.navigate('Player', { episode });
+    }, [navigation]);
+
+    const renderItem = useCallback(({ item }) => {
+        const isActive = activeId === item.id;
+        const isQueued = queuedIds.includes(item.id);
+
+        return (
+            <SwipeableRow
+                leftAction={item.has_transcript ? {
+                    icon: 'x-circle',
+                    label: 'Transcript',
+                    color: colors.indigo,
+                    dismiss: 'ack',
+                    onPress: () => handleRemoveTranscript(item),
+                    accessibilityLabel: `Remove transcript for ${item.title}`,
+                } : undefined}
+                rightAction={{
+                    icon: 'trash-2',
+                    color: colors.danger,
+                    dismiss: 'slide-out',
+                    onPress: () => handleDelete(item),
+                    accessibilityLabel: `Delete ${item.title}`,
+                }}
+            >
+                <EpisodeItem
+                    episode={item}
+                    onPress={handleOpenEpisode}
+                    onTranscribe={!isQueued && !isActive ? handleTranscribe : undefined}
+                    onCancel={handleCancel}
+                    isTranscribing={isActive}
+                    isQueued={isQueued && !isActive}
+                />
+            </SwipeableRow>
+        );
+    }, [activeId, queuedIds, handleRemoveTranscript, handleDelete, handleOpenEpisode, handleTranscribe, handleCancel]);
+
+    if (isLoading) {
+        return (
+            <View style={[styles.container, styles.loadingWrap]}>
+                <ActivityIndicator size="large" color={colors.accent} />
+            </View>
+        );
+    }
 
     return (
         <View style={styles.container}>
             <FlatList
                 data={episodes}
                 keyExtractor={item => item.id.toString()}
-                renderItem={({ item }) => {
-                    const isActive   = activeId === item.id;
-                    const isQueued   = queuedIds.includes(item.id);
-                    const progress   = progressMap[item.id] ?? 0;
-                    const btnState   = isActive ? 'Transcribing'
-                                     : (isQueued && !isActive) ? 'Queued'
-                                     : item.has_transcript ? 'HasTranscript'
-                                     : 'Idle';
-
-                    return (
-                        <SwipeableRow
-                            onDelete={() => handleDelete(item)}
-                            onRemoveTranscript={item.has_transcript ? () => handleRemoveTranscript(item) : undefined}
-                        >
-                            <EpisodeItem
-                                episode={item}
-                                onPress={(ep) => {
-                                    log('UI', 'Episode tapped → Player', { id: ep.id, title: ep.title, btnState });
-                                    navigation.navigate('Player', { episode: ep });
-                                }}
-                                onTranscribe={!isQueued && !isActive ? handleTranscribe : undefined}
-                                onCancel={handleCancel}
-                                isTranscribing={isActive}
-                                transcribeProgress={isActive ? progress : 0}
-                                isQueued={isQueued && !isActive}
-                            />
-                        </SwipeableRow>
-                    );
-                }}
+                renderItem={renderItem}
                 contentContainerStyle={episodes.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 130 }}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={7}
+                onScrollBeginDrag={closeOpenRow}
                 ListEmptyComponent={
-                    <View style={styles.empty}>
-                        <View style={styles.emptyIcon}>
-                            <Icon name="archive" size={26} color="#3A3A3C" />
-                        </View>
-                        <Text style={styles.emptyTitle}>Library is empty</Text>
-                        <Text style={styles.emptySubtitle}>
-                            Downloaded episodes appear here for offline listening
-                        </Text>
-                    </View>
+                    <EmptyState
+                        icon="archive"
+                        title="Library is empty"
+                        subtitle="Downloaded episodes appear here for offline listening"
+                    />
                 }
             />
         </View>
     );
 };
 
-const s = StyleSheet.create({
-    swipeContainer: { position: 'relative', overflow: 'hidden' },
-    deleteAction: {
-        position: 'absolute',
-        right: 0, top: 0, bottom: 0,
-        width: ACTION_WIDTH,
-        backgroundColor: '#FF453A',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    transcriptAction: {
-        position: 'absolute',
-        left: 0, top: 0, bottom: 0,
-        width: ACTION_WIDTH,
-        backgroundColor: '#636DAE',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 4,
-    },
-    actionLabel: {
-        fontSize: 10,
-        fontWeight: '700',
-        color: '#fff',
-        letterSpacing: 0.2,
-    },
-});
-
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#0C0C0E' },
-    empty: { flex: 1, alignItems: 'center', paddingHorizontal: 40, paddingTop: 80 },
-    emptyIcon: {
-        width: 64, height: 64,
-        backgroundColor: '#141416',
-        borderRadius: 32,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 20,
-    },
-    emptyTitle:    { fontSize: 20, fontWeight: '700', color: '#FFFFFF', marginBottom: 8 },
-    emptySubtitle: { fontSize: 14, color: '#636366', textAlign: 'center', lineHeight: 21 },
+    container: { flex: 1, backgroundColor: colors.bg },
+    loadingWrap: { alignItems: 'center', justifyContent: 'center' },
 });
 
 export default DownloadedTimeline;

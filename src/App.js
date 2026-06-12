@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { View, LogBox, StyleSheet } from 'react-native';
-import { NavigationContainer, DarkTheme } from '@react-navigation/native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, LogBox, StyleSheet, ActivityIndicator } from 'react-native';
+import { NavigationContainer, DarkTheme, useIsFocused } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather as Icon } from '@expo/vector-icons';
-import { useIsFocused } from '@react-navigation/native';
 
 import { initDB } from './database/db';
 import AppAlert from './components/AppAlert';
@@ -14,6 +13,8 @@ import { restoreQueue, initializeWhisper } from './services/whisperService';
 import { cleanupOldWhisperModels } from './services/downloadService';
 import { restoreLogs } from './services/logService';
 import { getTotalNewEpisodesCount } from './database/queries';
+import { onLibraryChange } from './services/libraryEvents';
+import { colors, type } from './theme';
 
 import SubscribedTimeline from './screens/SubscribedTimeline';
 import DownloadedTimeline from './screens/DownloadedTimeline';
@@ -21,6 +22,7 @@ import PlayerScreen from './screens/PlayerScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import PodcastsScreen from './screens/PodcastsScreen';
 import LogScreen from './screens/LogScreen';
+import VocabularyScreen from './screens/VocabularyScreen';
 import MiniPlayer from './components/MiniPlayer';
 
 LogBox.ignoreLogs(['Attempted to import the module']);
@@ -39,25 +41,36 @@ const appTheme = {
     ...DarkTheme,
     colors: {
         ...DarkTheme.colors,
-        background: '#0C0C0E',
-        card:       '#0C0C0E',
-        border:     'rgba(255,255,255,0.07)',
-        text:       '#FFFFFF',
+        primary:    colors.accent,
+        background: colors.bg,
+        card:       colors.bg,
+        border:     colors.hairline,
+        text:       colors.textPrimary,
     },
 };
 
+// Badge types that can change the new-episodes count; transcript events can't.
+const BADGE_EVENT_TYPES = ['subscribe', 'unsubscribe', 'download-complete', 'episode-delete'];
+
 const PodcastsTabIcon = ({ color, size }) => {
     const [hasNew, setHasNew] = useState(false);
+    const isFocused = useIsFocused();
 
-    useEffect(() => {
-        const check = async () => {
+    const check = useCallback(async () => {
+        try {
             const count = await getTotalNewEpisodesCount();
             setHasNew(count > 0);
-        };
-        check();
-        const interval = setInterval(check, 5000);
-        return () => clearInterval(interval);
+        } catch (_) {}
     }, []);
+
+    // Event-driven instead of polling: re-check on library changes that can
+    // affect the count, and whenever this tab gains/loses focus (collapse on
+    // blur marks episodes as seen).
+    useEffect(() => { check(); }, [isFocused, check]);
+    useEffect(() => onLibraryChange((payload) => {
+        const t = payload?.type;
+        if (t === undefined || BADGE_EVENT_TYPES.includes(t)) check();
+    }), [check]);
 
     return (
         <View>
@@ -85,27 +98,27 @@ const TabNavigator = ({ navigation }) => {
         <View style={{ flex: 1 }}>
             <Tab.Navigator
                 screenOptions={({ route }) => ({
-                    headerStyle:         { backgroundColor: '#0C0C0E' },
-                    headerTintColor:     '#fff',
-                    headerTitleStyle:    { fontWeight: '700', fontSize: 17, letterSpacing: -0.3 },
+                    headerStyle:         { backgroundColor: colors.bg },
+                    headerTintColor:     colors.textPrimary,
+                    headerTitleStyle:    { ...type.heading },
                     headerShadowVisible: false,
                     tabBarStyle: {
-                        backgroundColor: '#0C0C0E',
+                        backgroundColor: colors.bg,
                         borderTopWidth:  StyleSheet.hairlineWidth,
-                        borderTopColor:  'rgba(255,255,255,0.12)',
+                        borderTopColor:  colors.hairlineStrong,
                         height:          tabBarHeight,
                         paddingBottom:   bottom + 10,
                         paddingTop:      6,
                     },
                     tabBarLabelStyle:        { fontSize: 10, fontWeight: '600' },
-                    tabBarActiveTintColor:   '#4FACFE',
-                    tabBarInactiveTintColor: '#636366',
+                    tabBarActiveTintColor:   colors.accent,
+                    tabBarInactiveTintColor: colors.textMuted,
                     tabBarIcon: ({ color, size }) => (
                         <Icon name={TAB_ICONS[route.name] || 'circle'} size={size} color={color} />
                     ),
                 })}
             >
-                <Tab.Screen name="Timeline" component={SubscribedTimeline} options={{ title: 'Discover' }} />
+                <Tab.Screen name="Timeline" component={SubscribedTimeline} options={{ title: 'Feed' }} />
                 <Tab.Screen
                     name="Podcasts"
                     component={PodcastsScreen}
@@ -126,17 +139,31 @@ const TabNavigator = ({ navigation }) => {
 };
 
 const App = () => {
+    // Screens query SQLite on mount; don't render them until migrations finish.
+    const [dbReady, setDbReady] = useState(false);
+
     useEffect(() => {
         restoreLogs();
-        initDB().then(() => {
-            console.log('Database Initialized');
-            restoreQueue();
-            cleanupOldWhisperModels();
-            // Pre-warm STT model so the first transcription doesn't pay cold-start.
-            initializeWhisper();
-        });
+        initDB()
+            .then(() => {
+                console.log('Database Initialized');
+                restoreQueue();
+                cleanupOldWhisperModels();
+                // Pre-warm STT model so the first transcription doesn't pay cold-start.
+                initializeWhisper();
+            })
+            .catch((e) => console.error('DB init failed', e))
+            .finally(() => setDbReady(true));
         setupPlayer().then(() => console.log('Track Player Ready'));
     }, []);
+
+    if (!dbReady) {
+        return (
+            <View style={styles.bootSplash}>
+                <ActivityIndicator size="large" color={colors.accent} />
+            </View>
+        );
+    }
 
     return (
         <SafeAreaProvider>
@@ -157,6 +184,11 @@ const App = () => {
                         }}
                     />
                     <Stack.Screen
+                        name="Vocabulary"
+                        component={VocabularyScreen}
+                        options={{ headerShown: true }}
+                    />
+                    <Stack.Screen
                         name="DebugLog"
                         component={LogScreen}
                         options={{ headerShown: true }}
@@ -168,6 +200,12 @@ const App = () => {
 };
 
 const styles = StyleSheet.create({
+    bootSplash: {
+        flex:            1,
+        backgroundColor: colors.bg,
+        alignItems:      'center',
+        justifyContent:  'center',
+    },
     dot: {
         position:        'absolute',
         top:             0,
@@ -175,7 +213,7 @@ const styles = StyleSheet.create({
         width:           7,
         height:          7,
         borderRadius:    3.5,
-        backgroundColor: '#FF453A',
+        backgroundColor: colors.danger,
     },
 });
 

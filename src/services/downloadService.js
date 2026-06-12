@@ -4,52 +4,9 @@ import { File, Paths } from 'expo-file-system';
 // ─── Sherpa-ONNX model registry ──────────────────────────────────────────────
 
 export const SHERPA_MODELS = {
-    moonshine_tiny: {
-        label: 'Moonshine Tiny',
-        desc: 'English only, fastest, lightest',
-        folder: 'sherpa-moonshine-tiny-int8',
-        modelType: 'moonshine',
-        modelFiles: {
-            preprocessor: 'preprocess.onnx',
-            encoder: 'encode.int8.onnx',
-            uncachedDecoder: 'uncached_decode.int8.onnx',
-            cachedDecoder: 'cached_decode.int8.onnx',
-        },
-        files: [
-            'preprocess.onnx',
-            'encode.int8.onnx',
-            'uncached_decode.int8.onnx',
-            'cached_decode.int8.onnx',
-            'tokens.txt',
-        ],
-        baseUrl: 'https://huggingface.co/csukuangfj/sherpa-onnx-moonshine-tiny-en-int8/resolve/main/',
-        totalSizeMB: 30,
-    },
-    moonshine_base: {
-        label: 'Moonshine Base',
-        desc: 'English only, best accuracy',
-        folder: 'sherpa-moonshine-base-int8',
-        modelType: 'moonshine',
-        modelFiles: {
-            preprocessor: 'preprocess.onnx',
-            encoder: 'encode.int8.onnx',
-            uncachedDecoder: 'uncached_decode.int8.onnx',
-            cachedDecoder: 'cached_decode.int8.onnx',
-        },
-        files: [
-            'preprocess.onnx',
-            'encode.int8.onnx',
-            'uncached_decode.int8.onnx',
-            'cached_decode.int8.onnx',
-            'tokens.txt',
-        ],
-        baseUrl: 'https://huggingface.co/csukuangfj/sherpa-onnx-moonshine-base-en-int8/resolve/main/',
-        totalSizeMB: 60,
-        recommended: true,
-    },
     sensevoice_small: {
         label: 'SenseVoice Small',
-        desc: '50+ languages, fastest option',
+        desc: 'Powerful multilingual model · under evaluation',
         folder: 'sherpa-sensevoice-small-int8',
         modelType: 'sense_voice',
         modelFiles: {
@@ -72,7 +29,7 @@ export const SHERPA_MODELS = {
         // English WER than .en variants, but the only attention-enabled tiny model
         // currently published. We force language="en" + task="transcribe" anyway.
         label: 'Whisper Tiny',
-        desc: 'English, real per-word timestamps',
+        desc: 'English · word-by-word highlighting · best for learning',
         folder: 'sherpa-whisper-tiny-attention-int8',
         modelType: 'whisper',
         modelFiles: {
@@ -87,6 +44,7 @@ export const SHERPA_MODELS = {
         ],
         baseUrl: 'https://huggingface.co/clairemcw/sherpa-onnx-whisper-tiny-attention/resolve/main/',
         totalSizeMB: 99,
+        recommended: true,
     },
 };
 
@@ -98,14 +56,22 @@ export const SHERPA_MODELS = {
 export const downloadAudioFile = async (url, filename, onProgress) => {
     const destinationFile = new File(Paths.document, filename);
 
-    if (destinationFile.exists) {
+    // Only trust a fully-written final file. (Rename-on-complete below
+    // guarantees the final path is never a truncated partial.)
+    if (destinationFile.exists && destinationFile.size > 0) {
         return destinationFile.uri;
     }
+
+    // Download to a temp path and rename on completion. An interrupted download
+    // (network drop / app kill) then leaves only a .part file — never a
+    // final-named truncated file that would be reused forever as "downloaded".
+    const tmpFile = new File(Paths.document, `${filename}.part`);
+    try { if (tmpFile.exists) tmpFile.delete(); } catch (_) {}
 
     try {
         const download = FileSystem.createDownloadResumable(
             url,
-            destinationFile.uri,
+            tmpFile.uri,
             {},
             ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
                 if (onProgress && totalBytesExpectedToWrite > 0) {
@@ -113,10 +79,14 @@ export const downloadAudioFile = async (url, filename, onProgress) => {
                 }
             }
         );
-        const result = await download.downloadAsync();
-        return result.uri;
+        await download.downloadAsync();
+        // Replace any stale final file, then promote the temp file.
+        try { if (destinationFile.exists) destinationFile.delete(); } catch (_) {}
+        await FileSystem.moveAsync({ from: tmpFile.uri, to: destinationFile.uri });
+        return destinationFile.uri;
     } catch (error) {
         console.error('Error downloading audio file:', error);
+        try { if (tmpFile.exists) tmpFile.delete(); } catch (_) {}
         throw error;
     }
 };
@@ -138,14 +108,15 @@ export const deleteAudioFile = async (localUri) => {
 
 const _modelDir = (modelKey) => `${FileSystem.documentDirectory}${SHERPA_MODELS[modelKey].folder}`;
 
-/** Check if all model files exist locally. */
+/** Check if all model files exist locally (and are non-empty — a truncated
+ *  file from an interrupted download would otherwise pass and fail at init). */
 export const isSherpaModelDownloaded = async (modelKey) => {
     const model = SHERPA_MODELS[modelKey];
     if (!model) return false;
     const dir = _modelDir(modelKey);
     for (const file of model.files) {
         const info = await FileSystem.getInfoAsync(`${dir}/${file}`);
-        if (!info.exists) return false;
+        if (!info.exists || !info.size) return false;
     }
     return true;
 };
@@ -172,16 +143,21 @@ export const ensureSherpaModel = async (modelKey, onProgress) => {
     for (const file of model.files) {
         const dest = `${dir}/${file}`;
         const info = await FileSystem.getInfoAsync(dest);
-        if (info.exists) {
+        if (info.exists && info.size > 0) {
             completedFiles++;
             if (onProgress) onProgress(Math.round((completedFiles / model.files.length) * 100));
             continue;
         }
 
+        // Download to a temp path and rename on completion so an interrupted /
+        // killed download can never leave a truncated file that the exists-check
+        // treats as complete (sherpa-onnx fails to load a partial .onnx).
+        const tmp = `${dest}.part`;
+        await FileSystem.deleteAsync(tmp, { idempotent: true }).catch(() => {});
         const url = `${model.baseUrl}${file}`;
         const download = FileSystem.createDownloadResumable(
             url,
-            dest,
+            tmp,
             {},
             ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
                 if (onProgress && totalBytesExpectedToWrite > 0) {
@@ -191,7 +167,14 @@ export const ensureSherpaModel = async (modelKey, onProgress) => {
                 }
             }
         );
-        await download.downloadAsync();
+        try {
+            await download.downloadAsync();
+            await FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
+            await FileSystem.moveAsync({ from: tmp, to: dest });
+        } catch (e) {
+            await FileSystem.deleteAsync(tmp, { idempotent: true }).catch(() => {});
+            throw e;
+        }
         completedFiles++;
     }
 
@@ -221,7 +204,10 @@ export const cleanupOldWhisperModels = async () => {
         }
         // The original whisper_tiny_en pointed at the no-attention csukuangfj export
         // (~99 MB, no token timestamps). Its folder is now orphaned — drop it so we
-        // don't keep dead files around.
+        // don't keep dead files around. Same for the retired Moonshine models
+        // (sentence-level sync only, removed from the lineup).
         await FileSystem.deleteAsync(`${docDir}sherpa-whisper-tiny-en-int8`, { idempotent: true });
+        await FileSystem.deleteAsync(`${docDir}sherpa-moonshine-tiny-int8`, { idempotent: true });
+        await FileSystem.deleteAsync(`${docDir}sherpa-moonshine-base-int8`, { idempotent: true });
     } catch (_) {}
 };

@@ -11,6 +11,9 @@
  *     { text: 'Delete',  style: 'destructive', onPress: () => doIt() },
  *   ]);
  *
+ * Alerts fired while one is visible are queued (not overwritten mid-animation)
+ * and presented in order as each one is dismissed.
+ *
  * Mount once at the root (App.js), no ref or extra wiring needed:
  *
  *   import AppAlert from './components/AppAlert';
@@ -29,11 +32,10 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
+import { colors, radii } from '../theme';
 
 // ─── Imperative bridge ────────────────────────────────────────────────────────
 // The component registers _show when it mounts and clears it on unmount.
-// No external ref wiring needed — avoids the timing issues with
-// forwardRef + useImperativeHandle + parent useEffect on Android.
 
 let _show = null;
 
@@ -49,49 +51,85 @@ const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_WIDTH = Math.min(320, SCREEN_W - 56);
 
 const AppAlert = () => {
-    const [visible,  setVisible]  = useState(false);
-    const [title,    setTitle]    = useState('');
-    const [message,  setMessage]  = useState('');
-    const [buttons,  setButtons]  = useState([{ text: 'OK' }]);
+    const [visible, setVisible] = useState(false);
+    const [title, setTitle] = useState('');
+    const [message, setMessage] = useState('');
+    const [buttons, setButtons] = useState([{ text: 'OK' }]);
 
     const backdropAnim = useRef(new Animated.Value(0)).current;
-    const scaleAnim    = useRef(new Animated.Value(0.88)).current;
-    const opacityAnim  = useRef(new Animated.Value(0)).current;
+    const scaleAnim = useRef(new Animated.Value(0.88)).current;
+    const opacityAnim = useRef(new Animated.Value(0)).current;
+
+    // Alerts requested while one is on screen wait here instead of replacing
+    // the visible card mid-animation.
+    const queueRef = useRef([]);
+    const visibleRef = useRef(false);
+    const currentRef = useRef(null);
+
+    const present = useCallback((alert) => {
+        currentRef.current = alert;
+        visibleRef.current = true;
+        setTitle(alert.title);
+        setMessage(alert.message);
+        setButtons(alert.buttons);
+        setVisible(true);
+        // Own the entrance animation here instead of an effect keyed on
+        // `visible`. When a queued alert is presented in dismiss()'s completion
+        // callback, React 18+ batches setVisible(false)+setVisible(true) into a
+        // true->true no-op, so a [visible]-gated effect would never re-run and
+        // the next alert would render fully transparent inside a touch-blocking
+        // Modal. requestAnimationFrame defers to a frame boundary so the reset
+        // values apply before the codegen animation starts.
+        requestAnimationFrame(() => {
+            backdropAnim.setValue(0);
+            scaleAnim.setValue(0.88);
+            opacityAnim.setValue(0);
+            Animated.parallel([
+                Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+                Animated.spring(scaleAnim, { toValue: 1, damping: 20, stiffness: 280, useNativeDriver: true }),
+                Animated.timing(opacityAnim, { toValue: 1, duration: 160, useNativeDriver: true }),
+            ]).start();
+        });
+    }, [backdropAnim, scaleAnim, opacityAnim]);
 
     // Self-register when mounted so showAlert() works from anywhere
     useEffect(() => {
         _show = (t, m, btns) => {
-            setTitle(t);
-            setMessage(m);
-            setButtons(btns);
-            setVisible(true);
+            const alert = { title: t, message: m, buttons: btns };
+            if (visibleRef.current) {
+                const cur = currentRef.current;
+                const last = queueRef.current[queueRef.current.length - 1];
+                const sameAs = (a) => a && a.title === t && a.message === m;
+                // Drop exact duplicates (e.g. several feeds failing identically)
+                if (sameAs(cur) || sameAs(last)) return;
+                queueRef.current.push(alert);
+                return;
+            }
+            present(alert);
         };
         return () => { _show = null; };
-    }, []);
+    }, [present]);
 
-    // Animate in after React commits the Modal (useEffect fires post-commit)
-    useEffect(() => {
-        if (!visible) return;
-        backdropAnim.setValue(0);
-        scaleAnim.setValue(0.88);
-        opacityAnim.setValue(0);
-        Animated.parallel([
-            Animated.timing(backdropAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
-            Animated.spring(scaleAnim,    { toValue: 1, damping: 20, stiffness: 280, useNativeDriver: true }),
-            Animated.timing(opacityAnim,  { toValue: 1, duration: 160, useNativeDriver: true }),
-        ]).start();
-    }, [visible, backdropAnim, scaleAnim, opacityAnim]);
+    // (Entrance animation now lives in present() — see comment there. It must
+    // run for every presented alert regardless of any batched true->true
+    // `visible` transition when draining the queue.)
 
     const dismiss = useCallback((btn) => {
         Animated.parallel([
             Animated.timing(backdropAnim, { toValue: 0, duration: 160, useNativeDriver: true }),
-            Animated.timing(opacityAnim,  { toValue: 0, duration: 130, useNativeDriver: true }),
-            Animated.timing(scaleAnim,    { toValue: 0.92, duration: 140, useNativeDriver: true }),
+            Animated.timing(opacityAnim, { toValue: 0, duration: 130, useNativeDriver: true }),
+            Animated.timing(scaleAnim, { toValue: 0.92, duration: 140, useNativeDriver: true }),
         ]).start(() => {
             setVisible(false);
+            visibleRef.current = false;
+            currentRef.current = null;
             btn?.onPress?.();
+            // onPress may itself have shown an alert; only drain if it didn't.
+            if (!visibleRef.current && queueRef.current.length > 0) {
+                present(queueRef.current.shift());
+            }
         });
-    }, [backdropAnim, opacityAnim, scaleAnim]);
+    }, [backdropAnim, opacityAnim, scaleAnim, present]);
 
     const handleBackdropPress = useCallback(() => {
         const cancel = buttons.find(b => b.style === 'cancel');
@@ -126,7 +164,7 @@ const AppAlert = () => {
                     <View style={horizontal ? s.btnRow : s.btnCol}>
                         {buttons.map((btn, idx) => {
                             const isDestructive = btn.style === 'destructive';
-                            const isCancel      = btn.style === 'cancel';
+                            const isCancel = btn.style === 'cancel';
                             return (
                                 <React.Fragment key={idx}>
                                     {idx > 0 && (
@@ -138,11 +176,13 @@ const AppAlert = () => {
                                         style={[s.btn, horizontal && s.btnFlex]}
                                         onPress={() => dismiss(btn)}
                                         activeOpacity={0.5}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={btn.text}
                                     >
                                         <Text style={[
                                             s.btnText,
                                             isDestructive && s.btnDestructive,
-                                            isCancel      && s.btnCancel,
+                                            isCancel && s.btnCancel,
                                             !isDestructive && !isCancel && s.btnDefault,
                                         ]}>
                                             {btn.text}
@@ -174,10 +214,10 @@ const s = StyleSheet.create({
     },
     card: {
         width: CARD_WIDTH,
-        backgroundColor: '#1C1C1E',
-        borderRadius: 18,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius: radii.l,
         borderWidth: 0.5,
-        borderColor: 'rgba(255,255,255,0.09)',
+        borderColor: colors.hairline,
         overflow: 'hidden',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 8 },
@@ -192,19 +232,19 @@ const s = StyleSheet.create({
         alignItems: 'center',
         gap: 8,
     },
-    title:   { fontSize: 17, fontWeight: '700', color: '#FFFFFF', textAlign: 'center', letterSpacing: -0.2 },
-    message: { fontSize: 14, color: '#AEAEB2', textAlign: 'center', lineHeight: 20 },
+    title: { fontSize: 17, fontWeight: '700', color: colors.textPrimary, textAlign: 'center', letterSpacing: -0.2 },
+    message: { fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 },
 
-    dividerH: { height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.08)' },
-    dividerV: { width:  StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.08)' },
+    dividerH: { height: StyleSheet.hairlineWidth, backgroundColor: colors.hairline },
+    dividerV: { width: StyleSheet.hairlineWidth, backgroundColor: colors.hairline },
 
-    btnRow:  { flexDirection: 'row' },
-    btnCol:  { flexDirection: 'column' },
+    btnRow: { flexDirection: 'row' },
+    btnCol: { flexDirection: 'column' },
     btnFlex: { flex: 1 },
-    btn:     { paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
+    btn: { paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
     btnText: { fontSize: 15, fontWeight: '600' },
 
-    btnDefault:     { color: '#4FACFE' },
-    btnCancel:      { color: '#AEAEB2', fontWeight: '400' },
-    btnDestructive: { color: '#FF453A' },
+    btnDefault: { color: colors.accent },
+    btnCancel: { color: colors.textSecondary, fontWeight: '400' },
+    btnDestructive: { color: colors.danger },
 });

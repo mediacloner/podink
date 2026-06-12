@@ -99,7 +99,8 @@
       "Bash(git -C /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink log --all -p -G\"numThreads\" -- src/services/whisperService.js)",
       "Bash(git -C /Volumes/ExternalHD/Users/alex.sanchez/Documents/repos/AI/podink log --all -p -S\"numThreads\")",
       "Bash(yarn install *)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(git stash *)"
     ]
   }
 }
