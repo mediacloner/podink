@@ -6,7 +6,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import Pill from './Pill';
 import { colors, type } from '../theme';
-import { onTranscriptProgress } from '../services/whisperService';
+import { onTranscriptProgress, getLastProgress } from '../services/whisperService';
 
 const EpisodeItem = ({
     episode,
@@ -32,6 +32,10 @@ const EpisodeItem = ({
             setProgress(0);
             return undefined;
         }
+        // Seed from the service: progress events only arrive once per decoded
+        // window, so a row mounting mid-job would otherwise show "Processing…"
+        // until the next event.
+        setProgress(getLastProgress(episode.id));
         const unsub = onTranscriptProgress?.((e) => {
             if (e && String(e.episodeId) === String(episode.id) && typeof e.percent === 'number') {
                 setProgress(e.percent);

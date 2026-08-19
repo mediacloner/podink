@@ -363,6 +363,15 @@ export const getQueueIds   = () => _queue.map(e => e.id);
 
 const _progressListeners = new Set();
 
+// Last emitted percent per in-flight episode. Progress events only arrive
+// once per decoded window (~29s of audio), so a row that mounts mid-job
+// (e.g. its Library folder was collapsed and re-expanded) needs this to
+// show the real percent instead of regressing to "Processing…".
+const _lastPercent = new Map();
+
+/** Last emitted percent for an episode's in-flight transcription (0 if none). */
+export const getLastProgress = (episodeId) => _lastPercent.get(String(episodeId)) ?? 0;
+
 /** Subscribe to partial transcript progress: cb({ episodeId, percent, partial: true }). */
 export const onTranscriptProgress = (fn) => {
     _progressListeners.add(fn);
@@ -370,6 +379,7 @@ export const onTranscriptProgress = (fn) => {
 };
 
 const _emitProgress = (episodeId, percent) => {
+    _lastPercent.set(String(episodeId), percent);
     const payload = { episodeId, percent, partial: true };
     [..._progressListeners].forEach(fn => { try { fn(payload); } catch (_) {} });
     try { notifyLibraryChange({ type: 'transcript-progress', episodeId, percent }); } catch (_) {}
@@ -681,6 +691,7 @@ const _runNext = async () => {
     try {
         await _process(entry);
     } finally {
+        _lastPercent.delete(String(entry.id));
         _activeId = null;
         _running  = false;
         _abort    = null;

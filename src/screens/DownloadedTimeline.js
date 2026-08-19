@@ -1,8 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, View, FlatList, StyleSheet } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+    ActivityIndicator, View, Text, FlatList, TouchableOpacity, StyleSheet, Image,
+} from 'react-native';
 import { showAlert } from '../components/AppAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
+import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
 import SwipeableRow, { closeOpenRow } from '../components/SwipeableRow';
 import EmptyState from '../components/EmptyState';
@@ -18,7 +21,93 @@ import {
 import { deleteAudioFile } from '../services/downloadService';
 import { onLibraryChange, notifyLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
-import { colors } from '../theme';
+import { colors, withAlpha, type } from '../theme';
+
+// One folder per podcast, like the My Podcasts tab. Tapping the folder
+// expands its downloaded episodes in place; every row keeps the full set
+// of Library actions (open, transcribe/cancel, swipe to delete or remove
+// transcript). Folders and episode rows are flattened into a single
+// FlatList so an expanded folder's episodes stay virtualized — a podcast
+// can hold an unbounded number of downloads.
+const FolderHeader = React.memo(({ group, isExpanded, showSeparator, onToggleExpand }) => {
+    const count = group.episodes.length;
+    return (
+        <View>
+            {showSeparator && <View style={styles.separator} />}
+            <TouchableOpacity
+                onPress={() => onToggleExpand(group)}
+                activeOpacity={1}
+                style={styles.folderRow}
+                accessibilityRole="button"
+                accessibilityLabel={`${group.title}, ${count} downloaded episode${count === 1 ? '' : 's'}, ${isExpanded ? 'collapse' : 'expand'}`}
+            >
+                {group.image_url ? (
+                    <Image source={{ uri: group.image_url }} style={styles.artwork} />
+                ) : (
+                    <View style={[styles.artwork, styles.artworkPlaceholder]}>
+                        <Icon name="headphones" size={22} color={colors.textFaint} />
+                    </View>
+                )}
+
+                <View style={styles.info}>
+                    <Text style={styles.folderTitle} numberOfLines={1}>{group.title}</Text>
+                    <Text style={styles.folderSubtitle} numberOfLines={1}>
+                        {group.episodes[0]?.title || ''}
+                    </Text>
+                </View>
+
+                <View style={styles.badge} accessibilityLabel={`${count} downloaded episode${count === 1 ? '' : 's'}`}>
+                    <Text style={styles.badgeText}>{count}</Text>
+                </View>
+
+                <Icon
+                    name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color={colors.textMuted}
+                    style={{ marginLeft: 6 }}
+                />
+            </TouchableOpacity>
+        </View>
+    );
+});
+
+// No entering animation here: rows are individual virtualized FlatList items,
+// so a mount-triggered animation would replay every time a row scrolls back
+// into the render window, not just on expand.
+const EpisodeRow = React.memo(({
+    episode, isActive, isQueued,
+    onOpenEpisode, onTranscribe, onCancel, onDelete, onRemoveTranscript,
+}) => (
+    <View style={styles.episodeGroup}>
+        <SwipeableRow
+            leftAction={episode.has_transcript ? {
+                icon: 'x-circle',
+                label: 'Transcript',
+                color: colors.indigo,
+                dismiss: 'ack',
+                onPress: () => onRemoveTranscript(episode),
+                accessibilityLabel: `Remove transcript for ${episode.title}`,
+            } : undefined}
+            rightAction={{
+                icon: 'trash-2',
+                color: colors.danger,
+                dismiss: 'slide-out',
+                onPress: () => onDelete(episode),
+                accessibilityLabel: `Delete ${episode.title}`,
+            }}
+        >
+            <EpisodeItem
+                episode={episode}
+                cardStyle={styles.episodeCard}
+                onPress={onOpenEpisode}
+                onTranscribe={!isQueued && !isActive ? onTranscribe : undefined}
+                onCancel={onCancel}
+                isTranscribing={isActive}
+                isQueued={isQueued && !isActive}
+            />
+        </SwipeableRow>
+    </View>
+));
 
 const DownloadedTimeline = ({ navigation }) => {
     const { bottom } = useSafeAreaInsets();
@@ -26,6 +115,7 @@ const DownloadedTimeline = ({ navigation }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [activeId, setActiveId] = useState(null);
     const [queuedIds, setQueuedIds] = useState([]);
+    const [expandedKey, setExpandedKey] = useState(null);
     const isFocused = useIsFocused();
 
     const loadData = useCallback(async () => {
@@ -36,6 +126,47 @@ const DownloadedTimeline = ({ navigation }) => {
             setIsLoading(false);
         }
     }, []);
+
+    // Group downloads by podcast. Episodes arrive sorted by release_date DESC,
+    // so folders are ordered by their most recent episode and each folder's
+    // episodes stay newest-first.
+    const groups = useMemo(() => {
+        const map = new Map();
+        for (const ep of episodes) {
+            const key = ep.podcast_feed_url || ep.podcast_title || 'unknown';
+            let group = map.get(key);
+            if (!group) {
+                group = { key, title: ep.podcast_title || 'Unknown podcast', image_url: ep.image_url, episodes: [] };
+                map.set(key, group);
+            }
+            if (!group.image_url && ep.image_url) group.image_url = ep.image_url;
+            group.episodes.push(ep);
+        }
+        return Array.from(map.values());
+    }, [episodes]);
+
+    // Drop a stale expandedKey once its folder is gone (last episode deleted),
+    // otherwise the folder would reappear pre-expanded on a later download.
+    useEffect(() => {
+        if (expandedKey && !groups.some(g => g.key === expandedKey)) {
+            setExpandedKey(null);
+        }
+    }, [groups, expandedKey]);
+
+    // Flatten folders + the expanded folder's episodes into one list so the
+    // FlatList virtualizes episode rows too.
+    const listData = useMemo(() => {
+        const rows = [];
+        for (const group of groups) {
+            rows.push({ kind: 'folder', key: `folder:${group.key}`, group });
+            if (group.key === expandedKey) {
+                for (const ep of group.episodes) {
+                    rows.push({ kind: 'episode', key: `episode:${ep.id}`, episode: ep });
+                }
+            }
+        }
+        return rows;
+    }, [groups, expandedKey]);
 
     // Sync queue state from the service. Any change to the transcription queue
     // — enqueue, dequeue, complete — also reloads the episode list so the
@@ -207,39 +338,38 @@ const DownloadedTimeline = ({ navigation }) => {
         navigation.navigate('Player', { episode });
     }, [navigation]);
 
-    const renderItem = useCallback(({ item }) => {
-        const isActive = activeId === item.id;
-        const isQueued = queuedIds.includes(item.id);
+    const handleToggleExpand = useCallback((group) => {
+        log('UI', 'Library folder toggled', { key: group.key, title: group.title });
+        setExpandedKey(prev => (prev === group.key ? null : group.key));
+    }, []);
 
-        return (
-            <SwipeableRow
-                leftAction={item.has_transcript ? {
-                    icon: 'x-circle',
-                    label: 'Transcript',
-                    color: colors.indigo,
-                    dismiss: 'ack',
-                    onPress: () => handleRemoveTranscript(item),
-                    accessibilityLabel: `Remove transcript for ${item.title}`,
-                } : undefined}
-                rightAction={{
-                    icon: 'trash-2',
-                    color: colors.danger,
-                    dismiss: 'slide-out',
-                    onPress: () => handleDelete(item),
-                    accessibilityLabel: `Delete ${item.title}`,
-                }}
-            >
-                <EpisodeItem
-                    episode={item}
-                    onPress={handleOpenEpisode}
-                    onTranscribe={!isQueued && !isActive ? handleTranscribe : undefined}
-                    onCancel={handleCancel}
-                    isTranscribing={isActive}
-                    isQueued={isQueued && !isActive}
+    const renderItem = useCallback(({ item, index }) => {
+        if (item.kind === 'folder') {
+            return (
+                <FolderHeader
+                    group={item.group}
+                    isExpanded={expandedKey === item.group.key}
+                    showSeparator={index > 0}
+                    onToggleExpand={handleToggleExpand}
                 />
-            </SwipeableRow>
+            );
+        }
+        return (
+            <EpisodeRow
+                episode={item.episode}
+                isActive={activeId === item.episode.id}
+                isQueued={queuedIds.includes(item.episode.id)}
+                onOpenEpisode={handleOpenEpisode}
+                onTranscribe={handleTranscribe}
+                onCancel={handleCancel}
+                onDelete={handleDelete}
+                onRemoveTranscript={handleRemoveTranscript}
+            />
         );
-    }, [activeId, queuedIds, handleRemoveTranscript, handleDelete, handleOpenEpisode, handleTranscribe, handleCancel]);
+    }, [
+        expandedKey, activeId, queuedIds,
+        handleToggleExpand, handleOpenEpisode, handleTranscribe, handleCancel, handleDelete, handleRemoveTranscript,
+    ]);
 
     if (isLoading) {
         return (
@@ -252,10 +382,10 @@ const DownloadedTimeline = ({ navigation }) => {
     return (
         <View style={styles.container}>
             <FlatList
-                data={episodes}
-                keyExtractor={item => item.id.toString()}
+                data={listData}
+                keyExtractor={item => item.key}
                 renderItem={renderItem}
-                contentContainerStyle={episodes.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 130 }}
+                contentContainerStyle={listData.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 130 }}
                 initialNumToRender={10}
                 maxToRenderPerBatch={10}
                 windowSize={7}
@@ -275,6 +405,68 @@ const DownloadedTimeline = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     loadingWrap: { alignItems: 'center', justifyContent: 'center' },
+
+    folderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 14,
+        backgroundColor: colors.bg,
+    },
+    artwork: {
+        width: 64,
+        height: 64,
+        borderRadius: 12,
+        marginRight: 14,
+        backgroundColor: colors.surfaceElevated,
+    },
+    artworkPlaceholder: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    info: { flex: 1, gap: 4 },
+    folderTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: colors.textPrimary,
+    },
+    folderSubtitle: {
+        ...type.body,
+        color: colors.textMuted,
+        lineHeight: 18,
+    },
+
+    badge: {
+        minWidth: 22,
+        height: 22,
+        borderRadius: 11,
+        backgroundColor: colors.accent,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 6,
+        marginLeft: 8,
+    },
+    badgeText: {
+        fontSize: 12,
+        fontWeight: '700',
+        color: colors.bg,
+    },
+
+    episodeGroup: {
+        marginLeft: 16,
+        backgroundColor: colors.surfaceElevated,
+        borderLeftWidth: 2,
+        borderLeftColor: colors.accent,
+    },
+    episodeCard: {
+        backgroundColor: colors.surfaceElevated,
+    },
+
+    separator: {
+        height: 0.5,
+        backgroundColor: withAlpha(colors.textPrimary, 0.06),
+        marginLeft: 98,
+    },
 });
 
 export default DownloadedTimeline;

@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.2] - 2026-08-19
+
+### Changed
+- **Library grouped by podcast** — the Library tab now shows one folder per podcast (artwork, title, newest episode as subtitle), like the My Podcasts tab. Each folder carries a blue circular badge with its downloaded-episode count and expands in place to the podcast's episodes, newest first. Every row keeps the full set of actions inside the folder: open in Player, transcribe/queue/cancel, swipe to delete, swipe to remove transcript.
+- Folders and expanded episodes render as a single flattened list, so large podcasts stay virtualized (no jank when opening a folder with many downloads).
+
+### Fixed
+- **Live transcription percent survives row remounts** — `whisperService` caches the last emitted percent per episode (`getLastProgress`), so collapsing and re-expanding a transcribing episode's folder no longer resets its pill to "Processing…" until the next ~29s window event.
+- Stale expansion state: a folder whose last episode was deleted no longer reappears pre-expanded after a later download.
+
 ## [2.0.1] - 2026-08-19
 
 ### Added
