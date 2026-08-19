@@ -44,7 +44,7 @@ index c8532cf..2405030 100644
 +    @ReactMethod fun removeListeners(count: Double) {}
  }
 diff --git a/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt b/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
-index f5700be..69095d4 100644
+index f5700be..572fdf2 100644
 --- a/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
 +++ b/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
 @@ -15,6 +15,7 @@ import net.siteed.sherpaonnx.utils.AssetUtils
@@ -103,17 +103,30 @@ index f5700be..69095d4 100644
  
                  modelConfig.whisper = whisperConfig
              }
-@@ -809,7 +826,8 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -798,7 +815,7 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+         }
+ 
+         val modelType = asrModelConfig?.getString("modelType") ?: return false
+-        if (modelType != "whisper") {
++        if (modelType != "whisper" && modelType != "nemo_ctc") {
+             return false
+         }
+ 
+@@ -809,7 +826,12 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          if (isStreaming) {
              return false
          }
 -        return asrModelConfig?.getString("modelType") == "whisper"
 +        val modelType = asrModelConfig?.getString("modelType") ?: return false
-+        return modelType == "whisper" || modelType == "moonshine" || modelType == "sense_voice"
++        // nemo_ctc (Parakeet): FastConformer's full attention is quadratic in
++        // window length, so long episodes MUST take the same windowed path as
++        // whisper — the full-buffer path would OOM on a 90-min episode.
++        return modelType == "whisper" || modelType == "moonshine" ||
++            modelType == "sense_voice" || modelType == "nemo_ctc"
      }
  
      private fun recognizeSingleOfflineWindow(sampleRate: Int, samples: FloatArray): WritableMap {
-@@ -856,6 +874,17 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -856,6 +878,17 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
              resultMap.putString("text", result?.text ?: "")
              resultMap.putInt("samplesLength", samples.size)
              resultMap.putInt("sampleRate", sampleRate)
@@ -131,7 +144,7 @@ index f5700be..69095d4 100644
              return resultMap
          } catch (e: Exception) {
              Log.e(TAG, "Error recognizing from samples (offline): ${e.message}")
-@@ -870,7 +899,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -870,7 +903,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
       * Whisper's offline recognizer only handles windows shorter than 30 seconds.
       * For longer buffers, decode sequential sub-30s windows and join the text.
       */
@@ -144,7 +157,7 @@ index f5700be..69095d4 100644
          if (!shouldChunkOfflineWhisper(samples.size, sampleRate)) {
              return recognizeSingleOfflineWindow(sampleRate, samples)
          }
-@@ -886,8 +919,16 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -886,8 +923,16 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          val transcriptParts = mutableListOf<String>()
          var offset = 0
          var windowIndex = 0
@@ -161,7 +174,7 @@ index f5700be..69095d4 100644
              val end = minOf(offset + samplesPerWindow, samples.size)
              val windowSamples = samples.copyOfRange(offset, end)
              windowIndex += 1
-@@ -908,10 +949,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -908,10 +953,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
  
          val fullText = transcriptParts.joinToString(" ").trim()
@@ -175,7 +188,7 @@ index f5700be..69095d4 100644
          resultMap.putString("text", fullText)
          resultMap.putInt("samplesLength", samples.size)
          resultMap.putInt("sampleRate", sampleRate)
-@@ -922,60 +964,165 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -922,60 +968,165 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
      private fun recognizeOfflineWhisperFileInWindows(
          file: File,
          durationUs: Long,
@@ -370,7 +383,7 @@ index f5700be..69095d4 100644
          return resultMap
      }
      
-@@ -1121,41 +1268,102 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -1121,41 +1272,102 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
       * Recognize speech from an audio file
       */
      fun recognizeFromFile(filePath: String, promise: Promise) {
@@ -491,7 +504,7 @@ index f5700be..69095d4 100644
                      }
                  }
  
-@@ -1173,6 +1381,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -1173,6 +1385,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
      }
  

@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.1] - 2026-08-19
+
+### Added
+- **New default transcription model: NVIDIA Parakeet TDT-CTC 110M** (int8, via sherpa-onnx `nemo_ctc`) — roughly 3x lower English word-error rate than Whisper Tiny at the same ~100 MB download, with native punctuation and capitalization. CTC frame timestamps drive the existing word-by-word highlighting (no attention export needed). Non-autoregressive decoding means the Whisper repetition loops on music/silence/ad reads structurally cannot happen. License: CC BY 4.0 (attribution shown in the Settings model picker).
+- **Tarball model downloads** — `ensureSherpaModel` now supports models distributed as `.tar.bz2` release assets (the Parakeet int8 export has no per-file HF host): downloads the archive, extracts it with the sherpa-onnx native extractor, flattens the needed files into the model folder, and cleans up. Interruption-safe (rename-on-complete + re-extract without re-download).
+
+### Changed
+- **Whisper hallucination filter is now model-aware** — the repetition scrubber only runs for Whisper-type models; CTC engines (Parakeet, SenseVoice) cannot loop, so their transcripts pass through unfiltered and legitimate repeated words survive.
+- **Wrapper patch extended** — `@siteed/sherpa-onnx.rn` patch now routes `nemo_ctc` through the windowed long-file path (`shouldChunkOfflineWhisper` + `isOfflineWhisperModel`); without this, a 90-minute episode would take the full-buffer path and OOM.
+- Whisper Tiny remains available in Settings (smaller download); users who explicitly selected a model keep their choice.
+
 ## [1.0.4] - 2026-04-02
 
 ### Fixed

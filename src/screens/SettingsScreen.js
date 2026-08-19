@@ -14,11 +14,12 @@ import { colors, withAlpha, type } from '../theme';
 
 // Learning-focused copy overrides for the model picker.
 const MODEL_COPY = {
-    whisper_tiny_en: 'Word-by-word highlighting — best for learning',
+    parakeet_110m_en: 'Most accurate · punctuation · word-by-word highlighting · NVIDIA Parakeet (CC BY 4.0)',
+    whisper_tiny_en: 'Word-by-word highlighting · smaller download',
     sensevoice_small: 'Powerful multilingual (50+ languages) · larger download · evaluation',
 };
 
-const DEFAULT_MODEL_KEY = SHERPA_MODELS.whisper_tiny_en ? 'whisper_tiny_en' : Object.keys(SHERPA_MODELS)[0];
+const DEFAULT_MODEL_KEY = SHERPA_MODELS.parakeet_110m_en ? 'parakeet_110m_en' : Object.keys(SHERPA_MODELS)[0];
 
 const MODELS = Object.entries(SHERPA_MODELS).map(([id, m]) => ({
     id,

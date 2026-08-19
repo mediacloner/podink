@@ -3,7 +3,7 @@
  *
  * Architecture:
  *   - Single worker processes one item at a time from the queue
- *   - STT engine via @siteed/sherpa-onnx.rn (Whisper / SenseVoice)
+ *   - STT engine via @siteed/sherpa-onnx.rn (Parakeet / Whisper / SenseVoice)
  *   - Streaming: native emits one 'SherpaAsrWindowResult' event per ~29s
  *     window; each window is deduped, saved incrementally, and broadcast as
  *     progress (onProgress / onTranscriptProgress / libraryEvents)
@@ -38,7 +38,10 @@ const DEFAULT_TIMEOUT_MS    = 10 * 60 * 1000; // 10 minutes for short/unknown ep
 const MIN_AUDIO_SIZE        = 4096;             // 4 KB minimum
 const LARGE_FILE_BYTES      = 50 * 1024 * 1024; // 50 MB — assume long episode when duration unknown
 const MIN_FREE_DISK_BYTES   = 200 * 1024 * 1024; // 200 MB free required before transcription
-const DEFAULT_MODEL_KEY     = 'whisper_tiny_en';
+// Parakeet TDT-CTC 110M: ~3x lower WER than Whisper Tiny at the same download
+// size, native punctuation/casing, CTC word timestamps, no repetition loops.
+// Users with an explicit '@whisper_model' choice keep it (checked below).
+const DEFAULT_MODEL_KEY     = 'parakeet_110m_en';
 
 /** Compute per-job timeout from episode duration (or file size as fallback). */
 const _computeTimeoutMs = (durationSec, fileSizeBytes = 0) => {
@@ -149,7 +152,7 @@ const _initCtx = async (allowDownload = true) => {
     if (_ctxModel === modelKey) return;
 
     // The app-start pre-warm (allowDownload=false) must NOT silently pull the
-    // ~99 MB model over a metered/offline connection. Only fetch it as part of
+    // ~100+ MB model over a metered/offline connection. Only fetch it as part of
     // an explicit transcription. The error is typed so the pre-warm catch can
     // swallow it; the model gets downloaded from Settings (with progress UI).
     if (!allowDownload && !(await isSherpaModelDownloaded(modelKey))) {
@@ -226,6 +229,12 @@ const textToSegments = (text, durationMs) => {
 };
 
 // ─── Whisper hallucination filter ───────────────────────────────────────────
+
+/** Whisper's autoregressive decoder is the only engine in the lineup that loops
+ *  on music/silence; CTC engines (Parakeet nemo_ctc, SenseVoice) emit frame-
+ *  aligned tokens and structurally cannot repeat. Scrub only where the failure
+ *  mode exists, so legitimate repeated words survive on CTC transcripts. */
+const _needsHallucinationFilter = () => SHERPA_MODELS[_ctxModel]?.modelType === 'whisper';
 
 /** Whisper Tiny gets stuck in repetition loops during music / silence / ad reads,
  *  emitting the same word or phrase dozens of times. sherpa-onnx doesn't expose
@@ -402,7 +411,8 @@ const _windowToSegments = (ev) => {
             text:  s.text,
         }));
     }
-    return dedupeHallucinations(segs.filter(s => s.text.length > 0), wordLevel);
+    const cleaned = segs.filter(s => s.text.length > 0);
+    return _needsHallucinationFilter() ? dedupeHallucinations(cleaned, wordLevel) : cleaned;
 };
 
 /** Overall episode progress for one window event, clamped to 1..99 (100 is
@@ -588,7 +598,7 @@ const _process = async (entry) => {
             // segment per fixed-length recognition window is too coarse for
             // sync — subdivide into sentence-level sub-segments, distributing
             // time proportionally by character count.
-            segments = dedupeHallucinations(result.segments.flatMap(seg => {
+            const subSegs = result.segments.flatMap(seg => {
                 const winStart = Math.round(seg.startMs);
                 const winDur   = Math.max(0, Math.round(seg.endMs - seg.startMs));
                 return textToSegments(seg.text, winDur).map(s => ({
@@ -596,7 +606,8 @@ const _process = async (entry) => {
                     end:   winStart + s.end,
                     text:  s.text,
                 }));
-            }).filter(s => s.text.length > 0));
+            }).filter(s => s.text.length > 0);
+            segments = _needsHallucinationFilter() ? dedupeHallucinations(subSegs) : subSegs;
             await saveTranscriptsIncremental(entry.id, segments);
         } else if (resumeMs === 0) {
             // Text-only fallback smears timestamps across the full duration —
@@ -614,7 +625,7 @@ const _process = async (entry) => {
             if (effDurMs <= 0 && segs.length > 1) {
                 segs = segs.map((s, i) => ({ start: i * 1000, end: i * 1000 + 999, text: s.text }));
             }
-            segments = dedupeHallucinations(segs);
+            segments = _needsHallucinationFilter() ? dedupeHallucinations(segs) : segs;
             await saveTranscriptsIncremental(entry.id, segments);
         } else {
             segments = [];
