@@ -6,7 +6,8 @@
  * notifyLibraryChange(payload?) — payload is undefined (legacy callers) or
  * { type, episodeId?, percent? } with type one of:
  * 'download-complete' | 'episode-delete' | 'transcript-progress' |
- * 'transcript-complete' | 'transcript-error' | 'subscribe' | 'unsubscribe'.
+ * 'transcript-complete' | 'transcript-error' | 'transcript-delete' |
+ * 'subscribe' | 'unsubscribe' | 'playback-complete'.
  * Subscribers must tolerate an undefined payload.
  */
 const _listeners = new Set();

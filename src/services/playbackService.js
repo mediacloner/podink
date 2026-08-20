@@ -1,5 +1,6 @@
 import TrackPlayer, { Event, State } from 'react-native-track-player';
-import { savePlayPosition } from '../database/queries';
+import { savePlayPosition, markEpisodePlayed } from '../database/queries';
+import { notifyLibraryChange } from './libraryEvents';
 
 // Centralized play-position persistence (contract 9): the 1s
 // PlaybackProgressUpdated events (interval set in trackPlayer.js) are
@@ -8,21 +9,47 @@ import { savePlayPosition } from '../database/queries';
 const SAVE_THROTTLE_MS = 5000;
 let lastSaveTs = 0;
 
-const persistPosition = async (trackId, position) => {
-    if (!trackId || !position || position <= 0) return;
+/** "Listened" once inside the final stretch of the episode: 5% of the
+ *  duration, clamped to [10s, 2min] for normal episodes and to 25% of the
+ *  duration for short clips (a 20s trailer needs ~15s of real progress,
+ *  not one progress tick). Also used by PlayerScreen as a legacy fallback
+ *  to restart finished episodes from the top. */
+export const isPlaybackComplete = (position, duration) => {
+    if (!duration || duration <= 0 || !position || position <= 0) return false;
+    const window = Math.min(Math.max(10, duration * 0.05), 120, duration * 0.25);
+    return duration - position <= window;
+};
+
+/** Single write path for playback progress, shared by every flush site
+ *  (service events here, PlayerScreen unmount, MiniPlayer dismiss, the
+ *  cold-start stale-queue flush). A completed episode persists
+ *  play_position = 0 — so any replay starts from the top without needing
+ *  a trustworthy Episodes.duration — and is marked played exactly once. */
+export const persistProgress = async (trackId, position, duration, { ended = false } = {}) => {
+    if (!trackId) return;
     try {
-        await savePlayPosition(trackId, Math.floor(position));
+        if (ended || isPlaybackComplete(position, duration)) {
+            await savePlayPosition(trackId, 0);
+            const justCompleted = await markEpisodePlayed(trackId);
+            if (justCompleted) {
+                notifyLibraryChange({ type: 'playback-complete', episodeId: trackId });
+            }
+        } else if (position > 0) {
+            await savePlayPosition(trackId, Math.floor(position));
+        }
     } catch (_) {}
 };
 
-const saveCurrentPositionNow = async () => {
+const saveCurrentPositionNow = async ({ ended = false } = {}) => {
     try {
-        const [{ position }, track] = await Promise.all([
+        const [{ position, duration }, track] = await Promise.all([
             TrackPlayer.getProgress(),
             TrackPlayer.getActiveTrack(),
         ]);
         lastSaveTs = Date.now();
-        await persistPosition(track?.id, position);
+        // Player-reported duration (not Episodes.duration), so completion
+        // works even for feeds without an <itunes:duration> tag.
+        await persistProgress(track?.id, position, duration, { ended });
     } catch (_) {}
 };
 
@@ -73,7 +100,9 @@ export default async function() {
     // end-of-episode) so resume is accurate even if the process is later killed.
     TrackPlayer.addEventListener(Event.PlaybackState, ({ state }) => {
         if (state === State.Paused || state === State.Stopped || state === State.Ended) {
-            saveCurrentPositionNow();
+            // Ended = the queue actually finished — mark the episode listened
+            // even if the reported position/duration snapshot is unreliable.
+            saveCurrentPositionNow({ ended: state === State.Ended });
         }
     });
 };

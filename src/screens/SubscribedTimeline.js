@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     View, FlatList, StyleSheet, TextInput,
     TouchableOpacity, Text, ActivityIndicator,
+    Image, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
@@ -20,7 +21,8 @@ import {
 import { downloadAudioFile } from '../services/downloadService';
 import { fetchPodcastFeed } from '../api/rssParser';
 import { resolveToRssUrl, detectService } from '../api/podcastResolver';
-import { notifyLibraryChange } from '../services/libraryEvents';
+import { isUrlLike, searchPodcasts } from '../api/podcastSearch';
+import { notifyLibraryChange, onLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
 import { colors, withAlpha, type } from '../theme';
 
@@ -37,8 +39,14 @@ const SubscribedTimeline = ({ navigation }) => {
     const [downloads, setDownloads] = useState({});
     const [panelOpen, setPanelOpen] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    // Name-search typeahead: null means "no search yet", [] means "no matches"
+    const [searchResults, setSearchResults] = useState(null);
+    const [isSearching, setIsSearching] = useState(false);
+    const [subscribingId, setSubscribingId] = useState(null);
     const inputRef = useRef(null);
     const hasRefreshedOnMount = useRef(false);
+    const searchTimerRef = useRef(null);
+    const searchAbortRef = useRef(null);
     const isFocused = useIsFocused();
 
     const heightSV = useSharedValue(0);
@@ -56,6 +64,9 @@ const SubscribedTimeline = ({ navigation }) => {
             opacitySV.value = withTiming(0, { duration: 180 });
             setPanelOpen(false);
             setRssUrl('');
+            // The input stays mounted (just clipped) — blur it so the
+            // keyboard doesn't stay up over the episodes list.
+            inputRef.current?.blur();
         } else {
             heightSV.value = withTiming(PANEL_HEIGHT, { duration: 220, easing: Easing.out(Easing.quad) });
             opacitySV.value = withTiming(1, { duration: 220 });
@@ -80,6 +91,12 @@ const SubscribedTimeline = ({ navigation }) => {
             }
         }
     }, [isFocused]);
+
+    // An episode can finish in the background (MiniPlayer) while this tab is
+    // already focused — refresh so its row picks up the Played badge.
+    useEffect(() => onLibraryChange((payload) => {
+        if (payload?.type === 'playback-complete') loadData();
+    }), []);
 
     useEffect(() => {
         navigation.setOptions({
@@ -204,16 +221,16 @@ const SubscribedTimeline = ({ navigation }) => {
         }
     };
 
-    const handleAddFeed = async () => {
-        log('UI', 'Add feed tapped', { url: rssUrl });
+    // Resolves any supported input to an RSS URL and subscribes to it.
+    // Returns true on success so callers (URL add, search-result tap) can react.
+    const subscribeToFeed = async (input) => {
         if (!isConnected) {
             showAlert('Offline', 'You need an internet connection to add a feed.');
-            return;
+            return false;
         }
-        if (!rssUrl.trim()) return;
         setIsFetching(true);
         try {
-            const rss = await resolveToRssUrl(rssUrl);
+            const rss = await resolveToRssUrl(input);
             const feedData = await fetchPodcastFeed(rss);
             await savePodcast({
                 title: feedData.title,
@@ -234,11 +251,106 @@ const SubscribedTimeline = ({ navigation }) => {
             loadData();
             notifyLibraryChange({ type: 'subscribe' });
             togglePanel();
+            return true;
         } catch (e) {
             showAlert('Could not add podcast', e.message || 'Check the link and try again.');
             console.error(e);
+            return false;
         } finally {
             setIsFetching(false);
+        }
+    };
+
+    // Cancels any pending debounce timer and in-flight search request.
+    const cancelSearch = () => {
+        if (searchTimerRef.current) {
+            clearTimeout(searchTimerRef.current);
+            searchTimerRef.current = null;
+        }
+        if (searchAbortRef.current) {
+            searchAbortRef.current.abort();
+            searchAbortRef.current = null;
+        }
+        setIsSearching(false);
+    };
+
+    const runSearch = async (term) => {
+        if (searchAbortRef.current) searchAbortRef.current.abort();
+        const controller = new AbortController();
+        searchAbortRef.current = controller;
+        setIsSearching(true);
+        try {
+            const results = await searchPodcasts(term, { signal: controller.signal });
+            // Ignore stale responses — the input changed and a newer
+            // request (or a cancel) has replaced this controller.
+            if (searchAbortRef.current !== controller) return;
+            setSearchResults(results);
+        } catch (e) {
+            if (e.name === 'AbortError' || searchAbortRef.current !== controller) return;
+            // No alert spam while typing — an empty list reads as "no matches".
+            setSearchResults([]);
+        } finally {
+            if (searchAbortRef.current === controller) {
+                searchAbortRef.current = null;
+                setIsSearching(false);
+            }
+        }
+    };
+
+    // Debounced typeahead: search Apple Podcasts while the user types a name.
+    useEffect(() => {
+        const trimmed = rssUrl.trim();
+        if (panelOpen && trimmed.length >= 2 && !isUrlLike(rssUrl) && isConnected) {
+            if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+            searchTimerRef.current = setTimeout(() => {
+                searchTimerRef.current = null;
+                runSearch(trimmed);
+            }, 400);
+        } else {
+            // Input cleared, url-like, panel closed, or offline — drop
+            // everything. Searching offline would render a misleading
+            // "No podcasts found"; the panel shows an offline row instead.
+            cancelSearch();
+            setSearchResults(null);
+        }
+    }, [rssUrl, panelOpen, isConnected]);
+
+    useEffect(() => () => {
+        if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+        if (searchAbortRef.current) searchAbortRef.current.abort();
+    }, []);
+
+    const handleAddFeed = () => {
+        log('UI', 'Add feed tapped', { url: rssUrl });
+        if (!isConnected) {
+            showAlert('Offline', 'You need an internet connection to search or add feeds.');
+            return;
+        }
+        const trimmed = rssUrl.trim();
+        if (!trimmed) return;
+        if (isUrlLike(rssUrl)) {
+            subscribeToFeed(rssUrl);
+        } else {
+            // Match the results panel's >= 2 gate — a shorter search would
+            // run invisibly and leak stale results on the next keystroke.
+            if (trimmed.length < 2) return;
+            // Search term — flush the debounce and search right away.
+            if (searchTimerRef.current) {
+                clearTimeout(searchTimerRef.current);
+                searchTimerRef.current = null;
+            }
+            runSearch(trimmed);
+        }
+    };
+
+    const handleSubscribeSearchResult = async (result) => {
+        log('UI', 'Search result tapped', { id: result.id, title: result.title });
+        setSubscribingId(result.id);
+        try {
+            const ok = await subscribeToFeed(result.feedUrl);
+            if (ok) setSearchResults(null);
+        } finally {
+            setSubscribingId(null);
         }
     };
 
@@ -253,6 +365,8 @@ const SubscribedTimeline = ({ navigation }) => {
             onDownload={handleDownload}
             isDownloading={item.id in downloads}
             downloadProgress={downloads[item.id] ?? 0}
+            showArtwork
+            expandOnPress
         />
     ), [handleOpenEpisode, handleDownload, downloads]);
 
@@ -266,7 +380,7 @@ const SubscribedTimeline = ({ navigation }) => {
                         <TextInput
                             ref={inputRef}
                             style={styles.input}
-                            placeholder="RSS, Apple Podcasts link…"
+                            placeholder="Search podcasts, or paste RSS link…"
                             placeholderTextColor={colors.textMuted}
                             value={rssUrl}
                             onChangeText={setRssUrl}
@@ -301,15 +415,73 @@ const SubscribedTimeline = ({ navigation }) => {
                         onPress={handleAddFeed}
                         disabled={isFetching || !isConnected}
                         accessibilityRole="button"
-                        accessibilityLabel="Add podcast feed"
+                        accessibilityLabel={rssUrl.trim() && !isUrlLike(rssUrl) ? 'Search podcasts' : 'Add podcast feed'}
                     >
                         {isFetching
                             ? <ActivityIndicator color={colors.textPrimary} size="small" />
-                            : <Text style={styles.addBtnText}>Add</Text>
+                            : <Text style={styles.addBtnText}>{rssUrl.trim() && !isUrlLike(rssUrl) ? 'Search' : 'Add'}</Text>
                         }
                     </TouchableOpacity>
                 </View>
             </Animated.View>
+
+            {/* Name-search typeahead results (Apple Podcasts directory) */}
+            {panelOpen && rssUrl.trim().length >= 2 && !isUrlLike(rssUrl)
+                && (!isConnected || isSearching || searchResults !== null) && (
+                <View style={styles.searchResults}>
+                    <ScrollView keyboardShouldPersistTaps="handled">
+                        {!isConnected && (
+                            <View style={styles.searchStatusRow}>
+                                <Icon name="wifi-off" size={14} color={colors.textMuted} />
+                                <Text style={styles.searchStatusText}>You're offline — connect to search</Text>
+                            </View>
+                        )}
+                        {isSearching && (searchResults === null || searchResults.length === 0) && (
+                            <View style={styles.searchStatusRow}>
+                                <ActivityIndicator size="small" color={colors.textMuted} />
+                                <Text style={styles.searchStatusText}>Searching Apple Podcasts…</Text>
+                            </View>
+                        )}
+                        {!isSearching && searchResults !== null && searchResults.length === 0 && (
+                            <View style={styles.searchStatusRow}>
+                                <Text style={styles.searchStatusText}>No podcasts found</Text>
+                            </View>
+                        )}
+                        {searchResults !== null && searchResults.map((item, index) => (
+                            <TouchableOpacity
+                                key={String(item.id)}
+                                style={[
+                                    styles.searchRow,
+                                    index > 0 && styles.searchRowBorder,
+                                    subscribingId !== null && subscribingId !== item.id && styles.searchRowDisabled,
+                                ]}
+                                onPress={() => handleSubscribeSearchResult(item)}
+                                disabled={subscribingId !== null}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Subscribe to ${item.title}`}
+                            >
+                                {item.artwork ? (
+                                    <Image source={{ uri: item.artwork }} style={styles.searchArtwork} />
+                                ) : (
+                                    <View style={[styles.searchArtwork, styles.searchArtworkPlaceholder]}>
+                                        <Icon name="headphones" size={18} color={colors.textFaint} />
+                                    </View>
+                                )}
+                                <View style={styles.searchInfo}>
+                                    <Text style={styles.searchTitle} numberOfLines={1}>{item.title}</Text>
+                                    <Text style={styles.searchMeta} numberOfLines={1}>
+                                        {[item.author, item.genre].filter(Boolean).join(' · ')}
+                                    </Text>
+                                </View>
+                                {subscribingId === item.id
+                                    ? <ActivityIndicator size="small" color={colors.accent} />
+                                    : <Icon name="plus-circle" size={20} color={colors.accent} />
+                                }
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+            )}
 
             <FlatList
                 data={episodes}
@@ -387,6 +559,46 @@ const styles = StyleSheet.create({
         borderColor: withAlpha(colors.accent, 0.25),
     },
     serviceBadgeText: { ...type.caption, fontWeight: '700', color: colors.accent },
+
+    searchResults: {
+        maxHeight: 340,
+        backgroundColor: colors.bg,
+        borderBottomWidth: 0.5,
+        borderBottomColor: colors.hairline,
+    },
+    searchRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        gap: 12,
+    },
+    searchRowBorder: {
+        borderTopWidth: 0.5,
+        borderTopColor: colors.hairline,
+    },
+    searchRowDisabled: { opacity: 0.4 },
+    searchArtwork: {
+        width: 44,
+        height: 44,
+        borderRadius: 8,
+        backgroundColor: colors.surfaceElevated,
+    },
+    searchArtworkPlaceholder: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    searchInfo: { flex: 1, gap: 2 },
+    searchTitle: { ...type.bodyStrong, color: colors.textPrimary },
+    searchMeta: { ...type.body, color: colors.textMuted },
+    searchStatusRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        gap: 8,
+    },
+    searchStatusText: { ...type.body, color: colors.textMuted },
 });
 
 export default SubscribedTimeline;

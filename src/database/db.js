@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -170,6 +170,26 @@ const migrateToV3 = async (txn) => {
     await txn.execAsync(`DELETE FROM Episodes WHERE id IS NULL`);
 };
 
+const migrateToV4 = async (txn) => {
+    // Completion flag written by playbackService when an episode reaches the
+    // end (or its final stretch). Guarded like v1's ALTERs so a legacy DB that
+    // somehow gained the column converges instead of throwing.
+    const cols = await txn.getAllAsync(`PRAGMA table_info(Episodes)`);
+    if (!cols.some(c => c.name === 'is_played')) {
+        await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN is_played INTEGER DEFAULT 0`);
+    }
+    // Backfill: episodes finished before this column existed have their
+    // end-of-episode position saved — mark them played and reset to 0 so
+    // replays start from the top, mirroring isPlaybackComplete's window
+    // (final 5%, clamped to [10s, 2min], at most 25% of the duration).
+    // RSS-sourced durations of 0 can't be judged and stay unplayed.
+    await txn.execAsync(
+        `UPDATE Episodes SET is_played = 1, play_position = 0
+         WHERE duration > 0 AND play_position > 0
+           AND duration - play_position <= MIN(MAX(10, duration * 0.05), 120, duration * 0.25)`
+    );
+};
+
 export const initDB = async () => {
     const db = await openDatabaseContext();
 
@@ -188,6 +208,7 @@ export const initDB = async () => {
         if (cur < 1) await migrateToV1(db);
         if (cur < 2) await migrateToV2(db);
         if (cur < 3) await migrateToV3(db);
+        if (cur < 4) await migrateToV4(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

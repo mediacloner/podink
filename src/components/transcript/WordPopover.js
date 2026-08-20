@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator, Modal, Pressable, ScrollView,
     StyleSheet, Text, TouchableOpacity, View,
@@ -11,6 +11,8 @@ import {
     recordLookup, removeVocabWord,
 } from '../../services/vocabularyService';
 import { fetchWordInfo, langLabel } from './translate';
+import { fetchDefinitions } from './dictionary';
+import { createAudioPlayer } from 'expo-audio';
 
 // In-memory lookup cache, keyed by language + normalized word.
 const _cache = new Map();
@@ -35,6 +37,30 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const word = data?.word ?? '';
     const normalized = normalizeWord(word);
 
+    // Pronunciation audio — a fresh throwaway player per press so replays
+    // always start from the beginning; the previous one is released first.
+    const soundRef = useRef(null);
+    const stopPronunciation = useCallback(() => {
+        try { soundRef.current?.remove(); } catch (_) {}
+        soundRef.current = null;
+    }, []);
+
+    useEffect(() => {
+        if (!visible) stopPronunciation();
+        return stopPronunciation;
+    }, [visible, stopPronunciation]);
+
+    const playPronunciation = useCallback(() => {
+        const uri = lookup?.audioUrl;
+        if (!uri) return;
+        stopPronunciation();
+        try {
+            const player = createAudioPlayer({ uri });
+            soundRef.current = player;
+            player.play();
+        } catch (_) {}
+    }, [lookup, stopPronunciation]);
+
     useEffect(() => {
         if (!visible) return;
         let stale = false;
@@ -45,7 +71,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         setError(false);
 
         if (!normalized) {
-            setLookup({ translation: '', senses: [] });
+            setLookup({ translation: '', senses: [], phonetic: '', audioUrl: '', meanings: [] });
             setLoading(false);
             return;
         }
@@ -63,25 +89,27 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         } else {
             setLookup(null);
             setLoading(true);
-            fetchWordInfo(normalized, lang, ctrl.signal)
-                .then(info => {
-                    if (stale) return;
-                    if (!info.translation && !info.senses.length) {
-                        // Empty lookup — surface as error and DON'T cache, so
-                        // the next open retries instead of a permanent blank.
-                        setError(true);
-                        setLoading(false);
-                        return;
-                    }
-                    _cache.set(key, info);
-                    setLookup(info);
-                    setLoading(false);
-                })
-                .catch(e => {
-                    if (stale || e?.name === 'AbortError') return;
+            // Translation and English definitions load in parallel; either one
+            // succeeding is enough to show the sheet.
+            Promise.allSettled([
+                fetchWordInfo(normalized, lang, ctrl.signal),
+                fetchDefinitions(normalized, ctrl.signal),
+            ]).then(([tRes, dRes]) => {
+                if (stale) return;
+                const t = tRes.status === 'fulfilled' ? tRes.value : { translation: '', senses: [] };
+                const d = dRes.status === 'fulfilled' ? dRes.value : { phonetic: '', meanings: [] };
+                const info = { ...t, ...d };
+                if (!info.translation && !info.senses.length && !info.meanings.length) {
+                    // Empty lookup — surface as error and DON'T cache, so
+                    // the next open retries instead of a permanent blank.
                     setError(true);
                     setLoading(false);
-                });
+                    return;
+                }
+                _cache.set(key, info);
+                setLookup(info);
+                setLoading(false);
+            });
         }
 
         return () => {
@@ -105,12 +133,18 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                 setSaved(false);
                 setSavedId(null);
             } else {
+                // Prefer a real English definition; fall back to translated senses.
+                const firstMeaning = lookup?.meanings?.[0];
+                const firstDef = firstMeaning?.definitions?.[0]?.definition;
                 const firstSense = lookup?.senses?.[0];
+                const definition = firstDef
+                    ? (firstMeaning.pos ? `${firstMeaning.pos}: ${firstDef}` : firstDef)
+                    : (firstSense ? `${firstSense.pos}: ${firstSense.terms.join(', ')}` : '');
                 const id = await addVocabWord({
                     word,
                     normalized,
                     translation: lookup?.translation || '',
-                    definition: firstSense ? `${firstSense.pos}: ${firstSense.terms.join(', ')}` : '',
+                    definition,
                     language: lang,
                     episode_id: episodeId,
                     episode_title: episodeTitle,
@@ -134,6 +168,21 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                 <Pressable style={st.sheet} onPress={() => {}}>
                     <View style={st.handle} />
                     <Text style={st.word}>{word}</Text>
+                    {(!!lookup?.phonetic || !!lookup?.audioUrl) && (
+                        <View style={st.phoneticRow}>
+                            {!!lookup?.phonetic && <Text style={st.phonetic}>{lookup.phonetic}</Text>}
+                            {!!lookup?.audioUrl && (
+                                <TouchableOpacity
+                                    style={st.speakerBtn}
+                                    onPress={playPronunciation}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    activeOpacity={0.7}
+                                >
+                                    <Icon name='volume-2' size={15} color={colors.accent} />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    )}
                     <View style={st.langRow}>
                         <Text style={st.lang}>English</Text>
                         <Icon name='arrow-right' size={13} color={colors.textFaint} />
@@ -154,6 +203,26 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                                         <Text style={st.terms}>{s.terms.join(', ')}</Text>
                                     </View>
                                 ))}
+                                {(lookup?.meanings ?? []).length > 0 && (
+                                    <>
+                                        <View style={st.sectionDivider} />
+                                        <Text style={st.sectionLabel}>English definitions</Text>
+                                        {lookup.meanings.map((m, i) => (
+                                            <View key={i} style={st.meaning}>
+                                                {!!m.pos && <Text style={st.pos}>{m.pos}</Text>}
+                                                {m.definitions.map((d, j) => (
+                                                    <View key={j} style={st.defRow}>
+                                                        <Text style={st.defNum}>{j + 1}.</Text>
+                                                        <View style={st.defBody}>
+                                                            <Text style={st.defText}>{d.definition}</Text>
+                                                            {!!d.example && <Text style={st.defExample}>“{d.example}”</Text>}
+                                                        </View>
+                                                    </View>
+                                                ))}
+                                            </View>
+                                        ))}
+                                    </>
+                                )}
                             </>
                         )}
                     </ScrollView>
@@ -196,6 +265,18 @@ const st = StyleSheet.create({
     },
     handle: { width: 36, height: 4, backgroundColor: colors.textMuted, borderRadius: 2, alignSelf: 'center', marginBottom: 20 },
     word: { color: colors.textPrimary, fontSize: 30, fontWeight: '700', letterSpacing: -0.4, marginBottom: 10 },
+    phoneticRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: -6, marginBottom: 10 },
+    phonetic: { color: colors.textMuted, fontSize: 14 },
+    speakerBtn: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: colors.hairlineFaint,
+        borderWidth: 0.5,
+        borderColor: colors.hairline,
+    },
     langRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
     lang: { color: colors.accent, fontWeight: '700', fontSize: 13 },
     scroll: { flexShrink: 1 },
@@ -204,6 +285,14 @@ const st = StyleSheet.create({
     sense: { marginBottom: 10 },
     pos: { color: colors.textMuted, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 },
     terms: { color: colors.textSecondary, fontSize: 15, lineHeight: 22 },
+    sectionDivider: { height: 0.5, backgroundColor: colors.hairline, marginTop: 6, marginBottom: 14 },
+    sectionLabel: { color: colors.accent, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12 },
+    meaning: { marginBottom: 12 },
+    defRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+    defNum: { color: colors.textFaint, fontSize: 14, lineHeight: 21, fontWeight: '600' },
+    defBody: { flex: 1 },
+    defText: { color: colors.textPrimary, fontSize: 15, lineHeight: 21 },
+    defExample: { color: colors.textMuted, fontSize: 14, lineHeight: 20, fontStyle: 'italic', marginTop: 3 },
     errorText: { color: colors.danger, fontSize: 15, marginVertical: 12 },
     actions: { flexDirection: 'row', gap: 10, paddingTop: 14 },
     actionBtn: {

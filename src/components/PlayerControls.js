@@ -4,7 +4,7 @@ import TrackPlayer, { usePlaybackState, useProgress, State } from 'react-native-
 import Slider from '@react-native-community/slider';
 import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { colors } from '../theme';
+import { colors, withAlpha } from '../theme';
 
 const RATES = [0.7, 0.85, 1, 1.15, 1.3, 1.5];
 const RATE_KEY = '@playback_rate';
@@ -202,18 +202,23 @@ const PlayerControls = ({ accent = colors.accent, onReplaySentence, onRateChange
                     <Text style={styles.skipLabel}>10</Text>
                 </TouchableOpacity>
 
-                {/* Play / Pause */}
+                {/* Play / Pause — deliberately low-contrast. This sits directly
+                    under the transcript being read, so a solid accent fill (and
+                    its glow) kept pulling the eye away from the text. */}
                 <TouchableOpacity
-                    style={[styles.playBtn, { backgroundColor: accent, shadowColor: accent }]}
+                    style={[styles.playBtn, {
+                        backgroundColor: withAlpha(accent, 0.13),
+                        borderColor: withAlpha(accent, 0.3),
+                    }]}
                     onPress={togglePlayback}
                 >
                     {isBusy ? (
-                        <ActivityIndicator size="large" color={colors.bg} />
+                        <ActivityIndicator size="large" color={withAlpha(accent, 0.8)} />
                     ) : (
                         <Icon
                             name={isPlaying ? 'pause' : 'play'}
                             size={34}
-                            color={colors.bg}
+                            color={withAlpha(accent, 0.85)}
                             style={isPlaying ? undefined : { marginLeft: 3 }}
                         />
                     )}
@@ -232,7 +237,7 @@ const PlayerControls = ({ accent = colors.accent, onReplaySentence, onRateChange
                         onPress={onReplaySentence}
                         hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
                     >
-                        <Icon name="rotate-ccw" size={22} color={colors.textSecondary} />
+                        <Icon name="repeat" size={22} color={colors.textSecondary} />
                     </TouchableOpacity>
                 ) : (
                     <View style={styles.sideBtn} />
@@ -304,10 +309,7 @@ const styles = StyleSheet.create({
         borderRadius: 44,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.3,
-        shadowRadius: 16,
-        elevation: 8,
+        borderWidth: 1,
     },
 });
 

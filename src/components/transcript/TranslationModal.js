@@ -1,11 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator, Modal, Pressable, ScrollView,
+    ActivityIndicator, Animated, Modal, PanResponder, Pressable, ScrollView,
     StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radii } from '../../theme';
 import { fetchTranslation, langLabel } from './translate';
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+// Swipe-down-to-close thresholds: past this drag distance or fling speed
+// the sheet dismisses; anything less springs back into place.
+const CLOSE_DISTANCE = 120;
+const CLOSE_VELOCITY = 0.8;
 
 // In-memory cache, keyed by language + chunk context so repeat long-presses
 // on the same paragraph never re-hit the network within a session.
@@ -17,6 +24,35 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(false);
     const [expanded, setExpanded] = useState(false);
+
+    const translateY = useRef(new Animated.Value(0)).current;
+    const scrollOffsetRef = useRef(0);
+    // The PanResponder is created once and freezes its closure; mirror the
+    // latest onClose so releasing a drag always calls the current handler.
+    const onCloseRef = useRef(onClose);
+    useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+
+    // A dismissed sheet keeps its dragged offset — reset before re-opening.
+    useEffect(() => { if (visible) translateY.setValue(0); }, [visible, translateY]);
+
+    const dragResponder = useRef(PanResponder.create({
+        // Capture downward drags only while the body is scrolled to the top,
+        // so the ScrollView keeps normal scrolling in every other case.
+        onMoveShouldSetPanResponderCapture: (_, g) =>
+            scrollOffsetRef.current <= 0 && g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderMove: (_, g) => translateY.setValue(Math.max(0, g.dy)),
+        onPanResponderRelease: (_, g) => {
+            if (g.dy > CLOSE_DISTANCE || g.vy > CLOSE_VELOCITY) {
+                onCloseRef.current?.();
+            } else {
+                Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
+            }
+        },
+        onPanResponderTerminate: () => {
+            Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
+        },
+    })).current;
 
     useEffect(() => {
         if (!visible || !contextText) return;
@@ -75,7 +111,11 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
     return (
         <Modal visible={visible} transparent animationType='slide' onRequestClose={onClose}>
             <Pressable style={ms.backdrop} onPress={onClose}>
-                <Pressable style={ms.sheet} onPress={() => {}}>
+                <AnimatedPressable
+                    style={[ms.sheet, { transform: [{ translateY }] }]}
+                    onPress={() => {}}
+                    {...dragResponder.panHandlers}
+                >
                     <View style={ms.handle} />
                     <View style={ms.langRow}>
                         <Text style={ms.lang}>English</Text>
@@ -88,6 +128,9 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
                         style={ms.scroll}
                         contentContainerStyle={ms.scrollContent}
                         showsVerticalScrollIndicator={false}
+                        onScroll={e => { scrollOffsetRef.current = e.nativeEvent.contentOffset.y; }}
+                        scrollEventThrottle={16}
+                        bounces={false}
                     >
                         {/* Context pairs — English + translation side by side */}
                         {expanded && hasContext && translatedCtx.map((translated, i) => (
@@ -116,7 +159,7 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
                     <TouchableOpacity style={[ms.closeBtn, { marginBottom: Math.max(bottom, 16) }]} onPress={onClose}>
                         <Text style={ms.closeBtnText}>Close</Text>
                     </TouchableOpacity>
-                </Pressable>
+                </AnimatedPressable>
             </Pressable>
         </Modal>
     );

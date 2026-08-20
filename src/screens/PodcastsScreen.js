@@ -183,7 +183,8 @@ const PodcastsScreen = ({ navigation }) => {
         if (t === 'transcript-progress') return;
         if (t === 'transcript-complete' || t === 'transcript-error'
             || t === 'transcript-delete'
-            || t === 'download-complete' || t === 'episode-delete') {
+            || t === 'download-complete' || t === 'episode-delete'
+            || t === 'playback-complete') {
             refreshLoadedEpisodes();
         }
     }), [refreshLoadedEpisodes]);

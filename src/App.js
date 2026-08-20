@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, LogBox, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, AppState, LogBox, StyleSheet, ActivityIndicator } from 'react-native';
 import { NavigationContainer, DarkTheme, useIsFocused } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -8,7 +8,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 
 import { initDB } from './database/db';
 import AppAlert from './components/AppAlert';
-import { setupPlayer, onUserPlay, onUserStop } from './services/trackPlayer';
+import { setupPlayer, ensurePlayerAlive, onUserPlay, onUserStop } from './services/trackPlayer';
 import { restoreQueue, initializeWhisper } from './services/whisperService';
 import { cleanupOldWhisperModels } from './services/downloadService';
 import { restoreLogs } from './services/logService';
@@ -155,6 +155,16 @@ const App = () => {
             .catch((e) => console.error('DB init failed', e))
             .finally(() => setDbReady(true));
         setupPlayer().then(() => console.log('Track Player Ready'));
+    }, []);
+
+    // Android can destroy the track-player service while this JS process stays
+    // cached, so resuming from recents leaves every transport command hitting a
+    // dead player (play button does nothing). Probe on each resume and rebuild.
+    useEffect(() => {
+        const sub = AppState.addEventListener('change', (next) => {
+            if (next === 'active') ensurePlayerAlive();
+        });
+        return () => sub.remove();
     }, []);
 
     if (!dbReady) {

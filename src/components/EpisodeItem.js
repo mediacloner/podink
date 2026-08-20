@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
 import Animated, {
     FadeInDown, FadeOut, useAnimatedStyle, useSharedValue, withSpring,
@@ -20,6 +20,10 @@ const EpisodeItem = ({
     downloadProgress,
     isQueued,
     cardStyle,
+    // Feed variant: podcast cover on the left, and tapping the row expands
+    // the description (with an explicit Play button) instead of navigating.
+    showArtwork = false,
+    expandOnPress = false,
 }) => {
     const [expanded, setExpanded] = useState(false);
     // Per-row transcription progress: subscribing here means a 1% tick
@@ -62,23 +66,51 @@ const EpisodeItem = ({
 
     return (
         <View style={[styles.card, cardStyle]}>
-            {/* Main row: tap anywhere = navigate to player */}
+            {/* Main row: tap = open player, or expand the description when
+                expandOnPress (Feed) — playback then goes through the Play pill */}
             <TouchableOpacity
-                onPress={() => onPress(episode)}
+                onPress={expandOnPress ? toggleExpand : () => onPress(episode)}
                 activeOpacity={0.7}
                 style={styles.row}
                 accessibilityRole="button"
-                accessibilityLabel={`Open ${episode.title}`}
+                accessibilityLabel={(expandOnPress
+                    ? `${expanded ? 'Hide' : 'Show'} details for ${episode.title}`
+                    : `Open ${episode.title}`)
+                    + (episode.is_played ? ', played' : '')}
+                accessibilityState={expandOnPress ? { expanded } : undefined}
             >
+                {showArtwork && (
+                    episode.image_url ? (
+                        <Image source={{ uri: episode.image_url }} style={styles.artwork} />
+                    ) : (
+                        <View style={[styles.artwork, styles.artworkPlaceholder]}>
+                            <Icon name="headphones" size={18} color={colors.textFaint} />
+                        </View>
+                    )
+                )}
+
                 {/* Left info — plain View, tap bubbles up to outer row */}
                 <View style={styles.info}>
                     <Text style={styles.podcastLabel} numberOfLines={1}>
                         {episode.podcast_title}
                     </Text>
-                    <Text style={styles.episodeTitle} numberOfLines={2}>
+                    <Text
+                        style={[styles.episodeTitle, !!episode.is_played && styles.episodeTitlePlayed]}
+                        numberOfLines={2}
+                    >
                         {episode.title}
                     </Text>
-                    <Text style={styles.date}>{formattedDate}</Text>
+                    <View style={styles.metaRow}>
+                        <Text style={styles.date}>{formattedDate}</Text>
+                        {/* Visual only — the row's accessibilityLabel carries
+                            the played state for screen readers */}
+                        {!!episode.is_played && (
+                            <View style={styles.playedTag}>
+                                <Icon name="check-circle" size={11} color={colors.success} />
+                                <Text style={styles.playedText}>Played</Text>
+                            </View>
+                        )}
+                    </View>
                 </View>
 
                 {/* Right: action pills intercept their own touches */}
@@ -158,19 +190,35 @@ const EpisodeItem = ({
                 </View>
             </TouchableOpacity>
 
-            {/* Bottom strip: tap = expand/collapse description (hitSlop -> 44px target) */}
-            <TouchableOpacity
-                onPress={toggleExpand}
-                style={[styles.expandStrip, expanded && styles.expandStripOpen]}
-                activeOpacity={0.6}
-                hitSlop={{ top: 10, bottom: 10 }}
-                accessibilityRole="button"
-                accessibilityLabel={expanded ? 'Collapse episode description' : 'Expand episode description'}
-            >
-                <Animated.View style={chevronStyle}>
-                    <Icon name="chevron-down" size={15} color={colors.textFaint} />
-                </Animated.View>
-            </TouchableOpacity>
+            {/* Bottom strip. With expandOnPress the whole row is the toggle, so
+                the strip is a purely visual affordance (no second tab stop);
+                otherwise it's the tap target (hitSlop -> 44px). */}
+            {expandOnPress ? (
+                <View
+                    style={[styles.expandStrip, expanded && styles.expandStripOpen]}
+                    pointerEvents="none"
+                    accessible={false}
+                    importantForAccessibility="no-hide-descendants"
+                >
+                    <Animated.View style={chevronStyle}>
+                        <Icon name="chevron-down" size={15} color={colors.textFaint} />
+                    </Animated.View>
+                </View>
+            ) : (
+                <TouchableOpacity
+                    onPress={toggleExpand}
+                    style={[styles.expandStrip, expanded && styles.expandStripOpen]}
+                    activeOpacity={0.6}
+                    hitSlop={{ top: 10, bottom: 10 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={expanded ? 'Collapse episode description' : 'Expand episode description'}
+                    accessibilityState={{ expanded }}
+                >
+                    <Animated.View style={chevronStyle}>
+                        <Icon name="chevron-down" size={15} color={colors.textFaint} />
+                    </Animated.View>
+                </TouchableOpacity>
+            )}
 
             {/* Expanded description */}
             {expanded && (
@@ -182,6 +230,21 @@ const EpisodeItem = ({
                     <Text style={styles.descriptionText}>
                         {episode.description?.replace(/<[^>]+>/g, '') || 'No description available.'}
                     </Text>
+                    {expandOnPress && (
+                        <Pill
+                            variant="blue"
+                            solid
+                            icon="play"
+                            // In-progress beats played: a finished episode's
+                            // position resets to 0, so position > 0 means a
+                            // re-listen is underway and the tap will resume.
+                            label={episode.play_position > 0
+                                ? 'Resume'
+                                : (episode.is_played ? 'Play again' : 'Play')}
+                            onPress={() => onPress(episode)}
+                            style={styles.playPill}
+                        />
+                    )}
                 </Animated.View>
             )}
         </View>
@@ -202,6 +265,18 @@ const styles = StyleSheet.create({
         gap: 14,
     },
 
+    /* Artwork (Feed rows) — same spec as the search-result thumbnails */
+    artwork: {
+        width: 44,
+        height: 44,
+        borderRadius: 8,
+        backgroundColor: colors.surfaceElevated,
+    },
+    artworkPlaceholder: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+
     /* Info */
     info: { flex: 1, gap: 4 },
     podcastLabel: {
@@ -215,7 +290,11 @@ const styles = StyleSheet.create({
         color: colors.textPrimary,
         lineHeight: 21,
     },
+    episodeTitlePlayed: { color: colors.textSecondary },
+    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     date: { ...type.label, fontWeight: '400', color: colors.textMuted },
+    playedTag: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    playedText: { ...type.label, color: colors.success },
 
     /* Right column */
     right: { alignItems: 'flex-end', justifyContent: 'center', minWidth: 90 },
@@ -243,6 +322,7 @@ const styles = StyleSheet.create({
     /* Description */
     description: { paddingHorizontal: 20, paddingBottom: 16 },
     descriptionText: { ...type.body, color: colors.textSecondary, lineHeight: 20 },
+    playPill: { alignSelf: 'flex-start', marginTop: 12 },
 });
 
 export default React.memo(EpisodeItem);

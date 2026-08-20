@@ -194,6 +194,17 @@ export const savePlayPosition = async (id, positionSeconds) => {
   );
 };
 
+/** Mark an episode as fully listened. Returns true only on the 0→1
+ *  transition so callers can skip redundant change notifications. */
+export const markEpisodePlayed = async (id) => {
+  const db = await openDatabaseContext();
+  const res = await db.runAsync(
+    `UPDATE Episodes SET is_played = 1 WHERE id = ? AND is_played = 0`,
+    [id]
+  );
+  return (res?.changes ?? 0) > 0;
+};
+
 export const getTotalNewEpisodesCount = async () => {
   const db = await openDatabaseContext();
   const row = await db.getFirstAsync(

@@ -8,7 +8,7 @@ import TrackPlayer, {
     State,
 } from 'react-native-track-player';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { savePlayPosition } from '../database/queries';
+import { persistProgress } from './playbackService';
 
 export const setupPlayer = async () => {
     try {
@@ -89,11 +89,11 @@ export const setupPlayer = async () => {
     // No live session: persist the active track's position before clearing a
     // stale persisted queue, then reset.
     try {
-        const [{ position }, track] = await Promise.all([
+        const [{ position, duration }, track] = await Promise.all([
             TrackPlayer.getProgress(),
             TrackPlayer.getActiveTrack(),
         ]);
-        if (track?.id && position > 0) await savePlayPosition(track.id, Math.floor(position));
+        await persistProgress(track?.id, position, duration);
     } catch (_) {}
     try {
         await TrackPlayer.reset();
@@ -110,6 +110,52 @@ const _notifyUserPlay     = ()   => _playListeners.forEach(cb => cb());
 const _stopListeners = new Set();
 export const onUserStop   = (cb) => { _stopListeners.add(cb);    return () => _stopListeners.delete(cb); };
 export const notifyUserStop = ()  => _stopListeners.forEach(cb => cb());
+
+// Notified after a dead player has been rebuilt. The rebuild resets the queue,
+// so a mounted Player screen has to re-attach its track.
+const _recoverListeners = new Set();
+export const onPlayerRecovered = (cb) => { _recoverListeners.add(cb); return () => _recoverListeners.delete(cb); };
+const _notifyRecovered = () => _recoverListeners.forEach(cb => cb());
+
+/**
+ * Probes the native player and rebuilds it if it's gone.
+ *
+ * Android can destroy the track-player service (hours in the background, or
+ * memory pressure) while this JS process stays cached. Reopening the app then
+ * re-runs no setup, so every play/pause command lands on a dead player and
+ * silently no-ops — a play button that does nothing. Call this on app resume
+ * and before loading a track.
+ *
+ * @returns {Promise<boolean>} true when a usable player exists afterwards
+ */
+let _recovering = null;
+export const ensurePlayerAlive = async () => {
+    // Concurrent callers (resume + screen load) share one rebuild attempt.
+    if (_recovering) return _recovering;
+
+    _recovering = (async () => {
+        try {
+            await TrackPlayer.getPlaybackState();
+            return true; // player answered — nothing to do
+        } catch (_) {}
+
+        try {
+            await setupPlayer();
+            await TrackPlayer.getPlaybackState(); // confirm the rebuild took
+            _notifyRecovered();
+            return true;
+        } catch (e) {
+            console.log('Player recovery failed:', e);
+            return false;
+        }
+    })();
+
+    try {
+        return await _recovering;
+    } finally {
+        _recovering = null;
+    }
+};
 
 export const loadEpisodeTrack = async (episode, autoPlay = true) => {
     // Determine whether to use local or remote path

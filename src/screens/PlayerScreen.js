@@ -5,18 +5,19 @@ import {
 } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import TrackPlayer from 'react-native-track-player';
+import TrackPlayer, { State } from 'react-native-track-player';
 import { Feather as Icon } from '@expo/vector-icons';
 import PlayerControls from '../components/PlayerControls';
 import TranscriptHighlighter from '../components/TranscriptHighlighter';
 import { showAlert } from '../components/AppAlert';
-import { loadEpisodeTrack } from '../services/trackPlayer';
+import { loadEpisodeTrack, ensurePlayerAlive, onPlayerRecovered } from '../services/trackPlayer';
+import { isPlaybackComplete, persistProgress } from '../services/playbackService';
 import { onLibraryChange } from '../services/libraryEvents';
 import {
     enqueueTranscription, getAbortingId, getActiveId,
     getQueueIds, onQueueChange, onTranscriptProgress,
 } from '../services/whisperService';
-import { getEpisodeById, getTranscriptsForEpisode, savePlayPosition } from '../database/queries';
+import { getEpisodeById, getTranscriptsForEpisode } from '../database/queries';
 import { extractColor } from '../services/colorExtractor';
 import { colors, radii, withAlpha } from '../theme';
 
@@ -40,6 +41,7 @@ const PlayerScreen = ({ route, navigation }) => {
     const [segments, setSegments] = useState([]);
     const [transcriptLoading, setTranscriptLoading] = useState(false);
     const [audioStatus, setAudioStatus] = useState('');
+    const [audioError, setAudioError] = useState(false);
     const [colorInfo, setColorInfo] = useState(null);
     const [playbackRate, setPlaybackRate] = useState(1);
     const [transcribing, setTranscribing] = useState(false);
@@ -56,6 +58,81 @@ const PlayerScreen = ({ route, navigation }) => {
     // Populated by the seekToMs param effect below — it runs after this
     // effect's synchronous part but before the async body reads it.
     const pendingSeekRef = useRef(null);
+
+    // Loads this episode's audio and starts playback. Extracted from the setup
+    // effect so a failed attempt can be retried from the UI and a rebuilt
+    // player can re-attach its track without leaving the screen. Concurrent
+    // runs are fenced by a token — only the newest may touch state.
+    const loadRunRef = useRef(0);
+    const audioLoadingRef = useRef(false);
+
+    const startAudio = useCallback(async () => {
+        const run = ++loadRunRef.current;
+        const isCurrent = () => loadRunRef.current === run;
+        audioLoadingRef.current = true;
+        try {
+            setAudioError(false);
+            setAudioStatus('Preparing audio…');
+
+            // The media service may have been destroyed while the app sat in
+            // the background; without this every command below is a silent
+            // no-op against a dead player.
+            await ensurePlayerAlive();
+
+            const fresh = await getEpisodeById(epId);
+            const row = fresh || episodeParam;
+            if (isCurrent()) setEp(row);
+
+            const currentTrack = await TrackPlayer.getActiveTrack();
+            const alreadyLoaded = currentTrack?.id === epId;
+
+            if (!alreadyLoaded) {
+                await loadEpisodeTrack(row, false);
+                // An explicit seek target (e.g. from Vocabulary) wins over
+                // the resume position.
+                const seekMs = pendingSeekRef.current;
+                if (seekMs != null) {
+                    pendingSeekRef.current = null;
+                    await TrackPlayer.seekTo(Math.max(0, seekMs) / 1000);
+                } else if (row.play_position > 0 && !isPlaybackComplete(row.play_position, row.duration)) {
+                    // A finished episode restarts from the top instead of
+                    // resuming into the last few seconds of the outro.
+                    // (Completion now persists play_position = 0; the
+                    // isPlaybackComplete guard covers rows finished before
+                    // that behavior existed.)
+                    await TrackPlayer.seekTo(row.play_position);
+                }
+            } else {
+                // Replaying the episode that just finished: it is still
+                // the active track, sitting in State.Ended, and play()
+                // alone can't leave that state — restart from the top.
+                const { state } = await TrackPlayer.getPlaybackState();
+                if (state === State.Ended) {
+                    await TrackPlayer.seekTo(0);
+                    await TrackPlayer.play();
+                }
+            }
+
+            if (isCurrent()) setAudioStatus('');
+            if (!alreadyLoaded) await TrackPlayer.play();
+            if (isCurrent()) {
+                playerReadyRef.current = true;
+                setPlayerReady(true);
+            }
+        } catch (e) {
+            console.error('Playback setup failed', e);
+            if (isCurrent()) {
+                setAudioStatus('');
+                // Surfaced instead of swallowed: this used to leave an inert
+                // play button with nothing explaining why it did nothing.
+                setAudioError(true);
+                playerReadyRef.current = true;
+                setPlayerReady(true);
+            }
+        } finally {
+            if (isCurrent()) audioLoadingRef.current = false;
+        }
+    }, [epId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Playback setup (keyed by episode id — re-navigation with the same
     //    episode must not restart audio) ───────────────────────────────────────
@@ -76,47 +153,21 @@ const PlayerScreen = ({ route, navigation }) => {
             setColorInfo(null);
         }
 
-        (async () => {
-            try {
-                setAudioStatus('Preparing audio…');
-                const fresh = await getEpisodeById(epId);
-                const row = fresh || episodeParam;
-                if (alive) setEp(row);
+        startAudio();
 
-                const currentTrack = await TrackPlayer.getActiveTrack();
-                const alreadyLoaded = currentTrack?.id === epId;
+        return () => {
+            alive = false;
+            loadRunRef.current++; // fence the in-flight load against this unmount
+        };
+    }, [epId, startAudio]); // eslint-disable-line react-hooks/exhaustive-deps
 
-                if (!alreadyLoaded) {
-                    await loadEpisodeTrack(row, false);
-                    // An explicit seek target (e.g. from Vocabulary) wins over
-                    // the resume position.
-                    const seekMs = pendingSeekRef.current;
-                    if (seekMs != null) {
-                        pendingSeekRef.current = null;
-                        await TrackPlayer.seekTo(Math.max(0, seekMs) / 1000);
-                    } else if (row.play_position > 0) {
-                        await TrackPlayer.seekTo(row.play_position);
-                    }
-                }
-
-                if (alive) setAudioStatus('');
-                if (!alreadyLoaded) await TrackPlayer.play();
-                if (alive) {
-                    playerReadyRef.current = true;
-                    setPlayerReady(true);
-                }
-            } catch (e) {
-                console.error('Playback setup failed', e);
-                if (alive) {
-                    setAudioStatus('');
-                    playerReadyRef.current = true;
-                    setPlayerReady(true);
-                }
-            }
-        })();
-
-        return () => { alive = false; };
-    }, [epId]); // eslint-disable-line react-hooks/exhaustive-deps
+    // A rebuilt player comes back with an empty queue, so re-attach this
+    // episode's track. Skipped when our own load triggered the rebuild — that
+    // call attaches the track itself once ensurePlayerAlive() returns.
+    useEffect(() => onPlayerRecovered(() => {
+        if (audioLoadingRef.current) return;
+        startAudio();
+    }), [startAudio]);
 
     // Flush one final play position on unmount; periodic saves are owned by
     // playbackService (PlaybackProgressUpdated) — no interval here.
@@ -127,8 +178,8 @@ const PlayerScreen = ({ route, navigation }) => {
                     TrackPlayer.getProgress(),
                     TrackPlayer.getActiveTrack(),
                 ]);
-                if (track?.id === epId && progress.position > 0) {
-                    await savePlayPosition(epId, Math.floor(progress.position));
+                if (track?.id === epId) {
+                    await persistProgress(epId, progress.position, progress.duration);
                 }
             } catch (_) {}
         })();
@@ -314,7 +365,17 @@ const PlayerScreen = ({ route, navigation }) => {
                     episodeTitle={ep.title}
                 />
 
-                {audioStatus !== '' && (
+                {audioError ? (
+                    <TouchableOpacity
+                        style={styles.loadingBadge}
+                        onPress={startAudio}
+                        accessibilityRole='button'
+                        accessibilityLabel='Audio failed to load, tap to retry'
+                    >
+                        <Icon name='alert-circle' size={14} color={colors.danger} />
+                        <Text style={styles.loadingText}>Audio unavailable — tap to retry</Text>
+                    </TouchableOpacity>
+                ) : audioStatus !== '' && (
                     <View style={styles.loadingBadge}>
                         <ActivityIndicator size='small' color={colors.accent} />
                         <Text style={styles.loadingText}>{audioStatus}</Text>

@@ -7,7 +7,8 @@ import TrackPlayer, {
     useActiveTrack, usePlaybackState, useProgress, State,
 } from 'react-native-track-player';
 import { Feather as Icon } from '@expo/vector-icons';
-import { getEpisodeById, savePlayPosition } from '../database/queries';
+import { getEpisodeById } from '../database/queries';
+import { persistProgress } from '../services/playbackService';
 import { notifyUserStop } from '../services/trackPlayer';
 import { colors, radii, withAlpha } from '../theme';
 
@@ -112,13 +113,11 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
                     // The PanResponder closure is from the first render, so
                     // read everything fresh from the player, not from hooks.
                     try {
-                        const [{ position: pos }, activeTrack] = await Promise.all([
+                        const [{ position: pos, duration: dur }, activeTrack] = await Promise.all([
                             TrackPlayer.getProgress(),
                             TrackPlayer.getActiveTrack(),
                         ]);
-                        if (activeTrack?.id && pos > 0) {
-                            await savePlayPosition(activeTrack.id, Math.floor(pos));
-                        }
+                        await persistProgress(activeTrack?.id, pos, dur);
                     } catch (_) {}
                     await TrackPlayer.reset();
                     notifyUserStop(); // unmounts MiniPlayer via App.js
