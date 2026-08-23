@@ -10,12 +10,43 @@ import {
     addVocabWord, getVocabWords, isVocabWordSaved,
     recordLookup, removeVocabWord,
 } from '../../services/vocabularyService';
-import { fetchWordInfo, langLabel } from './translate';
+import { fetchTranslation, fetchWordInfo, langLabel, translateErrorMessage } from './translate';
 import { fetchDefinitions } from './dictionary';
 import { createAudioPlayer } from 'expo-audio';
 
 // In-memory lookup cache, keyed by language + normalized word.
 const _cache = new Map();
+// The sentence translation is cached separately: the same word turns up in
+// different sentences, and each one needs its own contextual rendering.
+const _ctxCache = new Map();
+
+const IS_WORD_CHAR = /[\p{L}\p{N}]/u;
+
+// Splits a sentence into alternating plain/matched segments so the looked-up
+// word can be emphasised in place: even indices are plain text, odd ones are
+// occurrences of the word. Display only — a plain scan rather than a built
+// regex, since only literals are checked when the bundle is compiled.
+const splitOnWord = (sentence, word) => {
+    const needle = (word || '').trim().toLowerCase();
+    if (!needle) return [sentence];
+    const hay = sentence.toLowerCase();
+    const parts = [];
+    let plainFrom = 0;
+    let search = 0;
+    for (;;) {
+        const at = hay.indexOf(needle, search);
+        if (at < 0) break;
+        search = at + needle.length;
+        // Skip hits buried inside a longer word ('run' in 'running').
+        const before = at > 0 ? sentence[at - 1] : '';
+        const after = sentence[search] ?? '';
+        if (IS_WORD_CHAR.test(before) || IS_WORD_CHAR.test(after)) continue;
+        parts.push(sentence.slice(plainFrom, at), sentence.slice(at, search));
+        plainFrom = search;
+    }
+    parts.push(sentence.slice(plainFrom));
+    return parts;
+};
 
 export const normalizeWord = (raw) =>
     // Unicode-aware edge-trim so accented loanwords ('café', 'naïve', 'résumé')
@@ -28,13 +59,16 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const { bottom } = useSafeAreaInsets();
     const [lookup, setLookup] = useState(null);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(false);
+    const [error, setError] = useState('');
+    const [ctxTranslation, setCtxTranslation] = useState('');
     const [saved, setSaved] = useState(false);
     const [savedId, setSavedId] = useState(null);
     const [saving, setSaving] = useState(false);
 
     const visible = !!data;
     const word = data?.word ?? '';
+    // The chunk the word sits in — already carried for the vocabulary row.
+    const sentence = (data?.contextText ?? '').trim();
     const normalized = normalizeWord(word);
 
     // Pronunciation audio — a fresh throwaway player per press so replays
@@ -68,12 +102,34 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
 
         setSaved(false);
         setSavedId(null);
-        setError(false);
+        setError('');
+        setCtxTranslation('');
 
         if (!normalized) {
             setLookup({ translation: '', senses: [], phonetic: '', audioUrl: '', meanings: [] });
             setLoading(false);
             return;
+        }
+
+        // A bare-word translation is often the wrong sense outright ('left' →
+        // 'izquierda' in a sentence that means 'salió'), so the containing
+        // sentence is translated too and shown alongside. It's supplementary:
+        // a failure here leaves the rest of the sheet untouched.
+        if (sentence && sentence.toLowerCase() !== word.trim().toLowerCase()) {
+            const ctxKey = `${lang}:${sentence}`;
+            const ctxCached = _ctxCache.get(ctxKey);
+            if (ctxCached) {
+                setCtxTranslation(ctxCached);
+            } else {
+                fetchTranslation(sentence, lang, ctrl.signal)
+                    .then(t => {
+                        if (stale) return;
+                        const trimmed = (t || '').trim();
+                        if (trimmed) _ctxCache.set(ctxKey, trimmed);
+                        setCtxTranslation(trimmed);
+                    })
+                    .catch(() => {});
+            }
         }
 
         recordLookup(word, normalized, episodeId).catch(() => {});
@@ -102,7 +158,11 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                 if (!info.translation && !info.senses.length && !info.meanings.length) {
                     // Empty lookup — surface as error and DON'T cache, so
                     // the next open retries instead of a permanent blank.
-                    setError(true);
+                    const reason = tRes.status === 'rejected' ? tRes.reason : null;
+                    setError(translateErrorMessage(
+                        reason,
+                        reason ? 'Lookup failed. Try again.' : 'No translation found for this word.',
+                    ));
                     setLoading(false);
                     return;
                 }
@@ -116,7 +176,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
             stale = true;
             ctrl.abort();
         };
-    }, [visible, word, normalized, lang, episodeId]);
+    }, [visible, word, normalized, sentence, lang, episodeId]);
 
     const toggleSave = useCallback(async () => {
         if (!data || saving || !normalized) return;
@@ -193,7 +253,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                         {loading ? (
                             <ActivityIndicator color={colors.accent} style={{ marginVertical: 18 }} />
                         ) : error ? (
-                            <Text style={st.errorText}>Lookup failed. Check your connection.</Text>
+                            <Text style={st.errorText}>{error}</Text>
                         ) : (
                             <>
                                 <Text style={st.translation}>{lookup?.translation || '—'}</Text>
@@ -203,6 +263,20 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                                         <Text style={st.terms}>{s.terms.join(', ')}</Text>
                                     </View>
                                 ))}
+                                {!!ctxTranslation && (
+                                    <>
+                                        <View style={st.sectionDivider} />
+                                        <Text style={st.sectionLabel}>In this sentence</Text>
+                                        <Text style={st.ctxEnglish}>
+                                            {splitOnWord(sentence, word).map((part, i) => (
+                                                i % 2 === 1
+                                                    ? <Text key={i} style={st.ctxWord}>{part}</Text>
+                                                    : part
+                                            ))}
+                                        </Text>
+                                        <Text style={st.ctxTranslated}>{ctxTranslation}</Text>
+                                    </>
+                                )}
                                 {(lookup?.meanings ?? []).length > 0 && (
                                     <>
                                         <View style={st.sectionDivider} />
@@ -287,6 +361,9 @@ const st = StyleSheet.create({
     terms: { color: colors.textSecondary, fontSize: 15, lineHeight: 22 },
     sectionDivider: { height: 0.5, backgroundColor: colors.hairline, marginTop: 6, marginBottom: 14 },
     sectionLabel: { color: colors.accent, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12 },
+    ctxEnglish: { color: colors.textMuted, fontSize: 15, lineHeight: 22, fontStyle: 'italic', marginBottom: 6 },
+    ctxWord: { color: colors.textPrimary, fontWeight: '700', fontStyle: 'italic' },
+    ctxTranslated: { color: colors.textSecondary, fontSize: 16, lineHeight: 24, marginBottom: 4 },
     meaning: { marginBottom: 12 },
     defRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
     defNum: { color: colors.textFaint, fontSize: 14, lineHeight: 21, fontWeight: '600' },

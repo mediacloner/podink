@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, radii } from '../../theme';
-import { fetchTranslation, langLabel } from './translate';
+import { fetchTranslation, langLabel, translateErrorMessage } from './translate';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -22,7 +22,7 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
     const { bottom } = useSafeAreaInsets();
     const [translationParts, setTranslationParts] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(false);
+    const [error, setError] = useState('');
     const [expanded, setExpanded] = useState(false);
 
     const translateY = useRef(new Animated.Value(0)).current;
@@ -54,6 +54,13 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
         },
     })).current;
 
+    // Paragraphs fed into the request: up to two preceding chunks plus the
+    // pressed one (see TranscriptHighlighter's onLongPress).
+    const englishParagraphs = React.useMemo(
+        () => (contextText ?? '').split(/\n\n+/).map(p => p.trim()).filter(Boolean),
+        [contextText],
+    );
+
     useEffect(() => {
         if (!visible || !contextText) return;
         setExpanded(false);
@@ -63,7 +70,7 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
         if (cached) {
             setTranslationParts(cached);
             setLoading(false);
-            setError(false);
+            setError('');
             return;
         }
 
@@ -73,27 +80,40 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
         const ctrl = new AbortController();
         setLoading(true);
         setTranslationParts([]);
-        setError(false);
+        setError('');
+
+        const finish = (out) => {
+            if (!out.length) {
+                // Empty result — surface as error and DON'T cache, so the
+                // next open retries instead of showing a permanent blank.
+                setError('No translation came back for this text.');
+                setLoading(false);
+                return;
+            }
+            _cache.set(key, out);
+            setTranslationParts(out);
+            setLoading(false);
+        };
 
         fetchTranslation(contextText, lang, ctrl.signal)
             .then(full => {
                 if (stale) return;
                 const parts = full.split(/\n+/).map(p => p.trim()).filter(Boolean);
-                const out = parts.length ? parts : (full.trim() ? [full] : []);
-                if (!out.length) {
-                    // Empty result — surface as error and DON'T cache, so the
-                    // next open retries instead of showing a permanent blank.
-                    setError(true);
-                    setLoading(false);
-                    return;
-                }
-                _cache.set(key, out);
-                setTranslationParts(out);
-                setLoading(false);
+                // The paragraphs only pair up with the English ones when the
+                // blank lines survive translation. They normally do, but if
+                // Google collapses or adds breaks the counts drift and every
+                // context pair would be off by one — so rather than show
+                // mismatched pairs, re-ask for the pressed paragraph alone.
+                if (parts.length === englishParagraphs.length) return finish(parts);
+                return fetchTranslation(text, lang, ctrl.signal).then(solo => {
+                    if (stale) return;
+                    const one = (solo || '').trim();
+                    finish(one ? [one] : []);
+                });
             })
             .catch(e => {
                 if (stale || e?.name === 'AbortError') return;
-                setError(true);
+                setError(translateErrorMessage(e));
                 setLoading(false);
             });
 
@@ -101,11 +121,11 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
             stale = true;
             ctrl.abort();
         };
-    }, [visible, contextText, lang]);
+    }, [visible, contextText, englishParagraphs, text, lang]);
 
     const lastTranslation = translationParts[translationParts.length - 1] ?? '';
     const translatedCtx = translationParts.slice(0, -1);
-    const englishCtx = (contextText ?? '').split(/\n\n+/).map(p => p.trim()).filter(Boolean).slice(0, -1);
+    const englishCtx = englishParagraphs.slice(0, -1);
     const hasContext = translatedCtx.length > 0;
 
     return (
@@ -145,7 +165,7 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
                         <Text style={ms.originalText}>{text}</Text>
                         <View style={ms.divider} />
                         {loading ? <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} />
-                        : error ? <Text style={ms.errorText}>Translation failed. Check your connection.</Text>
+                        : error ? <Text style={ms.errorText}>{error}</Text>
                         : <>
                             <Text style={ms.translatedText}>{lastTranslation}</Text>
                             {hasContext && (
