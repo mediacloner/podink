@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.5] - 2026-08-24
+
+### Fixed
+- **Swipe-down closes the translation and word cards from anywhere on the card** — the drag gesture sat on a `Pressable`, whose own responder handlers silently replaced it, so only a tap outside the card ever closed it. Both cards now share `SheetModal` (drag on a plain `Animated.View`, backdrop as a sibling, body scroll only when content overflows).
+- **Word pronunciation actually plays** — the dictionary's recording host answers HTTP 502 for most words, so the speaker button either never appeared or did nothing. Pronunciation now uses on-device text-to-speech (`expo-speech`, en-US), works offline for every word, and falls back to the recording only if TTS errors.
+- **Mini player no longer parks over the tab bar** — when it hid while still mounted (episode ended, stopped from the notification, transition back from the Player) it only slid 120 px, leaving its top ~40 px over the tabs. The hidden offset is now computed from its measured height.
+
+### Added
+- **Settings › Learning › "Pause while looking up"** (default on) — playback pauses while a word or sentence card is open and resumes when it closes; a podcast that was already paused stays paused.
+- **Copy / share the English text** from both cards, plus **"Ask ChatGPT, Gemini…"** when translation fails (shares a ready-made translate-and-explain prompt in your Settings language via the system share sheet); a compact "Ask an assistant" link is available on success too.
+
 ## [2.0.2] - 2026-08-19
 
 ### Changed

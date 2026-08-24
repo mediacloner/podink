@@ -1,18 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
-import {
-    ActivityIndicator, Animated, Modal, PanResponder, Pressable, ScrollView,
-    StyleSheet, Text, TouchableOpacity, View,
-} from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, radii } from '../../theme';
+import { colors } from '../../theme';
 import { fetchTranslation, langLabel, translateErrorMessage } from './translate';
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
-// Swipe-down-to-close thresholds: past this drag distance or fling speed
-// the sheet dismisses; anything less springs back into place.
-const CLOSE_DISTANCE = 120;
-const CLOSE_VELOCITY = 0.8;
+import { askAssistantAboutText, copyText, shareText } from './share';
+import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
 
 // In-memory cache, keyed by language + chunk context so repeat long-presses
 // on the same paragraph never re-hit the network within a session.
@@ -24,39 +16,11 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [expanded, setExpanded] = useState(false);
-
-    const translateY = useRef(new Animated.Value(0)).current;
-    const scrollOffsetRef = useRef(0);
-    // The PanResponder is created once and freezes its closure; mirror the
-    // latest onClose so releasing a drag always calls the current handler.
-    const onCloseRef = useRef(onClose);
-    useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
-
-    // A dismissed sheet keeps its dragged offset — reset before re-opening.
-    useEffect(() => { if (visible) translateY.setValue(0); }, [visible, translateY]);
-
-    const dragResponder = useRef(PanResponder.create({
-        // Capture downward drags only while the body is scrolled to the top,
-        // so the ScrollView keeps normal scrolling in every other case.
-        onMoveShouldSetPanResponderCapture: (_, g) =>
-            scrollOffsetRef.current <= 0 && g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderMove: (_, g) => translateY.setValue(Math.max(0, g.dy)),
-        onPanResponderRelease: (_, g) => {
-            if (g.dy > CLOSE_DISTANCE || g.vy > CLOSE_VELOCITY) {
-                onCloseRef.current?.();
-            } else {
-                Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
-            }
-        },
-        onPanResponderTerminate: () => {
-            Animated.spring(translateY, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
-        },
-    })).current;
+    const [copied, setCopied] = useState(false);
 
     // Paragraphs fed into the request: up to two preceding chunks plus the
     // pressed one (see TranscriptHighlighter's onLongPress).
-    const englishParagraphs = React.useMemo(
+    const englishParagraphs = useMemo(
         () => (contextText ?? '').split(/\n\n+/).map(p => p.trim()).filter(Boolean),
         [contextText],
     );
@@ -123,86 +87,86 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
         };
     }, [visible, contextText, englishParagraphs, text, lang]);
 
+    // "Copied" flashes on the copy button, then reverts.
+    useEffect(() => {
+        if (!copied) return;
+        const t = setTimeout(() => setCopied(false), 1400);
+        return () => clearTimeout(t);
+    }, [copied]);
+    useEffect(() => { if (!visible) setCopied(false); }, [visible]);
+
+    const onCopy = useCallback(async () => { if (await copyText(text)) setCopied(true); }, [text]);
+    const onShare = useCallback(() => shareText(text, 'Share English text'), [text]);
+    const onAsk = useCallback(() => askAssistantAboutText(text, lang), [text, lang]);
+
     const lastTranslation = translationParts[translationParts.length - 1] ?? '';
     const translatedCtx = translationParts.slice(0, -1);
     const englishCtx = englishParagraphs.slice(0, -1);
     const hasContext = translatedCtx.length > 0;
 
+    const header = (
+        <View style={ms.langRow}>
+            <Text style={ms.lang}>English</Text>
+            <Text style={ms.arrow}>→</Text>
+            <Text style={ms.lang}>{langLabel(lang)}</Text>
+            <View style={ms.headerActions}>
+                <SheetIconButton icon={copied ? 'check' : 'copy'} label='Copy English text' onPress={onCopy} active={copied} />
+                <SheetIconButton icon='share-2' label='Share English text' onPress={onShare} />
+            </View>
+        </View>
+    );
+
+    const footer = (
+        <TouchableOpacity style={[ms.closeBtn, { marginBottom: Math.max(bottom, 16) }]} onPress={onClose}>
+            <Text style={ms.closeBtnText}>Close</Text>
+        </TouchableOpacity>
+    );
+
     return (
-        <Modal visible={visible} transparent animationType='slide' onRequestClose={onClose}>
-            <Pressable style={ms.backdrop} onPress={onClose}>
-                <AnimatedPressable
-                    style={[ms.sheet, { transform: [{ translateY }] }]}
-                    onPress={() => {}}
-                    {...dragResponder.panHandlers}
-                >
-                    <View style={ms.handle} />
-                    <View style={ms.langRow}>
-                        <Text style={ms.lang}>English</Text>
-                        <Text style={ms.arrow}>→</Text>
-                        <Text style={ms.lang}>{langLabel(lang)}</Text>
+        <SheetModal visible={visible} onClose={onClose} header={header} footer={footer} maxHeight='85%'>
+            {/* Context pairs — English + translation side by side */}
+            {expanded && hasContext && translatedCtx.map((translated, i) => (
+                <View key={i} style={ms.contextBlock}>
+                    <Text style={ms.contextEnglish}>{englishCtx[i] ?? ''}</Text>
+                    <Text style={ms.contextTranslated}>{translated}</Text>
+                    <View style={ms.contextDivider} />
+                </View>
+            ))}
+
+            {/* Current paragraph */}
+            <Text style={ms.originalText}>{text}</Text>
+            <View style={ms.divider} />
+            {loading ? <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} />
+            : error ? (
+                <View style={ms.errorBlock}>
+                    <Text style={ms.errorText}>{error}</Text>
+                    <AskAssistantButton onPress={onAsk} />
+                    <Text style={ms.askHint}>
+                        Sends the English text with a translation request to any app you pick — ChatGPT, Gemini, Claude…
+                    </Text>
+                </View>
+            ) : (
+                <>
+                    <Text style={ms.translatedText}>{lastTranslation}</Text>
+                    <View style={ms.linkRow}>
+                        {hasContext && (
+                            <TouchableOpacity onPress={() => setExpanded(e => !e)} style={ms.linkBtn}>
+                                <Text style={ms.linkText}>{expanded ? 'Hide context' : 'Show context'}</Text>
+                            </TouchableOpacity>
+                        )}
+                        <AskAssistantButton onPress={onAsk} compact />
                     </View>
-
-                    {/* Scrollable body so expanded context never clips */}
-                    <ScrollView
-                        style={ms.scroll}
-                        contentContainerStyle={ms.scrollContent}
-                        showsVerticalScrollIndicator={false}
-                        onScroll={e => { scrollOffsetRef.current = e.nativeEvent.contentOffset.y; }}
-                        scrollEventThrottle={16}
-                        bounces={false}
-                    >
-                        {/* Context pairs — English + translation side by side */}
-                        {expanded && hasContext && translatedCtx.map((translated, i) => (
-                            <View key={i} style={ms.contextBlock}>
-                                <Text style={ms.contextEnglish}>{englishCtx[i] ?? ''}</Text>
-                                <Text style={ms.contextTranslated}>{translated}</Text>
-                                <View style={ms.contextDivider} />
-                            </View>
-                        ))}
-
-                        {/* Current paragraph */}
-                        <Text style={ms.originalText}>{text}</Text>
-                        <View style={ms.divider} />
-                        {loading ? <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} />
-                        : error ? <Text style={ms.errorText}>{error}</Text>
-                        : <>
-                            <Text style={ms.translatedText}>{lastTranslation}</Text>
-                            {hasContext && (
-                                <TouchableOpacity onPress={() => setExpanded(e => !e)} style={ms.expandBtn}>
-                                    <Text style={ms.expandBtnText}>{expanded ? 'Hide context' : 'Show context'}</Text>
-                                </TouchableOpacity>
-                            )}
-                        </>}
-                    </ScrollView>
-
-                    <TouchableOpacity style={[ms.closeBtn, { marginBottom: Math.max(bottom, 16) }]} onPress={onClose}>
-                        <Text style={ms.closeBtnText}>Close</Text>
-                    </TouchableOpacity>
-                </AnimatedPressable>
-            </Pressable>
-        </Modal>
+                </>
+            )}
+        </SheetModal>
     );
 };
 
 const ms = StyleSheet.create({
-    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-    sheet: {
-        backgroundColor: colors.surface,
-        borderTopLeftRadius: radii.xl,
-        borderTopRightRadius: radii.xl,
-        padding: 24,
-        paddingBottom: 0,
-        borderTopWidth: 0.5,
-        borderTopColor: colors.hairline,
-        maxHeight: '85%',
-    },
-    handle: { width: 36, height: 4, backgroundColor: colors.textMuted, borderRadius: 2, alignSelf: 'center', marginBottom: 22 },
     langRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 },
     lang: { color: colors.accent, fontWeight: '700', fontSize: 14 },
     arrow: { color: colors.textFaint, fontSize: 14 },
-    scroll: { flexShrink: 1 },
-    scrollContent: { paddingBottom: 8 },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 'auto' },
     // Previous context blocks — English + translation paired
     contextBlock: { marginBottom: 4 },
     contextEnglish: { color: colors.textMuted, fontSize: 13, lineHeight: 20, marginBottom: 6, fontStyle: 'italic' },
@@ -212,9 +176,12 @@ const ms = StyleSheet.create({
     originalText: { color: colors.textMuted, fontSize: 16, lineHeight: 24, marginBottom: 16 },
     divider: { height: 0.5, backgroundColor: colors.hairline, marginBottom: 16 },
     translatedText: { color: colors.textPrimary, fontSize: 19, lineHeight: 28, fontWeight: '600', marginBottom: 12, letterSpacing: -0.2 },
-    expandBtn: { alignSelf: 'flex-start', marginBottom: 20 },
-    expandBtnText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
-    errorText: { color: colors.danger, fontSize: 15, marginBottom: 24 },
+    linkRow: { flexDirection: 'row', alignItems: 'center', gap: 18, marginBottom: 20 },
+    linkBtn: { alignSelf: 'flex-start' },
+    linkText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
+    errorBlock: { gap: 14, marginBottom: 20 },
+    errorText: { color: colors.danger, fontSize: 15 },
+    askHint: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
     closeBtn: {
         alignSelf: 'center',
         paddingVertical: 11,

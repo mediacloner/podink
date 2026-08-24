@@ -18,6 +18,26 @@ const LANG_NAMES = {
 
 export const langLabel = (code) => LANG_NAMES[code] || (code || '').toUpperCase();
 
+// English names for the same codes — for phrasing a request to an outside
+// assistant ("translate to Spanish", not "to Español").
+const LANG_ENGLISH = {
+    es: 'Spanish',
+    fr: 'French',
+    de: 'German',
+    it: 'Italian',
+    pt: 'Portuguese',
+    ca: 'Catalan',
+    nl: 'Dutch',
+    pl: 'Polish',
+    ru: 'Russian',
+    ja: 'Japanese',
+    zh: 'Chinese',
+    ko: 'Korean',
+    en: 'English',
+};
+
+export const langEnglishName = (code) => LANG_ENGLISH[code] || (code || '').toUpperCase();
+
 // Same translation backend, two client keys. Google throttles `gtx` hard —
 // it answers 429 for a whole IP for minutes at a time — so the Chrome
 // built-in-translate client goes first and gtx is only the fallback. Both

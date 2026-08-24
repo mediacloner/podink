@@ -22,7 +22,8 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     const track                  = useActiveTrack();
     const { state }              = usePlaybackState();
     const { position, duration } = useProgress(500);
-    const slideAnim              = useRef(new Animated.Value(120)).current;
+    // Starts far offscreen; the real hidden offset is computed from layout.
+    const slideAnim              = useRef(new Animated.Value(600)).current;
     const swipeX                 = useRef(new Animated.Value(0)).current;
 
     const isPlaying = state === State.Playing;
@@ -62,18 +63,25 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     // its real rendered position (bottom offset). Without this, the spring
     // could begin while the layout is still being computed, causing a jump.
     const [hasLayout, setHasLayout] = useState(false);
+    const [cardHeight, setCardHeight] = useState(0);
     const activeState = state === State.Playing || state === State.Paused
                      || state === State.Buffering || state === State.Loading;
     const visible = hasTrack && tabsActive && activeState;
+    // Hidden = fully below the screen edge. The card rests bottomOffset + 8
+    // above the bottom, so it has to travel that far plus its own height; a
+    // fixed 120px used to leave its top ~40px parked over the tab bar whenever
+    // it "hid" while still mounted (episode ended, stopped from the
+    // notification, or mid-transition back from the Player).
+    const hiddenY = bottomOffset + 8 + cardHeight + 24;
     useEffect(() => {
         if (!hasLayout) return;
         Animated.spring(slideAnim, {
-            toValue:         visible ? 0 : 120,
+            toValue:         visible ? 0 : hiddenY,
             useNativeDriver: true,
             bounciness:      4,
             speed:           14,
         }).start();
-    }, [visible, hasLayout]);
+    }, [visible, hasLayout, hiddenY]);
 
     const openPlayer = async () => {
         if (!track?.id || !stackNavigation) return;
@@ -136,7 +144,10 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
 
     return (
         <Animated.View
-            onLayout={() => setHasLayout(true)}
+            onLayout={(e) => {
+                setCardHeight(e.nativeEvent.layout.height);
+                setHasLayout(true);
+            }}
             pointerEvents={visible ? 'auto' : 'none'}
             {...panResponder.panHandlers}
             style={[

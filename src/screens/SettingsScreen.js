@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     View, Text, TouchableOpacity,
-    StyleSheet, ScrollView,
+    StyleSheet, ScrollView, Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -61,6 +61,8 @@ const SettingsScreen = () => {
     const [translationLang, setTranslationLang] = useState('es');
     const [fontSize, setFontSize] = useState(22);
     const [playbackRate, setPlaybackRate] = useState('1');
+    // Stored as '1'/'0'; absent means on (TranscriptHighlighter reads the same key).
+    const [pauseOnLookup, setPauseOnLookup] = useState(true);
 
     useEffect(() => { loadPreference(); loadLearningPrefs(); }, []);
     useEffect(() => { checkModelStatus(selectedModel); }, [selectedModel]);
@@ -76,12 +78,14 @@ const SettingsScreen = () => {
 
     const loadLearningPrefs = async () => {
         try {
-            const [lang, size, rate] = await Promise.all([
+            const [lang, size, rate, pause] = await Promise.all([
                 AsyncStorage.getItem('@translation_lang'),
                 AsyncStorage.getItem('@transcript_font_size'),
                 AsyncStorage.getItem('@playback_rate'),
+                AsyncStorage.getItem('@pause_on_lookup'),
             ]);
             if (lang) setTranslationLang(lang);
+            setPauseOnLookup(pause !== '0');
             if (size) {
                 const parsed = parseInt(size, 10);
                 if (!Number.isNaN(parsed)) {
@@ -111,6 +115,11 @@ const SettingsScreen = () => {
     const savePlaybackRate = async (rate) => {
         setPlaybackRate(rate);
         try { await AsyncStorage.setItem('@playback_rate', rate); } catch (e) {}
+    };
+
+    const savePauseOnLookup = async (on) => {
+        setPauseOnLookup(on);
+        try { await AsyncStorage.setItem('@pause_on_lookup', on ? '1' : '0'); } catch (e) {}
     };
 
     const savePreference = async (modelId) => {
@@ -212,6 +221,23 @@ const SettingsScreen = () => {
                             );
                         })}
                     </View>
+                </View>
+
+                <View style={[styles.settingRow, styles.rowBorder]}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={styles.settingTitle}>Pause while looking up</Text>
+                        <Text style={styles.settingHint}>
+                            Playback pauses when you open a word or sentence card and resumes when you close it
+                        </Text>
+                    </View>
+                    <Switch
+                        value={pauseOnLookup}
+                        onValueChange={savePauseOnLookup}
+                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.accent, 0.45) }}
+                        thumbColor={pauseOnLookup ? colors.accent : colors.textSecondary}
+                        ios_backgroundColor={colors.surfaceHigh}
+                        accessibilityLabel="Pause playback while looking up a word or sentence"
+                    />
                 </View>
 
                 <View style={[styles.settingRow, styles.rowBorder]}>

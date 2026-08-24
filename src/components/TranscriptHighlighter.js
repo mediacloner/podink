@@ -21,7 +21,7 @@ import Animated, {
     useSharedValue,
     withTiming,
 } from 'react-native-reanimated';
-import TrackPlayer from 'react-native-track-player';
+import TrackPlayer, { State } from 'react-native-track-player';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
@@ -113,14 +113,18 @@ const TranscriptHighlighter = forwardRef(({
     // ── User prefs (re-read on every screen focus) ────────────────────────────
     const [fontSize, setFontSize] = useState(DEFAULT_FONT_SIZE);
     const [translationLang, setTranslationLang] = useState('es');
+    // Settings → "Pause while looking up". A ref, not state: only the press
+    // handlers read it, and they must see the value without re-rendering.
+    const pauseOnLookupRef = useRef(true);
     useFocusEffect(useCallback(() => {
         let alive = true;
-        AsyncStorage.multiGet(['@transcript_font_size', '@translation_lang'])
+        AsyncStorage.multiGet(['@transcript_font_size', '@translation_lang', '@pause_on_lookup'])
             .then(pairs => {
                 if (!alive) return;
                 const size = parseInt(pairs?.[0]?.[1], 10);
                 setFontSize(Number.isFinite(size) && size > 0 ? size : DEFAULT_FONT_SIZE);
                 setTranslationLang(pairs?.[1]?.[1] || 'es');
+                pauseOnLookupRef.current = pairs?.[2]?.[1] !== '0'; // on by default
             })
             .catch(() => {});
         return () => { alive = false; };
@@ -714,6 +718,38 @@ const TranscriptHighlighter = forwardRef(({
     const chunksRef = useRef(EMPTY_COMPUTED.chunks);
     useEffect(() => { chunksRef.current = computed.chunks; }, [computed]);
 
+    // ── Pause while looking up (Settings toggle) ─────────────────────────────
+    // Opening a word or sentence card pauses playback; closing it resumes —
+    // but only when this card is what paused it, so a podcast the user had
+    // already paused stays paused. The generation counter covers a card that
+    // is closed before the async state read comes back: the late pause is
+    // dropped instead of leaving the player paused with nothing open.
+    const resumeOnCloseRef = useRef(false);
+    const lookupGenRef = useRef(0);
+    const pauseForLookup = useCallback(async () => {
+        if (!pauseOnLookupRef.current) return;
+        const gen = ++lookupGenRef.current;
+        try {
+            const { state } = await TrackPlayer.getPlaybackState();
+            if (gen !== lookupGenRef.current) return; // card already closed
+            if (state === State.Playing || state === State.Buffering || state === State.Loading) {
+                resumeOnCloseRef.current = true;
+                await TrackPlayer.pause();
+            }
+        } catch (_) {}
+    }, []);
+    const resumeAfterLookup = useCallback(() => {
+        lookupGenRef.current++;
+        if (!resumeOnCloseRef.current) return;
+        resumeOnCloseRef.current = false;
+        TrackPlayer.play().catch(() => {});
+    }, []);
+    // Unmounting with a card open (screen torn down underneath it) must not
+    // strand the player paused.
+    useEffect(() => () => {
+        if (resumeOnCloseRef.current) TrackPlayer.play().catch(() => {});
+    }, []);
+
     // ── Translation modal (paragraph long-press) ─────────────────────────────
     const [translateModal, setTranslateModal] = useState({ visible: false, text: '', contextText: '' });
     const onLongPress = useCallback((text, chunkIndex) => {
@@ -723,8 +759,12 @@ const TranscriptHighlighter = forwardRef(({
         if (chunkIndex >= 1 && ch[chunkIndex - 1]) prevTexts.push(ch[chunkIndex - 1].words.map(w => w.text).join('').trim());
         const contextText = [...prevTexts, text].join('\n\n');
         setTranslateModal({ visible: true, text, contextText });
-    }, []);
-    const closeModal = useCallback(() => setTranslateModal({ visible: false, text: '', contextText: '' }), []);
+        pauseForLookup();
+    }, [pauseForLookup]);
+    const closeModal = useCallback(() => {
+        setTranslateModal({ visible: false, text: '', contextText: '' });
+        resumeAfterLookup();
+    }, [resumeAfterLookup]);
 
     // ── Word popover (word tap in word-level chunks) ─────────────────────────
     const [wordPopover, setWordPopover] = useState(null);
@@ -739,12 +779,19 @@ const TranscriptHighlighter = forwardRef(({
             startMs: Math.round(word.startMs),
             contextText: ch ? ch.words.map(w => w.text).join('').trim() : '',
         });
-    }, []);
-    const closeWordPopover = useCallback(() => setWordPopover(null), []);
+        pauseForLookup();
+    }, [pauseForLookup]);
+    const closeWordPopover = useCallback(() => {
+        setWordPopover(null);
+        resumeAfterLookup();
+    }, [resumeAfterLookup]);
     const onWordReplay = useCallback((ms) => {
         setWordPopover(null);
+        // Seek first, then resume: the player commands run in order, so the
+        // replay starts at the word instead of leaking a beat of the old spot.
         doSeek(ms);
-    }, [doSeek]);
+        resumeAfterLookup();
+    }, [doSeek, resumeAfterLookup]);
 
     // ── Imperative API (PlayerScreen) ─────────────────────────────────────────
     const replayAnchorRef = useRef({ t: 0, chunk: -1 });

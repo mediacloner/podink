@@ -1,18 +1,19 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-    ActivityIndicator, Modal, Pressable, ScrollView,
-    StyleSheet, Text, TouchableOpacity, View,
-} from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Speech from 'expo-speech';
+import { createAudioPlayer } from 'expo-audio';
 import { colors, radii, withAlpha } from '../../theme';
 import {
     addVocabWord, getVocabWords, isVocabWordSaved,
     recordLookup, removeVocabWord,
 } from '../../services/vocabularyService';
+import { log } from '../../services/logService';
 import { fetchTranslation, fetchWordInfo, langLabel, translateErrorMessage } from './translate';
 import { fetchDefinitions } from './dictionary';
-import { createAudioPlayer } from 'expo-audio';
+import { askAssistantAboutWord, copyText, shareText } from './share';
+import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
 
 // In-memory lookup cache, keyed by language + normalized word.
 const _cache = new Map();
@@ -64,6 +65,8 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const [saved, setSaved] = useState(false);
     const [savedId, setSavedId] = useState(null);
     const [saving, setSaving] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const [speaking, setSpeaking] = useState(false);
 
     const visible = !!data;
     const word = data?.word ?? '';
@@ -71,30 +74,69 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const sentence = (data?.contextText ?? '').trim();
     const normalized = normalizeWord(word);
 
-    // Pronunciation audio — a fresh throwaway player per press so replays
-    // always start from the beginning; the previous one is released first.
+    // ── Pronunciation ────────────────────────────────────────────────────────
+    // On-device text-to-speech is the primary voice: it works offline, for
+    // every word, and doesn't take audio focus away from the podcast. The
+    // dictionary's recordings are only a fallback — its media host answers
+    // 502 for most words (that was the "speaker does nothing" bug), and a
+    // second player grabbing focus pauses the podcast underneath.
     const soundRef = useRef(null);
-    const stopPronunciation = useCallback(() => {
+    const releaseRecording = useCallback(() => {
         try { soundRef.current?.remove(); } catch (_) {}
         soundRef.current = null;
     }, []);
+
+    const stopPronunciation = useCallback(() => {
+        Speech.stop().catch(() => {});
+        releaseRecording();
+        setSpeaking(false);
+    }, [releaseRecording]);
 
     useEffect(() => {
         if (!visible) stopPronunciation();
         return stopPronunciation;
     }, [visible, stopPronunciation]);
 
-    const playPronunciation = useCallback(() => {
+    const playRecording = useCallback(() => {
         const uri = lookup?.audioUrl;
         if (!uri) return;
-        stopPronunciation();
+        releaseRecording();
         try {
             const player = createAudioPlayer({ uri });
             soundRef.current = player;
             player.play();
-        } catch (_) {}
-    }, [lookup, stopPronunciation]);
+        } catch (e) {
+            log('UI', 'Pronunciation recording failed', { uri, error: String(e?.message || e) });
+        }
+    }, [lookup, releaseRecording]);
 
+    const pronounce = useCallback(() => {
+        const spoken = normalized || word.trim();
+        if (!spoken) return;
+        releaseRecording();
+        setSpeaking(true);
+        // Android queues utterances (QUEUE_ADD): flush what's still being said.
+        Speech.stop().catch(() => {});
+        try {
+            Speech.speak(spoken, {
+                language: 'en-US',
+                rate: 0.9,
+                onDone: () => setSpeaking(false),
+                onStopped: () => setSpeaking(false),
+                onError: (e) => {
+                    setSpeaking(false);
+                    log('UI', 'TTS failed, falling back to recording', { word: spoken, error: String(e?.message || e) });
+                    playRecording();
+                },
+            });
+        } catch (e) {
+            setSpeaking(false);
+            log('UI', 'TTS unavailable, falling back to recording', { word: spoken, error: String(e?.message || e) });
+            playRecording();
+        }
+    }, [normalized, word, releaseRecording, playRecording]);
+
+    // ── Lookup ───────────────────────────────────────────────────────────────
     useEffect(() => {
         if (!visible) return;
         let stale = false;
@@ -104,6 +146,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         setSavedId(null);
         setError('');
         setCtxTranslation('');
+        setCopied(false);
 
         if (!normalized) {
             setLookup({ translation: '', senses: [], phonetic: '', audioUrl: '', meanings: [] });
@@ -153,7 +196,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
             ]).then(([tRes, dRes]) => {
                 if (stale) return;
                 const t = tRes.status === 'fulfilled' ? tRes.value : { translation: '', senses: [] };
-                const d = dRes.status === 'fulfilled' ? dRes.value : { phonetic: '', meanings: [] };
+                const d = dRes.status === 'fulfilled' ? dRes.value : { phonetic: '', audioUrl: '', meanings: [] };
                 const info = { ...t, ...d };
                 if (!info.translation && !info.senses.length && !info.meanings.length) {
                     // Empty lookup — surface as error and DON'T cache, so
@@ -178,6 +221,21 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         };
     }, [visible, word, normalized, sentence, lang, episodeId]);
 
+    // ── Copy / share / ask ───────────────────────────────────────────────────
+    useEffect(() => {
+        if (!copied) return;
+        const t = setTimeout(() => setCopied(false), 1400);
+        return () => clearTimeout(t);
+    }, [copied]);
+
+    const onCopy = useCallback(async () => { if (await copyText(word)) setCopied(true); }, [word]);
+    const onShare = useCallback(() => {
+        const hasSentence = sentence && sentence.toLowerCase() !== word.trim().toLowerCase();
+        shareText(hasSentence ? `${word}\n\n“${sentence}”` : word, 'Share word');
+    }, [word, sentence]);
+    const onAsk = useCallback(() => askAssistantAboutWord(word, sentence, lang), [word, sentence, lang]);
+
+    // ── Save / replay ────────────────────────────────────────────────────────
     const toggleSave = useCallback(async () => {
         if (!data || saving || !normalized) return;
         setSaving(true);
@@ -222,139 +280,138 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         onReplay(Math.max(0, (data?.startMs ?? 0) - 1000));
     }, [onReplay, data]);
 
+    // ── Render ───────────────────────────────────────────────────────────────
+    const header = (
+        <>
+            <View style={st.wordRow}>
+                <Text style={st.word} numberOfLines={2}>{word}</Text>
+                <TouchableOpacity
+                    style={[st.speakerBtn, speaking && st.speakerBtnActive]}
+                    onPress={pronounce}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    activeOpacity={0.7}
+                    accessibilityRole='button'
+                    accessibilityLabel={`Pronounce ${word}`}
+                >
+                    <Icon name='volume-2' size={17} color={speaking ? colors.bg : colors.accent} />
+                </TouchableOpacity>
+            </View>
+            {!!lookup?.phonetic && <Text style={st.phonetic}>{lookup.phonetic}</Text>}
+            <View style={st.langRow}>
+                <Text style={st.lang}>English</Text>
+                <Icon name='arrow-right' size={13} color={colors.textFaint} />
+                <Text style={st.lang}>{langLabel(lang)}</Text>
+                <View style={st.headerActions}>
+                    <SheetIconButton icon={copied ? 'check' : 'copy'} label='Copy word' onPress={onCopy} active={copied} />
+                    <SheetIconButton icon='share-2' label='Share word and sentence' onPress={onShare} />
+                </View>
+            </View>
+        </>
+    );
+
+    const footer = (
+        <View style={[st.actions, { paddingBottom: Math.max(bottom, 16) }]}>
+            <TouchableOpacity
+                style={[st.actionBtn, saved ? st.actionBtnSaved : st.actionBtnPrimary]}
+                onPress={toggleSave}
+                disabled={saving || loading}
+                activeOpacity={0.8}
+            >
+                <Icon name={saved ? 'check' : 'bookmark'} size={15} color={saved ? colors.success : colors.bg} />
+                <Text style={[st.actionText, { color: saved ? colors.success : colors.bg }]}>
+                    {saved ? 'Saved' : 'Save to vocabulary'}
+                </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[st.actionBtn, st.actionBtnGhost]} onPress={handleReplay} activeOpacity={0.8}>
+                <Icon name='rotate-ccw' size={15} color={colors.textPrimary} />
+                <Text style={[st.actionText, { color: colors.textPrimary }]}>Replay</Text>
+            </TouchableOpacity>
+        </View>
+    );
+
     return (
-        <Modal visible={visible} transparent animationType='slide' onRequestClose={onClose}>
-            <Pressable style={st.backdrop} onPress={onClose}>
-                <Pressable style={st.sheet} onPress={() => {}}>
-                    <View style={st.handle} />
-                    <Text style={st.word}>{word}</Text>
-                    {(!!lookup?.phonetic || !!lookup?.audioUrl) && (
-                        <View style={st.phoneticRow}>
-                            {!!lookup?.phonetic && <Text style={st.phonetic}>{lookup.phonetic}</Text>}
-                            {!!lookup?.audioUrl && (
-                                <TouchableOpacity
-                                    style={st.speakerBtn}
-                                    onPress={playPronunciation}
-                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                                    activeOpacity={0.7}
-                                >
-                                    <Icon name='volume-2' size={15} color={colors.accent} />
-                                </TouchableOpacity>
-                            )}
+        <SheetModal visible={visible} onClose={onClose} header={header} footer={footer} maxHeight='75%'>
+            {loading ? (
+                <ActivityIndicator color={colors.accent} style={{ marginVertical: 18 }} />
+            ) : error ? (
+                <View style={st.errorBlock}>
+                    <Text style={st.errorText}>{error}</Text>
+                    <AskAssistantButton onPress={onAsk} />
+                    <Text style={st.askHint}>
+                        Sends the word and its sentence to any app you pick — ChatGPT, Gemini, Claude…
+                    </Text>
+                </View>
+            ) : (
+                <>
+                    <Text style={st.translation}>{lookup?.translation || '—'}</Text>
+                    {(lookup?.senses ?? []).map((s, i) => (
+                        <View key={i} style={st.sense}>
+                            {!!s.pos && <Text style={st.pos}>{s.pos}</Text>}
+                            <Text style={st.terms}>{s.terms.join(', ')}</Text>
                         </View>
-                    )}
-                    <View style={st.langRow}>
-                        <Text style={st.lang}>English</Text>
-                        <Icon name='arrow-right' size={13} color={colors.textFaint} />
-                        <Text style={st.lang}>{langLabel(lang)}</Text>
-                    </View>
-
-                    <ScrollView style={st.scroll} contentContainerStyle={st.scrollContent} showsVerticalScrollIndicator={false}>
-                        {loading ? (
-                            <ActivityIndicator color={colors.accent} style={{ marginVertical: 18 }} />
-                        ) : error ? (
-                            <Text style={st.errorText}>{error}</Text>
-                        ) : (
-                            <>
-                                <Text style={st.translation}>{lookup?.translation || '—'}</Text>
-                                {(lookup?.senses ?? []).map((s, i) => (
-                                    <View key={i} style={st.sense}>
-                                        {!!s.pos && <Text style={st.pos}>{s.pos}</Text>}
-                                        <Text style={st.terms}>{s.terms.join(', ')}</Text>
-                                    </View>
+                    ))}
+                    {!!ctxTranslation && (
+                        <>
+                            <View style={st.sectionDivider} />
+                            <Text style={st.sectionLabel}>In this sentence</Text>
+                            <Text style={st.ctxEnglish}>
+                                {splitOnWord(sentence, word).map((part, i) => (
+                                    i % 2 === 1
+                                        ? <Text key={i} style={st.ctxWord}>{part}</Text>
+                                        : part
                                 ))}
-                                {!!ctxTranslation && (
-                                    <>
-                                        <View style={st.sectionDivider} />
-                                        <Text style={st.sectionLabel}>In this sentence</Text>
-                                        <Text style={st.ctxEnglish}>
-                                            {splitOnWord(sentence, word).map((part, i) => (
-                                                i % 2 === 1
-                                                    ? <Text key={i} style={st.ctxWord}>{part}</Text>
-                                                    : part
-                                            ))}
-                                        </Text>
-                                        <Text style={st.ctxTranslated}>{ctxTranslation}</Text>
-                                    </>
-                                )}
-                                {(lookup?.meanings ?? []).length > 0 && (
-                                    <>
-                                        <View style={st.sectionDivider} />
-                                        <Text style={st.sectionLabel}>English definitions</Text>
-                                        {lookup.meanings.map((m, i) => (
-                                            <View key={i} style={st.meaning}>
-                                                {!!m.pos && <Text style={st.pos}>{m.pos}</Text>}
-                                                {m.definitions.map((d, j) => (
-                                                    <View key={j} style={st.defRow}>
-                                                        <Text style={st.defNum}>{j + 1}.</Text>
-                                                        <View style={st.defBody}>
-                                                            <Text style={st.defText}>{d.definition}</Text>
-                                                            {!!d.example && <Text style={st.defExample}>“{d.example}”</Text>}
-                                                        </View>
-                                                    </View>
-                                                ))}
-                                            </View>
-                                        ))}
-                                    </>
-                                )}
-                            </>
-                        )}
-                    </ScrollView>
-
-                    <View style={[st.actions, { paddingBottom: Math.max(bottom, 16) }]}>
-                        <TouchableOpacity
-                            style={[st.actionBtn, saved ? st.actionBtnSaved : st.actionBtnPrimary]}
-                            onPress={toggleSave}
-                            disabled={saving || loading}
-                            activeOpacity={0.8}
-                        >
-                            <Icon name={saved ? 'check' : 'bookmark'} size={15} color={saved ? colors.success : colors.bg} />
-                            <Text style={[st.actionText, { color: saved ? colors.success : colors.bg }]}>
-                                {saved ? 'Saved' : 'Save to vocabulary'}
                             </Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity style={[st.actionBtn, st.actionBtnGhost]} onPress={handleReplay} activeOpacity={0.8}>
-                            <Icon name='rotate-ccw' size={15} color={colors.textPrimary} />
-                            <Text style={[st.actionText, { color: colors.textPrimary }]}>Replay</Text>
-                        </TouchableOpacity>
+                            <Text style={st.ctxTranslated}>{ctxTranslation}</Text>
+                        </>
+                    )}
+                    {(lookup?.meanings ?? []).length > 0 && (
+                        <>
+                            <View style={st.sectionDivider} />
+                            <Text style={st.sectionLabel}>English definitions</Text>
+                            {lookup.meanings.map((m, i) => (
+                                <View key={i} style={st.meaning}>
+                                    {!!m.pos && <Text style={st.pos}>{m.pos}</Text>}
+                                    {m.definitions.map((d, j) => (
+                                        <View key={j} style={st.defRow}>
+                                            <Text style={st.defNum}>{j + 1}.</Text>
+                                            <View style={st.defBody}>
+                                                <Text style={st.defText}>{d.definition}</Text>
+                                                {!!d.example && <Text style={st.defExample}>“{d.example}”</Text>}
+                                            </View>
+                                        </View>
+                                    ))}
+                                </View>
+                            ))}
+                        </>
+                    )}
+                    <View style={st.askRow}>
+                        <AskAssistantButton onPress={onAsk} compact />
                     </View>
-                </Pressable>
-            </Pressable>
-        </Modal>
+                </>
+            )}
+        </SheetModal>
     );
 };
 
 const st = StyleSheet.create({
-    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end' },
-    sheet: {
-        backgroundColor: colors.surface,
-        borderTopLeftRadius: radii.xl,
-        borderTopRightRadius: radii.xl,
-        padding: 24,
-        paddingBottom: 0,
-        borderTopWidth: 0.5,
-        borderTopColor: colors.hairline,
-        maxHeight: '75%',
-    },
-    handle: { width: 36, height: 4, backgroundColor: colors.textMuted, borderRadius: 2, alignSelf: 'center', marginBottom: 20 },
-    word: { color: colors.textPrimary, fontSize: 30, fontWeight: '700', letterSpacing: -0.4, marginBottom: 10 },
-    phoneticRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: -6, marginBottom: 10 },
-    phonetic: { color: colors.textMuted, fontSize: 14 },
+    wordRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 4 },
+    word: { flex: 1, color: colors.textPrimary, fontSize: 30, fontWeight: '700', letterSpacing: -0.4 },
+    phonetic: { color: colors.textMuted, fontSize: 14, marginBottom: 6 },
     speakerBtn: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
+        width: 36,
+        height: 36,
+        borderRadius: 18,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: colors.hairlineFaint,
         borderWidth: 0.5,
         borderColor: colors.hairline,
     },
-    langRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
+    speakerBtnActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    langRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6, marginBottom: 14 },
     lang: { color: colors.accent, fontWeight: '700', fontSize: 13 },
-    scroll: { flexShrink: 1 },
-    scrollContent: { paddingBottom: 12 },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 'auto' },
     translation: { color: colors.textPrimary, fontSize: 21, lineHeight: 30, fontWeight: '600', marginBottom: 14, letterSpacing: -0.2 },
     sense: { marginBottom: 10 },
     pos: { color: colors.textMuted, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 },
@@ -370,7 +427,10 @@ const st = StyleSheet.create({
     defBody: { flex: 1 },
     defText: { color: colors.textPrimary, fontSize: 15, lineHeight: 21 },
     defExample: { color: colors.textMuted, fontSize: 14, lineHeight: 20, fontStyle: 'italic', marginTop: 3 },
-    errorText: { color: colors.danger, fontSize: 15, marginVertical: 12 },
+    askRow: { marginTop: 8, marginBottom: 4 },
+    errorBlock: { gap: 14, marginVertical: 8 },
+    errorText: { color: colors.danger, fontSize: 15 },
+    askHint: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
     actions: { flexDirection: 'row', gap: 10, paddingTop: 14 },
     actionBtn: {
         flex: 1,
