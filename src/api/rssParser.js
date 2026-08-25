@@ -25,14 +25,20 @@ export const fetchPodcastFeed = async (url) => {
       title: feed.title,
       description: feed.description,
       image: feed.image ? feed.image.url : null,
-      episodes: feed.items.map(item => ({
-        id: item.id,
-        title: item.title,
-        description: item.description,
-        release_date: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
-        enclosure: item.enclosures && item.enclosures.length > 0 ? item.enclosures[0].url : null,
-        duration: parseDuration(item.itunes?.duration),
-      }))
+      episodes: feed.items.map(item => {
+        const enclosure = item.enclosures && item.enclosures.length > 0 ? item.enclosures[0].url : null;
+        return {
+          // react-native-rss-parser returns undefined for <guid>-less items.
+          // Fall back to the enclosure URL (then the item link) so episodes get
+          // a stable, non-NULL key and don't duplicate / crash on every refresh.
+          id: item.id || enclosure || (item.links && item.links[0] && item.links[0].url) || null,
+          title: item.title,
+          description: item.description,
+          release_date: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
+          enclosure,
+          duration: parseDuration(item.itunes?.duration),
+        };
+      })
     };
   } catch (error) {
     console.error('RSS Parsing Error:', error);

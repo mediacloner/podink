@@ -2608,6 +2608,11 @@ expo-asset@~55.0.10:
     "@expo/image-utils" "^0.8.12"
     expo-constants "~55.0.9"
 
+expo-audio@~55.0.17:
+  version "55.0.17"
+  resolved "https://registry.yarnpkg.com/expo-audio/-/expo-audio-55.0.17.tgz#b5865e6127e2880031721435b115a33df505a1f0"
+  integrity sha512-CG6TaqsSBygZuI0WW1c+6zd90gCOr3qdiJv64HvvcIaJOO8F98jTPEgfxKhf0VqmjWfQPIB8VlD+n2hO02aCAQ==
+
 expo-clipboard@~55.0.9:
   version "55.0.9"
   resolved "https://registry.npmjs.org/expo-clipboard/-/expo-clipboard-55.0.9.tgz"
@@ -2704,6 +2709,11 @@ expo-server@^55.0.6:
   version "55.0.6"
   resolved "https://registry.npmjs.org/expo-server/-/expo-server-55.0.6.tgz"
   integrity sha512-xI72FTm469FfuuBL2R5aNtthgH+GR7ygOpsx/KcPS0K8AZaZd7VjtEExbzn9/qyyYkWW3T+3dAmCDKOMX8gdmQ==
+
+expo-speech@~55.0.17:
+  version "55.0.17"
+  resolved "https://registry.yarnpkg.com/expo-speech/-/expo-speech-55.0.17.tgz#a77d4a80c2eaaca94cc8b3af8ab39ffe7cbcb239"
+  integrity sha512-DUBcz8wGCF0mG8xM3Uu8+dvxvJBb5EFD3lYEh3940y/xgQEuExHbojRBc3LJungEDn1hWRztwVK63LrpbpBykQ==
 
 expo-sqlite@~55.0.11:
   version "55.0.11"

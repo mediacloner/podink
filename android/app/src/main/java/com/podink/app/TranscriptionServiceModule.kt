@@ -15,12 +15,13 @@ class TranscriptionServiceModule(reactContext: ReactApplicationContext) :
     override fun getName() = "TranscriptionService"
 
     @ReactMethod
-    fun start(title: String, message: String) {
+    fun start(title: String, message: String, durationSec: Double) {
         val ctx = reactApplicationContext
         val intent = Intent(ctx, TranscriptionService::class.java).apply {
             action = TranscriptionService.ACTION_START
             putExtra(TranscriptionService.EXTRA_TITLE, title)
             putExtra(TranscriptionService.EXTRA_MESSAGE, message)
+            putExtra(TranscriptionService.EXTRA_DURATION_SEC, durationSec)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             ctx.startForegroundService(intent)

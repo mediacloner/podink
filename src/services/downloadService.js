@@ -1,57 +1,27 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { File, Paths } from 'expo-file-system';
+import { NativeModules } from 'react-native';
 
 // ─── Sherpa-ONNX model registry ──────────────────────────────────────────────
 
+// Two-tier lineup, both NVIDIA Parakeet (CC BY 4.0), both distributed only as
+// GitHub release tarballs from the sherpa-onnx model zoo (hence `archive`; the
+// csukuangfj HF int8 repos are empty placeholders).
+//   parakeet_110m_en         default / fast — hybrid TDT-CTC 110M, CTC head
+//   parakeet_tdt_0_6b_v2_en  high accuracy  — TDT 0.6B v2 transducer
+// Whisper Tiny and SenseVoice were retired in 2.1.0 (see cleanupOldWhisperModels).
 export const SHERPA_MODELS = {
-    moonshine_tiny: {
-        label: 'Moonshine Tiny',
-        desc: 'English only, fastest, lightest',
-        folder: 'sherpa-moonshine-tiny-int8',
-        modelType: 'moonshine',
-        modelFiles: {
-            preprocessor: 'preprocess.onnx',
-            encoder: 'encode.int8.onnx',
-            uncachedDecoder: 'uncached_decode.int8.onnx',
-            cachedDecoder: 'cached_decode.int8.onnx',
-        },
-        files: [
-            'preprocess.onnx',
-            'encode.int8.onnx',
-            'uncached_decode.int8.onnx',
-            'cached_decode.int8.onnx',
-            'tokens.txt',
-        ],
-        baseUrl: 'https://huggingface.co/csukuangfj/sherpa-onnx-moonshine-tiny-en-int8/resolve/main/',
-        totalSizeMB: 30,
-    },
-    moonshine_base: {
-        label: 'Moonshine Base',
-        desc: 'English only, best accuracy',
-        folder: 'sherpa-moonshine-base-int8',
-        modelType: 'moonshine',
-        modelFiles: {
-            preprocessor: 'preprocess.onnx',
-            encoder: 'encode.int8.onnx',
-            uncachedDecoder: 'uncached_decode.int8.onnx',
-            cachedDecoder: 'cached_decode.int8.onnx',
-        },
-        files: [
-            'preprocess.onnx',
-            'encode.int8.onnx',
-            'uncached_decode.int8.onnx',
-            'cached_decode.int8.onnx',
-            'tokens.txt',
-        ],
-        baseUrl: 'https://huggingface.co/csukuangfj/sherpa-onnx-moonshine-base-en-int8/resolve/main/',
-        totalSizeMB: 60,
-        recommended: true,
-    },
-    sensevoice_small: {
-        label: 'SenseVoice Small',
-        desc: '50+ languages, fastest option',
-        folder: 'sherpa-sensevoice-small-int8',
-        modelType: 'sense_voice',
+    parakeet_110m_en: {
+        // NVIDIA FastConformer hybrid TDT-CTC 110M (CTC head), official int8
+        // export. ~7.5% mean WER on the HF Open ASR leaderboard, native
+        // punctuation and capitalization. CTC frame alignments provide the
+        // per-token timestamps for word-level sync. CTC decoding is
+        // non-autoregressive, so Whisper-style repetition loops on
+        // music/silence/ad reads structurally cannot happen.
+        label: 'Parakeet 110M',
+        desc: 'English · fast · NVIDIA Parakeet (CC BY 4.0)',
+        folder: 'sherpa-nemo-parakeet-tdt-ctc-110m-en-int8',
+        modelType: 'nemo_ctc',
         modelFiles: {
             model: 'model.int8.onnx',
         },
@@ -59,34 +29,47 @@ export const SHERPA_MODELS = {
             'model.int8.onnx',
             'tokens.txt',
         ],
-        baseUrl: 'https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/',
-        totalSizeMB: 229,
+        archive: {
+            url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2',
+            // Tar entries are prefixed with this folder; the needed files are
+            // moved up into `folder` after extraction and the rest is dropped.
+            rootDir: 'sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8',
+        },
+        downloadSizeMB: 99,
+        totalSizeMB: 126,
+        recommended: true,
     },
-    whisper_tiny_en: {
-        // The standard csukuangfj/sherpa-onnx-whisper-* exports lack cross-attention
-        // outputs, which sherpa-onnx needs for token-level (per-word) timestamps via
-        // dynamic-time-warping alignment (see sherpa-onnx PR #2945). This repo was
-        // exported with `export-onnx-with-attention.py` and DOES expose attention
-        // weights, enabling real word-level sync.
-        // Note: this is the multilingual Whisper Tiny, not tiny.en — slightly worse
-        // English WER than .en variants, but the only attention-enabled tiny model
-        // currently published. We force language="en" + task="transcribe" anyway.
-        label: 'Whisper Tiny',
-        desc: 'English, real per-word timestamps',
-        folder: 'sherpa-whisper-tiny-attention-int8',
-        modelType: 'whisper',
+    parakeet_tdt_0_6b_v2_en: {
+        // NVIDIA Parakeet TDT 0.6B v2 (FastConformer encoder + TDT transducer),
+        // official int8 export. 6.05% mean WER vs ~7.5% for the 110M: the
+        // transducer's prediction net conditions on the text emitted so far
+        // (better spelling / casing / punctuation) and TDT duration prediction
+        // skips silence, so it is loop-free too. Per-token timestamps come from
+        // the TDT greedy decoder (80 ms frames, same as the CTC model).
+        // Cost: ~5x the 110M's encoder compute on CPU, ~630 MB on disk,
+        // ~1.1 GB peak during install (tarball + extracted tree coexist).
+        // Requires modelType 'nemo_transducer' — see the ASRHandler.kt patch.
+        label: 'Parakeet 0.6B v2',
+        desc: 'English · high accuracy · slower · NVIDIA Parakeet (CC BY 4.0)',
+        folder: 'sherpa-nemo-parakeet-tdt-0.6b-v2-int8',
+        modelType: 'nemo_transducer',
         modelFiles: {
-            encoder: 'tiny-encoder.int8.onnx',
-            decoder: 'tiny-decoder.int8.onnx',
-            tokens:  'tiny-tokens.txt',
+            encoder: 'encoder.int8.onnx',
+            decoder: 'decoder.int8.onnx',
+            joiner:  'joiner.int8.onnx',
         },
         files: [
-            'tiny-encoder.int8.onnx',
-            'tiny-decoder.int8.onnx',
-            'tiny-tokens.txt',
+            'encoder.int8.onnx',
+            'decoder.int8.onnx',
+            'joiner.int8.onnx',
+            'tokens.txt',
         ],
-        baseUrl: 'https://huggingface.co/clairemcw/sherpa-onnx-whisper-tiny-attention/resolve/main/',
-        totalSizeMB: 99,
+        archive: {
+            url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2',
+            rootDir: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
+        },
+        downloadSizeMB: 460,
+        totalSizeMB: 630,
     },
 };
 
@@ -98,14 +81,22 @@ export const SHERPA_MODELS = {
 export const downloadAudioFile = async (url, filename, onProgress) => {
     const destinationFile = new File(Paths.document, filename);
 
-    if (destinationFile.exists) {
+    // Only trust a fully-written final file. (Rename-on-complete below
+    // guarantees the final path is never a truncated partial.)
+    if (destinationFile.exists && destinationFile.size > 0) {
         return destinationFile.uri;
     }
+
+    // Download to a temp path and rename on completion. An interrupted download
+    // (network drop / app kill) then leaves only a .part file — never a
+    // final-named truncated file that would be reused forever as "downloaded".
+    const tmpFile = new File(Paths.document, `${filename}.part`);
+    try { if (tmpFile.exists) tmpFile.delete(); } catch (_) {}
 
     try {
         const download = FileSystem.createDownloadResumable(
             url,
-            destinationFile.uri,
+            tmpFile.uri,
             {},
             ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
                 if (onProgress && totalBytesExpectedToWrite > 0) {
@@ -113,10 +104,14 @@ export const downloadAudioFile = async (url, filename, onProgress) => {
                 }
             }
         );
-        const result = await download.downloadAsync();
-        return result.uri;
+        await download.downloadAsync();
+        // Replace any stale final file, then promote the temp file.
+        try { if (destinationFile.exists) destinationFile.delete(); } catch (_) {}
+        await FileSystem.moveAsync({ from: tmpFile.uri, to: destinationFile.uri });
+        return destinationFile.uri;
     } catch (error) {
         console.error('Error downloading audio file:', error);
+        try { if (tmpFile.exists) tmpFile.delete(); } catch (_) {}
         throw error;
     }
 };
@@ -138,14 +133,15 @@ export const deleteAudioFile = async (localUri) => {
 
 const _modelDir = (modelKey) => `${FileSystem.documentDirectory}${SHERPA_MODELS[modelKey].folder}`;
 
-/** Check if all model files exist locally. */
+/** Check if all model files exist locally (and are non-empty — a truncated
+ *  file from an interrupted download would otherwise pass and fail at init). */
 export const isSherpaModelDownloaded = async (modelKey) => {
     const model = SHERPA_MODELS[modelKey];
     if (!model) return false;
     const dir = _modelDir(modelKey);
     for (const file of model.files) {
         const info = await FileSystem.getInfoAsync(`${dir}/${file}`);
-        if (!info.exists) return false;
+        if (!info.exists || !info.size) return false;
     }
     return true;
 };
@@ -153,6 +149,82 @@ export const isSherpaModelDownloaded = async (modelKey) => {
 /** Returns the native folder path (no file:// prefix) for model init. */
 export const getSherpaModelPath = (modelKey) => {
     return _modelDir(modelKey).replace('file://', '');
+};
+
+/** Download a tarball-distributed model and extract it in place. Uses the
+ *  sherpa-onnx native tar.bz2 extractor (Android). Interruption-safe:
+ *  the tarball is downloaded to a .part path and renamed on completion, so a
+ *  kill mid-extract leaves a complete tarball and the next attempt re-extracts
+ *  without re-downloading. Download is reported as 0-90%, extraction 90-99. */
+const _downloadAndExtractArchive = async (model, dir, onProgress) => {
+    const extractTarBz2 = NativeModules.SherpaOnnx?.extractTarBz2;
+    if (typeof extractTarBz2 !== 'function') {
+        throw new Error('Model archive extraction unavailable (SherpaOnnx native module missing)');
+    }
+
+    const archivePath = `${dir}/model.tar.bz2`;
+    const archiveInfo = await FileSystem.getInfoAsync(archivePath);
+    if (!archiveInfo.exists || !archiveInfo.size) {
+        // Peak footprint during install is tarball + extracted tree (they
+        // coexist until cleanup) — fail early instead of dying mid-extract.
+        const needMB = (model.downloadSizeMB || 0) + (model.totalSizeMB || 0);
+        const freeBytes = await FileSystem.getFreeDiskStorageAsync().catch(() => null);
+        if (needMB > 0 && freeBytes != null && freeBytes < needMB * 1024 * 1024) {
+            const freeMB = Math.round(freeBytes / (1024 * 1024));
+            const err = new Error(`Not enough free space: this model needs ~${needMB} MB to install, ${freeMB} MB available.`);
+            err.code = 'NO_SPACE';
+            throw err;
+        }
+        const tmp = `${archivePath}.part`;
+        await FileSystem.deleteAsync(tmp, { idempotent: true }).catch(() => {});
+        const download = FileSystem.createDownloadResumable(
+            model.archive.url,
+            tmp,
+            {},
+            ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
+                if (onProgress && totalBytesExpectedToWrite > 0) {
+                    onProgress(Math.round((totalBytesWritten / totalBytesExpectedToWrite) * 90));
+                }
+            }
+        );
+        try {
+            await download.downloadAsync();
+            await FileSystem.deleteAsync(archivePath, { idempotent: true }).catch(() => {});
+            await FileSystem.moveAsync({ from: tmp, to: archivePath });
+        } catch (e) {
+            await FileSystem.deleteAsync(tmp, { idempotent: true }).catch(() => {});
+            throw e;
+        }
+    }
+    if (onProgress) onProgress(92);
+
+    const result = await extractTarBz2(
+        archivePath.replace('file://', ''),
+        dir.replace('file://', ''),
+    );
+    if (!result?.success) {
+        throw new Error(result?.message || 'Model archive extraction failed');
+    }
+    if (onProgress) onProgress(97);
+
+    // Flatten: tar entries live under archive.rootDir — promote the files the
+    // recognizer needs into the model dir, then drop the rest (test wavs,
+    // readme) together with the tarball.
+    const rootDir = `${dir}/${model.archive.rootDir}`;
+    for (const file of model.files) {
+        const dest = `${dir}/${file}`;
+        await FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
+        await FileSystem.moveAsync({ from: `${rootDir}/${file}`, to: dest });
+    }
+    await FileSystem.deleteAsync(rootDir, { idempotent: true }).catch(() => {});
+    await FileSystem.deleteAsync(archivePath, { idempotent: true }).catch(() => {});
+
+    for (const file of model.files) {
+        const info = await FileSystem.getInfoAsync(`${dir}/${file}`);
+        if (!info.exists || !info.size) {
+            throw new Error(`Model file missing after extraction: ${file}`);
+        }
+    }
 };
 
 /**
@@ -168,20 +240,37 @@ export const ensureSherpaModel = async (modelKey, onProgress) => {
     const dir = _modelDir(modelKey);
     await FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
 
+    if (model.archive) {
+        if (await isSherpaModelDownloaded(modelKey)) {
+            // A kill between the file moves and cleanup can leave the tarball
+            // behind a completed install — reclaim the 100-460 MB tarball.
+            await FileSystem.deleteAsync(`${dir}/model.tar.bz2`, { idempotent: true }).catch(() => {});
+        } else {
+            await _downloadAndExtractArchive(model, dir, onProgress);
+        }
+        if (onProgress) onProgress(100);
+        return getSherpaModelPath(modelKey);
+    }
+
     let completedFiles = 0;
     for (const file of model.files) {
         const dest = `${dir}/${file}`;
         const info = await FileSystem.getInfoAsync(dest);
-        if (info.exists) {
+        if (info.exists && info.size > 0) {
             completedFiles++;
             if (onProgress) onProgress(Math.round((completedFiles / model.files.length) * 100));
             continue;
         }
 
+        // Download to a temp path and rename on completion so an interrupted /
+        // killed download can never leave a truncated file that the exists-check
+        // treats as complete (sherpa-onnx fails to load a partial .onnx).
+        const tmp = `${dest}.part`;
+        await FileSystem.deleteAsync(tmp, { idempotent: true }).catch(() => {});
         const url = `${model.baseUrl}${file}`;
         const download = FileSystem.createDownloadResumable(
             url,
-            dest,
+            tmp,
             {},
             ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
                 if (onProgress && totalBytesExpectedToWrite > 0) {
@@ -191,7 +280,14 @@ export const ensureSherpaModel = async (modelKey, onProgress) => {
                 }
             }
         );
-        await download.downloadAsync();
+        try {
+            await download.downloadAsync();
+            await FileSystem.deleteAsync(dest, { idempotent: true }).catch(() => {});
+            await FileSystem.moveAsync({ from: tmp, to: dest });
+        } catch (e) {
+            await FileSystem.deleteAsync(tmp, { idempotent: true }).catch(() => {});
+            throw e;
+        }
         completedFiles++;
     }
 
@@ -221,7 +317,14 @@ export const cleanupOldWhisperModels = async () => {
         }
         // The original whisper_tiny_en pointed at the no-attention csukuangfj export
         // (~99 MB, no token timestamps). Its folder is now orphaned — drop it so we
-        // don't keep dead files around.
+        // don't keep dead files around. Same for the retired Moonshine models
+        // (sentence-level sync only, removed from the lineup).
         await FileSystem.deleteAsync(`${docDir}sherpa-whisper-tiny-en-int8`, { idempotent: true });
+        await FileSystem.deleteAsync(`${docDir}sherpa-moonshine-tiny-int8`, { idempotent: true });
+        await FileSystem.deleteAsync(`${docDir}sherpa-moonshine-base-int8`, { idempotent: true });
+        // 2.1.0 retired Whisper Tiny (attention export) and SenseVoice Small in
+        // favour of the two-tier Parakeet lineup — reclaim their 100-230 MB.
+        await FileSystem.deleteAsync(`${docDir}sherpa-whisper-tiny-attention-int8`, { idempotent: true });
+        await FileSystem.deleteAsync(`${docDir}sherpa-sensevoice-small-int8`, { idempotent: true });
     } catch (_) {}
 };

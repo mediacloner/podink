@@ -1,5 +1,49 @@
 # Changelog
 
+## [2.1.0] - 2026-08-25
+
+### Changed
+- **Two-tier Parakeet lineup** — the transcription model picker is now *Parakeet 110M* (default, fast) and *Parakeet TDT 0.6B v2* (high accuracy). Both are NVIDIA models (CC BY 4.0) from the sherpa-onnx model zoo, both punctuate and capitalize, both emit per-token timestamps for word-by-word highlighting, and neither can fall into Whisper-style repetition loops.
+- **Whisper Tiny and SenseVoice Small retired.** Stored selections fall back to Parakeet 110M; their on-disk folders (`sherpa-whisper-tiny-attention-int8`, `sherpa-sensevoice-small-int8`) are removed by the startup cleanup. The Whisper-only hallucination scrubber (`dedupeHallucinations` / `dedupeWordLevel`) is gone with them — legitimate repeated words always survive now.
+- Model rows show the **download size** (99 MB / 460 MB); the 0.6B row also states its ~630 MB installed footprint.
+
+### Added
+- **Parakeet TDT 0.6B v2 (int8)** — 6.05 % mean WER on the HF Open ASR leaderboard vs ~7.5 % for the 110M; roughly 5× the encoder compute on CPU. Distributed as a 460 MB tarball (`encoder`/`decoder`/`joiner` + `tokens.txt`), extracted natively like the 110M.
+- **`nemo_transducer` support in the sherpa-onnx.rn patch** — the wrapper previously routed `nemo_transducer` through the single-file NeMo CTC config; it now builds a proper encoder/decoder/joiner `OfflineTransducerModelConfig` and both long-file gates (`shouldChunkOfflineWhisper`, `isOfflineWhisperModel`) include it, so 0.6B episodes take the same 29 s windowed path (full-attention FastConformer would otherwise OOM on a 90-minute file). **Native change — APK rebuild required.**
+- **Free-space guard** before tarball downloads: install needs tarball + extracted tree simultaneously (~1.1 GB for the 0.6B); the download now fails early with the required/available MB instead of dying mid-extract.
+
+## [2.0.5] - 2026-08-24
+
+### Fixed
+- **Swipe-down closes the translation and word cards from anywhere on the card** — the drag gesture sat on a `Pressable`, whose own responder handlers silently replaced it, so only a tap outside the card ever closed it. Both cards now share `SheetModal` (drag on a plain `Animated.View`, backdrop as a sibling, body scroll only when content overflows).
+- **Word pronunciation actually plays** — the dictionary's recording host answers HTTP 502 for most words, so the speaker button either never appeared or did nothing. Pronunciation now uses on-device text-to-speech (`expo-speech`, en-US), works offline for every word, and falls back to the recording only if TTS errors.
+- **Mini player no longer parks over the tab bar** — when it hid while still mounted (episode ended, stopped from the notification, transition back from the Player) it only slid 120 px, leaving its top ~40 px over the tabs. The hidden offset is now computed from its measured height.
+
+### Added
+- **Settings › Learning › "Pause while looking up"** (default on) — playback pauses while a word or sentence card is open and resumes when it closes; a podcast that was already paused stays paused.
+- **Copy / share the English text** from both cards, plus **"Ask ChatGPT, Gemini…"** when translation fails (shares a ready-made translate-and-explain prompt in your Settings language via the system share sheet); a compact "Ask an assistant" link is available on success too.
+
+## [2.0.2] - 2026-08-19
+
+### Changed
+- **Library grouped by podcast** — the Library tab now shows one folder per podcast (artwork, title, newest episode as subtitle), like the My Podcasts tab. Each folder carries a blue circular badge with its downloaded-episode count and expands in place to the podcast's episodes, newest first. Every row keeps the full set of actions inside the folder: open in Player, transcribe/queue/cancel, swipe to delete, swipe to remove transcript.
+- Folders and expanded episodes render as a single flattened list, so large podcasts stay virtualized (no jank when opening a folder with many downloads).
+
+### Fixed
+- **Live transcription percent survives row remounts** — `whisperService` caches the last emitted percent per episode (`getLastProgress`), so collapsing and re-expanding a transcribing episode's folder no longer resets its pill to "Processing…" until the next ~29s window event.
+- Stale expansion state: a folder whose last episode was deleted no longer reappears pre-expanded after a later download.
+
+## [2.0.1] - 2026-08-19
+
+### Added
+- **New default transcription model: NVIDIA Parakeet TDT-CTC 110M** (int8, via sherpa-onnx `nemo_ctc`) — roughly 3x lower English word-error rate than Whisper Tiny at the same ~100 MB download, with native punctuation and capitalization. CTC frame timestamps drive the existing word-by-word highlighting (no attention export needed). Non-autoregressive decoding means the Whisper repetition loops on music/silence/ad reads structurally cannot happen. License: CC BY 4.0 (attribution shown in the Settings model picker).
+- **Tarball model downloads** — `ensureSherpaModel` now supports models distributed as `.tar.bz2` release assets (the Parakeet int8 export has no per-file HF host): downloads the archive, extracts it with the sherpa-onnx native extractor, flattens the needed files into the model folder, and cleans up. Interruption-safe (rename-on-complete + re-extract without re-download).
+
+### Changed
+- **Whisper hallucination filter is now model-aware** — the repetition scrubber only runs for Whisper-type models; CTC engines (Parakeet, SenseVoice) cannot loop, so their transcripts pass through unfiltered and legitimate repeated words survive.
+- **Wrapper patch extended** — `@siteed/sherpa-onnx.rn` patch now routes `nemo_ctc` through the windowed long-file path (`shouldChunkOfflineWhisper` + `isOfflineWhisperModel`); without this, a 90-minute episode would take the full-buffer path and OOM.
+- Whisper Tiny remains available in Settings (smaller download); users who explicitly selected a model keep their choice.
+
 ## [1.0.4] - 2026-04-02
 
 ### Fixed

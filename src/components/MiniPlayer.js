@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
     View, Text, Image, TouchableOpacity,
-    StyleSheet, Animated, Pressable, PanResponder,
+    StyleSheet, Animated, Pressable, PanResponder, ActivityIndicator,
 } from 'react-native';
 import TrackPlayer, {
     useActiveTrack, usePlaybackState, useProgress, State,
 } from 'react-native-track-player';
 import { Feather as Icon } from '@expo/vector-icons';
 import { getEpisodeById } from '../database/queries';
+import { persistProgress } from '../services/playbackService';
 import { notifyUserStop } from '../services/trackPlayer';
+import { colors, radii, withAlpha } from '../theme';
 
 // ─── MiniPlayer ───────────────────────────────────────────────────────────────
 // Props:
@@ -20,10 +22,12 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     const track                  = useActiveTrack();
     const { state }              = usePlaybackState();
     const { position, duration } = useProgress(500);
-    const slideAnim              = useRef(new Animated.Value(120)).current;
+    // Starts far offscreen; the real hidden offset is computed from layout.
+    const slideAnim              = useRef(new Animated.Value(600)).current;
     const swipeX                 = useRef(new Animated.Value(0)).current;
 
     const isPlaying = state === State.Playing;
+    const isBusy    = state === State.Buffering || state === State.Loading;
     const hasTrack  = !!track;
     const [tabsActive, setTabsActive] = useState(true);
     // No userHasPlayed gate needed here — the parent (TabNavigator) only
@@ -59,18 +63,25 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     // its real rendered position (bottom offset). Without this, the spring
     // could begin while the layout is still being computed, causing a jump.
     const [hasLayout, setHasLayout] = useState(false);
+    const [cardHeight, setCardHeight] = useState(0);
     const activeState = state === State.Playing || state === State.Paused
                      || state === State.Buffering || state === State.Loading;
     const visible = hasTrack && tabsActive && activeState;
+    // Hidden = fully below the screen edge. The card rests bottomOffset + 8
+    // above the bottom, so it has to travel that far plus its own height; a
+    // fixed 120px used to leave its top ~40px parked over the tab bar whenever
+    // it "hid" while still mounted (episode ended, stopped from the
+    // notification, or mid-transition back from the Player).
+    const hiddenY = bottomOffset + 8 + cardHeight + 24;
     useEffect(() => {
         if (!hasLayout) return;
         Animated.spring(slideAnim, {
-            toValue:         visible ? 0 : 120,
+            toValue:         visible ? 0 : hiddenY,
             useNativeDriver: true,
             bounciness:      4,
             speed:           14,
         }).start();
-    }, [visible, hasLayout]);
+    }, [visible, hasLayout, hiddenY]);
 
     const openPlayer = async () => {
         if (!track?.id || !stackNavigation) return;
@@ -79,7 +90,17 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     };
 
     const togglePlay = async () => {
-        isPlaying ? await TrackPlayer.pause() : await TrackPlayer.play();
+        // fresh read — the usePlaybackState hook is {state: undefined} on the
+        // first frames (dead first tap) and stays false while Buffering/Loading
+        // (can't pause a stalled stream). Mirror PlayerControls.togglePlayback.
+        try {
+            const { state } = await TrackPlayer.getPlaybackState();
+            if (state === State.Playing || state === State.Buffering || state === State.Loading) {
+                await TrackPlayer.pause();
+            } else {
+                await TrackPlayer.play();
+            }
+        } catch (_) {}
     };
 
     const panResponder = useRef(PanResponder.create({
@@ -96,6 +117,16 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
                     duration: 180,
                     useNativeDriver: true,
                 }).start(async () => {
+                    // Persist the final position before reset wipes it.
+                    // The PanResponder closure is from the first render, so
+                    // read everything fresh from the player, not from hooks.
+                    try {
+                        const [{ position: pos, duration: dur }, activeTrack] = await Promise.all([
+                            TrackPlayer.getProgress(),
+                            TrackPlayer.getActiveTrack(),
+                        ]);
+                        await persistProgress(activeTrack?.id, pos, dur);
+                    } catch (_) {}
                     await TrackPlayer.reset();
                     notifyUserStop(); // unmounts MiniPlayer via App.js
                 });
@@ -113,7 +144,10 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
 
     return (
         <Animated.View
-            onLayout={() => setHasLayout(true)}
+            onLayout={(e) => {
+                setCardHeight(e.nativeEvent.layout.height);
+                setHasLayout(true);
+            }}
             pointerEvents={visible ? 'auto' : 'none'}
             {...panResponder.panHandlers}
             style={[
@@ -131,7 +165,7 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
                     <Image source={{ uri: artworkUri }} style={styles.artwork} />
                 ) : (
                     <View style={[styles.artwork, styles.artworkFallback]}>
-                        <Icon name="headphones" size={14} color="rgba(255,255,255,0.4)" />
+                        <Icon name="headphones" size={14} color={withAlpha(colors.textPrimary, 0.4)} />
                     </View>
                 )}
 
@@ -144,10 +178,16 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
                 {/* Right side: -10 · play/pause · expand */}
                 <View style={styles.rightControls}>
                     <TouchableOpacity
-                        onPress={() => TrackPlayer.seekTo(Math.max(0, position - 10))}
+                        onPress={async () => {
+                            // fresh read — the useProgress(500) value lags
+                            try {
+                                const { position: pos } = await TrackPlayer.getProgress();
+                                await TrackPlayer.seekTo(Math.max(0, pos - 10));
+                            } catch (_) {}
+                        }}
                         hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
                     >
-                        <Icon name="rotate-ccw" size={22} color="rgba(255,255,255,0.75)" />
+                        <Icon name="rotate-ccw" size={22} color={withAlpha(colors.textPrimary, 0.75)} />
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -155,19 +195,23 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
                         onPress={togglePlay}
                         hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
                     >
-                        <Icon
-                            name={isPlaying ? 'pause' : 'play'}
-                            size={20}
-                            color="#FFFFFF"
-                            style={isPlaying ? undefined : { marginLeft: 2 }}
-                        />
+                        {isBusy ? (
+                            <ActivityIndicator size="small" color={colors.textPrimary} />
+                        ) : (
+                            <Icon
+                                name={isPlaying ? 'pause' : 'play'}
+                                size={20}
+                                color={colors.textPrimary}
+                                style={isPlaying ? undefined : { marginLeft: 2 }}
+                            />
+                        )}
                     </TouchableOpacity>
 
                     <TouchableOpacity
                         onPress={openPlayer}
                         hitSlop={{ top: 10, bottom: 10, left: 8, right: 14 }}
                     >
-                        <Icon name="chevron-up" size={26} color="rgba(255,255,255,0.5)" />
+                        <Icon name="chevron-up" size={26} color={withAlpha(colors.textPrimary, 0.5)} />
                     </TouchableOpacity>
                 </View>
 
@@ -192,14 +236,13 @@ const styles = StyleSheet.create({
     card: {
         flexDirection:   'row',
         alignItems:      'center',
-        backgroundColor: '#1C1B22',
-        borderRadius:    18,
+        backgroundColor: colors.surfaceElevated,
+        borderRadius:    radii.l,
         paddingVertical: 14,
         paddingHorizontal: 14,
         gap:             12,
         borderWidth:     0.5,
-        borderColor:     'rgba(255,255,255,0.1)',
-        shadowColor:     '#000',
+        borderColor:     colors.hairline,
         shadowOffset:    { width: 0, height: 6 },
         shadowOpacity:   0.45,
         shadowRadius:    14,
@@ -209,8 +252,8 @@ const styles = StyleSheet.create({
     artwork: {
         width:           52,
         height:          52,
-        borderRadius:    10,
-        backgroundColor: 'rgba(255,255,255,0.07)',
+        borderRadius:    radii.s,
+        backgroundColor: withAlpha(colors.textPrimary, 0.07),
     },
     artworkFallback: {
         alignItems:      'center',
@@ -225,7 +268,7 @@ const styles = StyleSheet.create({
         width:           38,
         height:          38,
         borderRadius:    19,
-        backgroundColor: 'rgba(255,255,255,0.12)',
+        backgroundColor: withAlpha(colors.textPrimary, 0.12),
         alignItems:      'center',
         justifyContent:  'center',
     },
@@ -236,14 +279,14 @@ const styles = StyleSheet.create({
     podcast: {
         fontSize:       11,
         fontWeight:     '700',
-        color:          'rgba(255,255,255,0.4)',
+        color:          withAlpha(colors.textPrimary, 0.4),
         textTransform:  'uppercase',
         letterSpacing:  0.5,
     },
     title: {
         fontSize:      15,
         fontWeight:    '600',
-        color:         '#FFFFFF',
+        color:         colors.textPrimary,
         letterSpacing: -0.1,
     },
     progressBg: {
@@ -252,11 +295,11 @@ const styles = StyleSheet.create({
         left:            0,
         right:           0,
         height:          2,
-        backgroundColor: 'rgba(255,255,255,0.06)',
+        backgroundColor: withAlpha(colors.textPrimary, 0.06),
     },
     progressFill: {
         height:          2,
-        backgroundColor: '#4FACFE',
+        backgroundColor: colors.accent,
     },
 });
 

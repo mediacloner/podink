@@ -2,10 +2,13 @@
   "expo": {
     "name": "Podink",
     "slug": "podink",
-    "version": "1.0.3",
+    "version": "2.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "platforms": ["ios", "android"],
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.podink.app",
@@ -19,7 +22,8 @@
       }
     },
     "plugins": [
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-audio"
     ]
   }
 }

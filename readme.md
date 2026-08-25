@@ -17,9 +17,9 @@ A React Native podcast app with on-device AI transcription, word-by-word transcr
 - Skip ±10 seconds, seek slider, time display
 - Dynamic header color extracted from podcast artwork
 
-### On-Device Transcription (Whisper)
+### On-Device Transcription (sherpa-onnx)
 - Fully offline — no audio ever leaves the device
-- 5 model options: Tiny, Base, Base Q8, Small, Small Q8
+- Model options: NVIDIA Parakeet 110M (default — most accurate, punctuation, CC BY 4.0), Whisper Tiny (attention export, smaller), SenseVoice Small (multilingual, experimental)
 - FIFO queue — transcribe multiple episodes sequentially
 - Real-time progress per episode
 
@@ -40,7 +40,7 @@ A React Native podcast app with on-device AI transcription, word-by-word transcr
 | Build system | Expo | ~55.0.9 |
 | Navigation | React Navigation (bottom-tabs + native-stack) | 6.x |
 | Audio playback | react-native-track-player | 4.1.2 |
-| Transcription | whisper.rn | 0.5.5 |
+| Transcription | @siteed/sherpa-onnx.rn | 1.1.2 |
 | Animations | react-native-reanimated | 4.2.1 |
 | Database | expo-sqlite | ~55.0.11 |
 | File system | expo-file-system | ~55.0.12 |
@@ -71,11 +71,11 @@ src/
 │   ├── DownloadedTimeline.js     # "Library" tab — manage downloads & transcription queue
 │   ├── PodcastsScreen.js         # "My Podcasts" tab — subscriptions list
 │   ├── PlayerScreen.js           # Full-screen player modal
-│   └── SettingsScreen.js         # Whisper model management
+│   └── SettingsScreen.js         # Transcription model management
 └── services/
     ├── trackPlayer.js            # react-native-track-player wrapper
     ├── playbackService.js        # Background playback event handler
-    ├── whisperService.js         # Whisper transcription queue & model management
+    ├── whisperService.js         # Transcription queue & model management
     ├── downloadService.js        # Audio & model downloads with progress
     └── colorExtractor.js         # Dominant color extraction from artwork
 ```
@@ -157,7 +157,7 @@ Output: `android/app/build/outputs/apk/release/app-release.apk`
 
 ## Notes
 
-- **Whisper models** are downloaded on-demand from Settings. Android avoids quantized (Q8) models by default due to compatibility issues.
+- **Transcription models** — two NVIDIA Parakeet models (110M default / fast, TDT 0.6B v2 high accuracy) are downloaded on-demand from Settings as tar.bz2 release assets from the sherpa-onnx model zoo and extracted natively.
 - **MiniPlayer** is only mounted after the first play event to avoid Android elevation/visibility bugs.
 - **Transcript auto-scroll** detects manual user scrolling and pauses; it resumes after a short idle timeout.
 - **Spotify links** are not supported — Spotify does not expose RSS feeds.

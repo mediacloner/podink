@@ -3,8 +3,12 @@
  * Library (downloads, deletes, transcript add/remove, episode metadata
  * updates). DownloadedTimeline subscribes and reloads on every event.
  *
- * Whisper-queue changes are already broadcast via whisperService.onQueueChange
- * — this hook covers the gap where downloads happen with no queue activity.
+ * notifyLibraryChange(payload?) — payload is undefined (legacy callers) or
+ * { type, episodeId?, percent? } with type one of:
+ * 'download-complete' | 'episode-delete' | 'transcript-progress' |
+ * 'transcript-complete' | 'transcript-error' | 'transcript-delete' |
+ * 'subscribe' | 'unsubscribe' | 'playback-complete'.
+ * Subscribers must tolerate an undefined payload.
  */
 const _listeners = new Set();
 
@@ -13,8 +17,8 @@ export const onLibraryChange = (fn) => {
     return () => _listeners.delete(fn);
 };
 
-export const notifyLibraryChange = () => {
+export const notifyLibraryChange = (payload) => {
     [..._listeners].forEach(fn => {
-        try { fn(); } catch (_) {}
+        try { fn(payload); } catch (_) {}
     });
 };
