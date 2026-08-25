@@ -17,8 +17,9 @@
     "android": {
       "package": "com.podink.app",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
-        "backgroundColor": "#EDE8E1"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png",
+        "backgroundColor": "#F3F0E9"
       }
     },
     "plugins": [
