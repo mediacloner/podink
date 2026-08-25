@@ -157,7 +157,7 @@ Output: `android/app/build/outputs/apk/release/app-release.apk`
 
 ## Notes
 
-- **Transcription models** are downloaded on-demand from Settings (per-file from Hugging Face, or as a tar.bz2 release asset extracted natively for Parakeet).
+- **Transcription models** — two NVIDIA Parakeet models (110M default / fast, TDT 0.6B v2 high accuracy) are downloaded on-demand from Settings as tar.bz2 release assets from the sherpa-onnx model zoo and extracted natively.
 - **MiniPlayer** is only mounted after the first play event to avoid Android elevation/visibility bugs.
 - **Transcript auto-scroll** detects manual user scrolling and pauses; it resumes after a short idle timeout.
 - **Spotify links** are not supported — Spotify does not expose RSS feeds.

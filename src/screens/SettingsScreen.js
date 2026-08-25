@@ -14,9 +14,8 @@ import { colors, withAlpha, type } from '../theme';
 
 // Learning-focused copy overrides for the model picker.
 const MODEL_COPY = {
-    parakeet_110m_en: 'Most accurate · punctuation · word-by-word highlighting · NVIDIA Parakeet (CC BY 4.0)',
-    whisper_tiny_en: 'Word-by-word highlighting · smaller download',
-    sensevoice_small: 'Powerful multilingual (50+ languages) · larger download · evaluation',
+    parakeet_110m_en: 'Default · fast · punctuation · word-by-word highlighting · NVIDIA Parakeet 110M (CC BY 4.0)',
+    parakeet_tdt_0_6b_v2_en: 'High accuracy · ~5× slower · 460 MB download, ~630 MB installed · NVIDIA Parakeet TDT 0.6B v2 (CC BY 4.0)',
 };
 
 const DEFAULT_MODEL_KEY = SHERPA_MODELS.parakeet_110m_en ? 'parakeet_110m_en' : Object.keys(SHERPA_MODELS)[0];
@@ -24,7 +23,7 @@ const DEFAULT_MODEL_KEY = SHERPA_MODELS.parakeet_110m_en ? 'parakeet_110m_en' : 
 const MODELS = Object.entries(SHERPA_MODELS).map(([id, m]) => ({
     id,
     name: m.label,
-    size: `~${m.totalSizeMB} MB`,
+    size: `~${m.downloadSizeMB || m.totalSizeMB} MB`,
     desc: MODEL_COPY[id] || m.desc,
     recommended: !!m.recommended || id === DEFAULT_MODEL_KEY,
 }));
@@ -141,8 +140,8 @@ const SettingsScreen = () => {
             setIsModelDownloaded(true);
             const model = SHERPA_MODELS[selectedModel];
             showAlert('Done', `${model.label} model is ready.`);
-        } catch {
-            showAlert('Download Failed', 'Check your connection and try again.');
+        } catch (e) {
+            showAlert('Download Failed', e?.code === 'NO_SPACE' ? e.message : 'Check your connection and try again.');
         } finally {
             setIsDownloading(false);
         }

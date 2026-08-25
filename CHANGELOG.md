@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.0] - 2026-08-25
+
+### Changed
+- **Two-tier Parakeet lineup** — the transcription model picker is now *Parakeet 110M* (default, fast) and *Parakeet TDT 0.6B v2* (high accuracy). Both are NVIDIA models (CC BY 4.0) from the sherpa-onnx model zoo, both punctuate and capitalize, both emit per-token timestamps for word-by-word highlighting, and neither can fall into Whisper-style repetition loops.
+- **Whisper Tiny and SenseVoice Small retired.** Stored selections fall back to Parakeet 110M; their on-disk folders (`sherpa-whisper-tiny-attention-int8`, `sherpa-sensevoice-small-int8`) are removed by the startup cleanup. The Whisper-only hallucination scrubber (`dedupeHallucinations` / `dedupeWordLevel`) is gone with them — legitimate repeated words always survive now.
+- Model rows show the **download size** (99 MB / 460 MB); the 0.6B row also states its ~630 MB installed footprint.
+
+### Added
+- **Parakeet TDT 0.6B v2 (int8)** — 6.05 % mean WER on the HF Open ASR leaderboard vs ~7.5 % for the 110M; roughly 5× the encoder compute on CPU. Distributed as a 460 MB tarball (`encoder`/`decoder`/`joiner` + `tokens.txt`), extracted natively like the 110M.
+- **`nemo_transducer` support in the sherpa-onnx.rn patch** — the wrapper previously routed `nemo_transducer` through the single-file NeMo CTC config; it now builds a proper encoder/decoder/joiner `OfflineTransducerModelConfig` and both long-file gates (`shouldChunkOfflineWhisper`, `isOfflineWhisperModel`) include it, so 0.6B episodes take the same 29 s windowed path (full-attention FastConformer would otherwise OOM on a 90-minute file). **Native change — APK rebuild required.**
+- **Free-space guard** before tarball downloads: install needs tarball + extracted tree simultaneously (~1.1 GB for the 0.6B); the download now fails early with the required/available MB instead of dying mid-extract.
+
 ## [2.0.5] - 2026-08-24
 
 ### Fixed

@@ -3,7 +3,7 @@
  *
  * Architecture:
  *   - Single worker processes one item at a time from the queue
- *   - STT engine via @siteed/sherpa-onnx.rn (Parakeet / Whisper / SenseVoice)
+ *   - STT engine via @siteed/sherpa-onnx.rn (NVIDIA Parakeet 110M CTC / 0.6B TDT)
  *   - Streaming: native emits one 'SherpaAsrWindowResult' event per ~29s
  *     window; each window is deduped, saved incrementally, and broadcast as
  *     progress (onProgress / onTranscriptProgress / libraryEvents)
@@ -38,8 +38,9 @@ const DEFAULT_TIMEOUT_MS    = 10 * 60 * 1000; // 10 minutes for short/unknown ep
 const MIN_AUDIO_SIZE        = 4096;             // 4 KB minimum
 const LARGE_FILE_BYTES      = 50 * 1024 * 1024; // 50 MB — assume long episode when duration unknown
 const MIN_FREE_DISK_BYTES   = 200 * 1024 * 1024; // 200 MB free required before transcription
-// Parakeet TDT-CTC 110M: ~3x lower WER than Whisper Tiny at the same download
-// size, native punctuation/casing, CTC word timestamps, no repetition loops.
+// Parakeet TDT-CTC 110M (CTC head) is the fast default; the 0.6B v2 TDT
+// transducer is the opt-in "high accuracy" tier (Settings). Both are loop-free,
+// punctuated, and emit per-token timestamps for word-level sync.
 // Users with an explicit '@whisper_model' choice keep it (checked below).
 const DEFAULT_MODEL_KEY     = 'parakeet_110m_en';
 
@@ -143,7 +144,7 @@ const _initCtx = async (allowDownload = true) => {
             modelKey = saved;
         } else if (saved) {
             // Stored model no longer exists in the lineup (e.g. retired
-            // Moonshine keys) — persist the fallback so Settings shows
+            // Whisper Tiny / SenseVoice / Moonshine keys) — persist the fallback so Settings shows
             // what the engine actually loads.
             await AsyncStorage.setItem('@whisper_model', DEFAULT_MODEL_KEY);
         }
@@ -228,112 +229,12 @@ const textToSegments = (text, durationMs) => {
     return segments;
 };
 
-// ─── Whisper hallucination filter ───────────────────────────────────────────
-
-/** Whisper's autoregressive decoder is the only engine in the lineup that loops
- *  on music/silence; CTC engines (Parakeet nemo_ctc, SenseVoice) emit frame-
- *  aligned tokens and structurally cannot repeat. Scrub only where the failure
- *  mode exists, so legitimate repeated words survive on CTC transcripts. */
-const _needsHallucinationFilter = () => SHERPA_MODELS[_ctxModel]?.modelType === 'whisper';
-
-/** Whisper Tiny gets stuck in repetition loops during music / silence / ad reads,
- *  emitting the same word or phrase dozens of times. sherpa-onnx doesn't expose
- *  Whisper's compression-ratio + temperature-fallback safeguards, so we strip
- *  the loops here. Two heuristics:
- *    (1) Near-zero-duration tokens that match any of the last 12 segments — the
- *        unmistakable "Whisper exhausted" tail (all collapse to one timestamp).
- *    (2) N-gram cycle (N=1..6): if segments[i..i+N-1] equals the last N accepted,
- *        they form a third repeat of a 2-cycle pattern — drop them. */
-const dedupeHallucinations = (segments, wordLevel = false) => {
-    if (segments.length === 0) return segments;
-
-    // Word-level input (whisper token timestamps) is the DEFAULT model's primary
-    // path: per-word segments have ~200-500ms durations, so the old median-based
-    // skip turned this filter into a permanent no-op exactly where the loops
-    // occur. Run a word-safe cleaner instead of skipping.
-    if (wordLevel) return dedupeWordLevel(segments);
-
-    // Sentence/window-level input: the n-gram + sub-80ms heuristics are safe
-    // here (sentence segments don't have the legitimate adjacent-word repeats
-    // that motivated the skip).
-    const result = [];
-    let i = 0;
-    while (i < segments.length) {
-        const seg = segments[i];
-        const dur = seg.end - seg.start;
-
-        if (dur < 80 && result.length > 0) {
-            const recent = result.slice(-12);
-            if (recent.some(r => r.text === seg.text)) { i++; continue; }
-        }
-
-        let dropped = 0;
-        for (let n = 1; n <= 6; n++) {
-            if (result.length < n || i + n > segments.length) break;
-            let match = true;
-            for (let j = 0; j < n; j++) {
-                if (result[result.length - n + j].text !== segments[i + j].text) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match) dropped = n; // prefer longest match
-        }
-        if (dropped > 0) { i += dropped; continue; }
-
-        result.push(seg);
-        i++;
-    }
-    return result;
-};
-
-/** Conservative word-safe loop remover for per-word (token timestamp) segments.
- *  English effectively never repeats one word 4+ times in a row, so >=4-run
- *  collapses kill 'thank thank thank thank...' loops while preserving legitimate
- *  'had had' / 'that that'. Multi-word phrase loops ('thank you ' x N) are caught
- *  by the n-gram detector once a third repetition appears. */
-const dedupeWordLevel = (segments) => {
-    const norm = (t) => (t || '').trim().toLowerCase();
-    const result = [];
-    let i = 0;
-    while (i < segments.length) {
-        const seg = segments[i];
-        const t = norm(seg.text);
-
-        // (a) Collapse a run of >= 4 consecutive identical words to nothing.
-        let runLen = 1;
-        while (i + runLen < segments.length && norm(segments[i + runLen].text) === t) runLen++;
-        if (runLen >= 4) { i += runLen; continue; }
-
-        // (b) Sub-80ms collapsed-tail duplicate of any of the last 12 words.
-        if ((seg.end - seg.start) < 80 && result.length > 0) {
-            const recent = result.slice(-12);
-            if (recent.some(r => norm(r.text) === t)) { i++; continue; }
-        }
-
-        // (c) N-gram phrase cycle (N=2..6): drop the candidate only when the last
-        //     N accepted match the next N AND were themselves a repeat (>= third
-        //     repetition), so a single legitimate adjacent phrase repeat survives.
-        let dropped = 0;
-        for (let n = 2; n <= 6; n++) {
-            if (result.length < 2 * n || i + n > segments.length) break;
-            let matchNext = true, matchPrev = true;
-            for (let j = 0; j < n; j++) {
-                if (norm(result[result.length - n + j].text) !== norm(segments[i + j].text)) { matchNext = false; break; }
-            }
-            if (!matchNext) continue;
-            for (let j = 0; j < n; j++) {
-                if (norm(result[result.length - 2 * n + j].text) !== norm(result[result.length - n + j].text)) { matchPrev = false; break; }
-            }
-            if (matchNext && matchPrev) dropped = n;
-        }
-        if (dropped > 0) { i += dropped; continue; }
-
-        result.push(seg);
-        i++;
-    }
-    return result;
-};
+// ─── No hallucination filter ─────────────────────────────────────────────────
+// Both Parakeet decoders (CTC 110M, TDT 0.6B) advance monotonically through the
+// audio frames and structurally cannot fall into the repetition loops Whisper's
+// autoregressive decoder produced on music/silence. The Whisper-era n-gram
+// scrubber (dedupeHallucinations / dedupeWordLevel) was removed with Whisper
+// Tiny in 2.1.0 — legitimate repeated words ("had had") always survive now.
 
 // ─── Queue state ─────────────────────────────────────────────────────────────
 
@@ -403,10 +304,8 @@ const _persistQueue = () => {
  *  when only window text exists, word-level when token timestamps exist). */
 const _windowToSegments = (ev) => {
     let segs;
-    let wordLevel = false;
     if (ev.segments && ev.segments.length > 0) {
         // Native ev.segments come from per-word token timestamps.
-        wordLevel = true;
         segs = ev.segments.map(s => ({
             start: Math.round(s.startMs),
             end:   Math.round(s.endMs),
@@ -421,8 +320,7 @@ const _windowToSegments = (ev) => {
             text:  s.text,
         }));
     }
-    const cleaned = segs.filter(s => s.text.length > 0);
-    return _needsHallucinationFilter() ? dedupeHallucinations(cleaned, wordLevel) : cleaned;
+    return segs.filter(s => s.text.length > 0);
 };
 
 /** Overall episode progress for one window event, clamped to 1..99 (100 is
@@ -617,7 +515,7 @@ const _process = async (entry) => {
                     text:  s.text,
                 }));
             }).filter(s => s.text.length > 0);
-            segments = _needsHallucinationFilter() ? dedupeHallucinations(subSegs) : subSegs;
+            segments = subSegs;
             await saveTranscriptsIncremental(entry.id, segments);
         } else if (resumeMs === 0) {
             // Text-only fallback smears timestamps across the full duration —
@@ -635,7 +533,7 @@ const _process = async (entry) => {
             if (effDurMs <= 0 && segs.length > 1) {
                 segs = segs.map((s, i) => ({ start: i * 1000, end: i * 1000 + 999, text: s.text }));
             }
-            segments = _needsHallucinationFilter() ? dedupeHallucinations(segs) : segs;
+            segments = segs;
             await saveTranscriptsIncremental(entry.id, segments);
         } else {
             segments = [];

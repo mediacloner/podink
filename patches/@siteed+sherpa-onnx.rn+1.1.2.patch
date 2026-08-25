@@ -44,7 +44,7 @@ index c8532cf..2405030 100644
 +    @ReactMethod fun removeListeners(count: Double) {}
  }
 diff --git a/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt b/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
-index f5700be..572fdf2 100644
+index f5700be..3f1dbb9 100644
 --- a/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
 +++ b/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
 @@ -15,6 +15,7 @@ import net.siteed.sherpaonnx.utils.AssetUtils
@@ -58,7 +58,7 @@ index f5700be..572fdf2 100644
 @@ -59,6 +60,18 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
      private var isRecognizing = false
      private var isStreaming = false
- 
+     
 +    // Generation-scoped cooperative cancel for file recognition. Each submitted
 +    // file job claims a monotonically-increasing generation on the dispatch
 +    // thread BEFORE it is queued on the single-thread executor; cancellation
@@ -94,39 +94,92 @@ index f5700be..572fdf2 100644
                  val sampleRate = if (modelConfig.hasKey("sampleRate")) modelConfig.getInt("sampleRate") else DEFAULT_SAMPLE_RATE
                  val featureDim = if (modelConfig.hasKey("featureDim")) modelConfig.getInt("featureDim") else DEFAULT_FEATURE_DIM
                  val decodingMethod = modelConfig.getString("decodingMethod") ?: DEFAULT_DECODING_METHOD
-@@ -412,6 +427,8 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -412,11 +427,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
                  whisperConfig.decoder = decoderPath
                  whisperConfig.language = "en"
                  whisperConfig.task = "transcribe"
 +                // Per-token timestamps power word-level transcript sync in the player.
 +                whisperConfig.enableTokenTimestamps = true
- 
+                 
                  modelConfig.whisper = whisperConfig
              }
-@@ -798,7 +815,7 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+-            "nemo_ctc", "nemo_transducer" -> {
+-                Log.i(TAG, "Setting up Nemo CTC/Transducer model")
++            "nemo_ctc" -> {
++                Log.i(TAG, "Setting up Nemo CTC model")
+                 val modelFile = modelFiles["model"] ?: "model.onnx"
+                 val modelPath = File(modelDir, modelFile).absolutePath
+ 
+@@ -427,6 +444,28 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+ 
+                 modelConfig.nemo = nemoConfig
+             }
++            "nemo_transducer" -> {
++                // NeMo transducer (Parakeet TDT / RNNT): encoder + decoder + joiner.
++                // Same file layout as an icefall transducer, but sherpa-onnx must
++                // pick the NeMo runtime (stateful LSTM prediction net, TDT duration
++                // skipping) — it does so from modelType == "nemo_transducer", which
++                // initializeOffline copies into modelConfig.modelType.
++                Log.i(TAG, "Setting up Nemo transducer model")
++                val encoderFile = modelFiles["encoder"] ?: "encoder.onnx"
++                val decoderFile = modelFiles["decoder"] ?: "decoder.onnx"
++                val joinerFile = modelFiles["joiner"] ?: "joiner.onnx"
++
++                val transducerConfig = OfflineTransducerModelConfig()
++                transducerConfig.encoder = File(modelDir, encoderFile).absolutePath
++                transducerConfig.decoder = File(modelDir, decoderFile).absolutePath
++                transducerConfig.joiner = File(modelDir, joinerFile).absolutePath
++
++                Log.i(TAG, "Using encoder: ${transducerConfig.encoder}")
++                Log.i(TAG, "Using decoder: ${transducerConfig.decoder}")
++                Log.i(TAG, "Using joiner: ${transducerConfig.joiner}")
++
++                modelConfig.transducer = transducerConfig
++            }
+             "moonshine" -> {
+                 Log.i(TAG, "Setting up Moonshine model")
+                 val preprocessorFile = modelFiles["preprocessor"] ?: "preprocess.onnx"
+@@ -512,9 +551,14 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+                 files.add(modelConfig.whisper.encoder)
+                 files.add(modelConfig.whisper.decoder)
+             }
+-            "nemo_ctc", "nemo_transducer" -> {
++            "nemo_ctc" -> {
+                 files.add(modelConfig.nemo.model)
+             }
++            "nemo_transducer" -> {
++                files.add(modelConfig.transducer.encoder)
++                files.add(modelConfig.transducer.decoder)
++                files.add(modelConfig.transducer.joiner)
++            }
+             "moonshine" -> {
+                 files.add(modelConfig.moonshine.preprocessor)
+                 files.add(modelConfig.moonshine.encoder)
+@@ -798,7 +842,7 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
  
          val modelType = asrModelConfig?.getString("modelType") ?: return false
 -        if (modelType != "whisper") {
-+        if (modelType != "whisper" && modelType != "nemo_ctc") {
++        if (modelType != "whisper" && modelType != "nemo_ctc" && modelType != "nemo_transducer") {
              return false
          }
  
-@@ -809,7 +826,12 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -809,7 +853,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          if (isStreaming) {
              return false
          }
 -        return asrModelConfig?.getString("modelType") == "whisper"
 +        val modelType = asrModelConfig?.getString("modelType") ?: return false
-+        // nemo_ctc (Parakeet): FastConformer's full attention is quadratic in
++        // nemo_ctc / nemo_transducer (Parakeet): FastConformer's full attention is quadratic in
 +        // window length, so long episodes MUST take the same windowed path as
 +        // whisper — the full-buffer path would OOM on a 90-min episode.
 +        return modelType == "whisper" || modelType == "moonshine" ||
-+            modelType == "sense_voice" || modelType == "nemo_ctc"
++            modelType == "sense_voice" || modelType == "nemo_ctc" ||
++            modelType == "nemo_transducer"
      }
  
      private fun recognizeSingleOfflineWindow(sampleRate: Int, samples: FloatArray): WritableMap {
-@@ -856,6 +878,17 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -856,6 +906,17 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
              resultMap.putString("text", result?.text ?: "")
              resultMap.putInt("samplesLength", samples.size)
              resultMap.putInt("sampleRate", sampleRate)
@@ -144,7 +197,7 @@ index f5700be..572fdf2 100644
              return resultMap
          } catch (e: Exception) {
              Log.e(TAG, "Error recognizing from samples (offline): ${e.message}")
-@@ -870,7 +903,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -870,7 +931,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
       * Whisper's offline recognizer only handles windows shorter than 30 seconds.
       * For longer buffers, decode sequential sub-30s windows and join the text.
       */
@@ -157,7 +210,7 @@ index f5700be..572fdf2 100644
          if (!shouldChunkOfflineWhisper(samples.size, sampleRate)) {
              return recognizeSingleOfflineWindow(sampleRate, samples)
          }
-@@ -886,8 +923,16 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -886,8 +951,16 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          val transcriptParts = mutableListOf<String>()
          var offset = 0
          var windowIndex = 0
@@ -174,7 +227,7 @@ index f5700be..572fdf2 100644
              val end = minOf(offset + samplesPerWindow, samples.size)
              val windowSamples = samples.copyOfRange(offset, end)
              windowIndex += 1
-@@ -908,10 +953,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -908,10 +981,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
  
          val fullText = transcriptParts.joinToString(" ").trim()
@@ -188,7 +241,7 @@ index f5700be..572fdf2 100644
          resultMap.putString("text", fullText)
          resultMap.putInt("samplesLength", samples.size)
          resultMap.putInt("sampleRate", sampleRate)
-@@ -922,60 +968,165 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -922,60 +996,165 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
      private fun recognizeOfflineWhisperFileInWindows(
          file: File,
          durationUs: Long,
@@ -383,7 +436,7 @@ index f5700be..572fdf2 100644
          return resultMap
      }
      
-@@ -1121,41 +1272,102 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -1121,41 +1300,102 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
       * Recognize speech from an audio file
       */
      fun recognizeFromFile(filePath: String, promise: Promise) {
@@ -504,10 +557,10 @@ index f5700be..572fdf2 100644
                      }
                  }
  
-@@ -1173,6 +1385,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -1173,6 +1413,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
      }
- 
+     
 +    private fun cancelledResult(): WritableMap {
 +        val resultMap = Arguments.createMap()
 +        resultMap.putBoolean("success", false)
