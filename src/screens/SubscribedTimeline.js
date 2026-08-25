@@ -24,12 +24,14 @@ import { resolveToRssUrl, detectService } from '../api/podcastResolver';
 import { isUrlLike, searchPodcasts } from '../api/podcastSearch';
 import { notifyLibraryChange, onLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
-import { colors, withAlpha, type } from '../theme';
+import { withAlpha, type, useStyles, useTheme } from '../theme';
 
 const PANEL_HEIGHT = 64; // inputRow height when open
 const MAX_EPISODES_PER_PODCAST = 50;
 
 const SubscribedTimeline = ({ navigation }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const [episodes, setEpisodes] = useState([]);
     const [rssUrl, setRssUrl] = useState('');
@@ -418,7 +420,7 @@ const SubscribedTimeline = ({ navigation }) => {
                         accessibilityLabel={rssUrl.trim() && !isUrlLike(rssUrl) ? 'Search podcasts' : 'Add podcast feed'}
                     >
                         {isFetching
-                            ? <ActivityIndicator color={colors.textPrimary} size="small" />
+                            ? <ActivityIndicator color={colors.onAccent} size="small" />
                             : <Text style={styles.addBtnText}>{rssUrl.trim() && !isUrlLike(rssUrl) ? 'Search' : 'Add'}</Text>
                         }
                     </TouchableOpacity>
@@ -505,7 +507,7 @@ const SubscribedTimeline = ({ navigation }) => {
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
 
     inputPanel: {
@@ -548,7 +550,7 @@ const styles = StyleSheet.create({
         minWidth: 64,
     },
     addBtnDisabled: { opacity: 0.4 },
-    addBtnText: { color: colors.textPrimary, fontWeight: '700', fontSize: 14 },
+    addBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 14 },
 
     serviceBadge: {
         backgroundColor: withAlpha(colors.accent, 0.12),

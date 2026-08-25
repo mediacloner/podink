@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.2.0] - 2026-08-25
+
+### Added
+- **Paper theme** — a light theme built from the app icon's sticker: the page is the icon's cream stock (`#F3F0E9`), cards are lighter sheets laid on it, text is warm ink instead of pure black, the accent is fountain-pen blue-black, and the transcript reads like print — unread words are faded, read words are body ink, and the current word gets a highlighter-amber halo instead of the dark theme's blue glow. Status colours are darkened to AA contrast on cream.
+- **Settings › Appearance** — Dark / Paper selector with a miniature of each theme (page, card, text lines, accent dot). The choice is stored under `@theme` and applied instantly, including the navigation headers, tab bar and status-bar icons.
+
+### Changed
+- **Runtime theming** — `src/theme.js` now exports a `ThemeProvider`, `useTheme()` and `useStyles(makeStyles)` instead of a static `colors` object; every component builds its StyleSheet per theme (cached once per palette, so no per-instance cost). New tokens: `onAccent` (text on a solid accent/danger fill) and `backdrop` (sheet/alert dim layer).
+- Player header text and the artwork-derived accent now pick the side that contrasts with the artwork tint on either theme (dark tints on the paper page get cream text; light tints drop the drop-shadow). Dark theme is visually unchanged.
+- Debug log: the recording switch's off-track now uses the same surface as Settings so it stays visible on the light theme.
+
 ## [2.1.0] - 2026-08-25
 
 ### Changed

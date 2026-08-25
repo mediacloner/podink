@@ -5,7 +5,7 @@ import Animated, {
     FadeInDown, FadeOut, useAnimatedStyle, useSharedValue, withSpring,
 } from 'react-native-reanimated';
 import Pill from './Pill';
-import { colors, type } from '../theme';
+import { type, useStyles, useTheme } from '../theme';
 import { onTranscriptProgress, getLastProgress } from '../services/whisperService';
 
 const EpisodeItem = ({
@@ -25,6 +25,8 @@ const EpisodeItem = ({
     showArtwork = false,
     expandOnPress = false,
 }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
     const [expanded, setExpanded] = useState(false);
     // Per-row transcription progress: subscribing here means a 1% tick
     // re-renders this row only, never the whole screen.
@@ -251,7 +253,7 @@ const EpisodeItem = ({
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     card: {
         borderBottomWidth: 0.5,
         borderBottomColor: colors.hairlineFaint,

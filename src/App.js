@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, AppState, LogBox, StyleSheet, ActivityIndicator } from 'react-native';
-import { NavigationContainer, DarkTheme, useIsFocused } from '@react-navigation/native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { View, AppState, LogBox, StyleSheet, ActivityIndicator, StatusBar } from 'react-native';
+import { NavigationContainer, DarkTheme, DefaultTheme, useIsFocused } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,7 +14,7 @@ import { cleanupOldWhisperModels } from './services/downloadService';
 import { restoreLogs } from './services/logService';
 import { getTotalNewEpisodesCount } from './database/queries';
 import { onLibraryChange } from './services/libraryEvents';
-import { colors, type } from './theme';
+import { ThemeProvider, useTheme, useStyles, type } from './theme';
 
 import SubscribedTimeline from './screens/SubscribedTimeline';
 import DownloadedTimeline from './screens/DownloadedTimeline';
@@ -37,22 +37,31 @@ const TAB_ICONS = {
     Settings: 'sliders',
 };
 
-const appTheme = {
-    ...DarkTheme,
-    colors: {
-        ...DarkTheme.colors,
-        primary:    colors.accent,
-        background: colors.bg,
-        card:       colors.bg,
-        border:     colors.hairline,
-        text:       colors.textPrimary,
-    },
+// React Navigation theme derived from the active palette (headers, tab bar
+// background, screen background behind transitions).
+const useNavigationTheme = () => {
+    const { colors, isDark } = useTheme();
+    return useMemo(() => {
+        const base = isDark ? DarkTheme : DefaultTheme;
+        return {
+            ...base,
+            colors: {
+                ...base.colors,
+                primary:    colors.accent,
+                background: colors.bg,
+                card:       colors.bg,
+                border:     colors.hairline,
+                text:       colors.textPrimary,
+            },
+        };
+    }, [colors, isDark]);
 };
 
 // Badge types that can change the new-episodes count; transcript events can't.
 const BADGE_EVENT_TYPES = ['subscribe', 'unsubscribe', 'download-complete', 'episode-delete'];
 
 const PodcastsTabIcon = ({ color, size }) => {
+    const styles = useStyles(makeStyles);
     const [hasNew, setHasNew] = useState(false);
     const isFocused = useIsFocused();
 
@@ -83,6 +92,7 @@ const PodcastsTabIcon = ({ color, size }) => {
 // TabNavigator receives `navigation` from the Stack so we can pass it to
 // MiniPlayer, which uses blur/focus events to hide when Player is on screen.
 const TabNavigator = ({ navigation }) => {
+    const { colors } = useTheme();
     const { bottom } = useSafeAreaInsets();
     const tabBarHeight = 72 + bottom;
 
@@ -138,7 +148,10 @@ const TabNavigator = ({ navigation }) => {
     );
 };
 
-const App = () => {
+const AppRoot = () => {
+    const { colors, isDark } = useTheme();
+    const styles = useStyles(makeStyles);
+    const navTheme = useNavigationTheme();
     // Screens query SQLite on mount; don't render them until migrations finish.
     const [dbReady, setDbReady] = useState(false);
 
@@ -167,9 +180,14 @@ const App = () => {
         return () => sub.remove();
     }, []);
 
+    // Status-bar icons follow the palette; the bar itself is transparent
+    // (edge-to-edge), so only the icon style matters.
+    const statusBar = <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} animated />;
+
     if (!dbReady) {
         return (
             <View style={styles.bootSplash}>
+                {statusBar}
                 <ActivityIndicator size="large" color={colors.accent} />
             </View>
         );
@@ -177,8 +195,9 @@ const App = () => {
 
     return (
         <SafeAreaProvider>
+            {statusBar}
             <AppAlert />
-            <NavigationContainer theme={appTheme}>
+            <NavigationContainer theme={navTheme}>
                 <Stack.Navigator screenOptions={{ headerShown: false }}>
                     <Stack.Screen
                         name="MainTabs"
@@ -209,7 +228,13 @@ const App = () => {
     );
 };
 
-const styles = StyleSheet.create({
+const App = () => (
+    <ThemeProvider>
+        <AppRoot />
+    </ThemeProvider>
+);
+
+const makeStyles = (colors) => StyleSheet.create({
     bootSplash: {
         flex:            1,
         backgroundColor: colors.bg,

@@ -21,7 +21,7 @@ import {
 import { deleteAudioFile } from '../services/downloadService';
 import { onLibraryChange, notifyLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
-import { colors, withAlpha, type } from '../theme';
+import { withAlpha, type, useStyles, useTheme } from '../theme';
 
 // One folder per podcast, like the My Podcasts tab. Tapping the folder
 // expands its downloaded episodes in place; every row keeps the full set
@@ -30,6 +30,8 @@ import { colors, withAlpha, type } from '../theme';
 // FlatList so an expanded folder's episodes stay virtualized — a podcast
 // can hold an unbounded number of downloads.
 const FolderHeader = React.memo(({ group, isExpanded, showSeparator, onToggleExpand }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
     const count = group.episodes.length;
     return (
         <View>
@@ -77,7 +79,10 @@ const FolderHeader = React.memo(({ group, isExpanded, showSeparator, onToggleExp
 const EpisodeRow = React.memo(({
     episode, isActive, isQueued,
     onOpenEpisode, onTranscribe, onCancel, onDelete, onRemoveTranscript,
-}) => (
+}) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
+    return (
     <View style={styles.episodeGroup}>
         <SwipeableRow
             leftAction={episode.has_transcript ? {
@@ -107,9 +112,12 @@ const EpisodeRow = React.memo(({
             />
         </SwipeableRow>
     </View>
-));
+    );
+});
 
 const DownloadedTimeline = ({ navigation }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const [episodes, setEpisodes] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -402,7 +410,7 @@ const DownloadedTimeline = ({ navigation }) => {
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     loadingWrap: { alignItems: 'center', justifyContent: 'center' },
 

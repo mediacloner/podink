@@ -4,7 +4,7 @@ import {
     StyleSheet, Text, TouchableOpacity, View,
 } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
-import { colors, radii, withAlpha } from '../../theme';
+import { radii, withAlpha, useTheme, useStyles } from '../../theme';
 
 // Swipe-down-to-close thresholds: past this drag distance or fling speed
 // the sheet dismisses; anything less springs back into place.
@@ -31,6 +31,7 @@ const springBack = (value) =>
 //    gesture. Long content still dismisses from the header, the footer
 //    button, the backdrop, or the back button.
 const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '85%' }) => {
+    const st = useStyles(makeStyles);
     const translateY = useRef(new Animated.Value(0)).current;
     const scrollOffsetRef = useRef(0);
     const sizesRef = useRef({ content: 0, viewport: 0 });
@@ -113,39 +114,47 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
 
 // Small round icon button for the card header (copy, share…). `active`
 // flips it to a filled state for transient feedback such as "copied".
-export const SheetIconButton = ({ icon, label, onPress, active = false }) => (
-    <TouchableOpacity
-        style={[st.iconBtn, active && st.iconBtnActive]}
-        onPress={onPress}
-        hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-        activeOpacity={0.7}
-        accessibilityRole='button'
-        accessibilityLabel={label}
-    >
-        <Icon name={icon} size={15} color={active ? colors.bg : colors.accent} />
-    </TouchableOpacity>
-);
+export const SheetIconButton = ({ icon, label, onPress, active = false }) => {
+    const { colors } = useTheme();
+    const st = useStyles(makeStyles);
+    return (
+        <TouchableOpacity
+            style={[st.iconBtn, active && st.iconBtnActive]}
+            onPress={onPress}
+            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            activeOpacity={0.7}
+            accessibilityRole='button'
+            accessibilityLabel={label}
+        >
+            <Icon name={icon} size={15} color={active ? colors.bg : colors.accent} />
+        </TouchableOpacity>
+    );
+};
 
 // Hands the English text to an outside assistant through the share sheet.
 // Shown large when the built-in translation failed, small as a link otherwise.
-export const AskAssistantButton = ({ onPress, compact = false }) => (
-    <TouchableOpacity
-        style={compact ? st.askLink : st.askBtn}
-        onPress={onPress}
-        activeOpacity={0.75}
-        accessibilityRole='button'
-        accessibilityLabel='Ask an assistant about this text'
-    >
-        <Icon name='message-circle' size={compact ? 13 : 15} color={colors.accent} />
-        <Text style={compact ? st.askLinkText : st.askBtnText}>
-            {compact ? 'Ask an assistant' : 'Ask ChatGPT, Gemini…'}
-        </Text>
-    </TouchableOpacity>
-);
+export const AskAssistantButton = ({ onPress, compact = false }) => {
+    const { colors } = useTheme();
+    const st = useStyles(makeStyles);
+    return (
+        <TouchableOpacity
+            style={compact ? st.askLink : st.askBtn}
+            onPress={onPress}
+            activeOpacity={0.75}
+            accessibilityRole='button'
+            accessibilityLabel='Ask an assistant about this text'
+        >
+            <Icon name='message-circle' size={compact ? 13 : 15} color={colors.accent} />
+            <Text style={compact ? st.askLinkText : st.askBtnText}>
+                {compact ? 'Ask an assistant' : 'Ask ChatGPT, Gemini…'}
+            </Text>
+        </TouchableOpacity>
+    );
+};
 
-const st = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     root: { flex: 1, justifyContent: 'flex-end' },
-    backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.7)' },
+    backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: colors.backdrop },
     sheet: {
         backgroundColor: colors.surface,
         borderTopLeftRadius: radii.xl,

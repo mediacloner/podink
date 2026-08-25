@@ -10,7 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SHERPA_MODELS, ensureSherpaModel, isSherpaModelDownloaded, deleteSherpaModel } from '../services/downloadService';
 import { resetService } from '../services/whisperService';
 import { showAlert } from '../components/AppAlert';
-import { colors, withAlpha, type } from '../theme';
+import { useTheme, useStyles, withAlpha, type, THEMES, THEME_OPTIONS } from '../theme';
 
 // Learning-focused copy overrides for the model picker.
 const MODEL_COPY = {
@@ -49,6 +49,8 @@ const FONT_SIZE_MIN = 18;
 const FONT_SIZE_MAX = 30;
 
 const SettingsScreen = () => {
+    const { colors, themeName, setTheme } = useTheme();
+    const styles = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const navigation = useNavigation();
     const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_KEY);
@@ -182,6 +184,44 @@ const SettingsScreen = () => {
 
     return (
         <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingBottom: bottom + 58 }]}>
+
+            {/* Section: Appearance */}
+            <Text style={styles.sectionLabel}>APPEARANCE</Text>
+
+            <View style={styles.card}>
+                <View style={styles.themeRow}>
+                    {THEME_OPTIONS.map(({ id, label, icon, hint }) => {
+                        const palette = THEMES[id];
+                        const selected = themeName === id;
+                        return (
+                            <TouchableOpacity
+                                key={id}
+                                style={[styles.themeTile, selected && styles.themeTileOn]}
+                                onPress={() => setTheme(id)}
+                                activeOpacity={0.7}
+                                accessibilityRole="radio"
+                                accessibilityLabel={`${label} theme. ${hint}`}
+                                accessibilityState={{ selected }}
+                            >
+                                {/* Miniature of the theme: page, a card with two text lines, accent dot */}
+                                <View style={[styles.swatch, { backgroundColor: palette.bg, borderColor: palette.hairlineStrong }]}>
+                                    <View style={[styles.swatchDot, { backgroundColor: palette.accent }]} />
+                                    <View style={[styles.swatchCard, { backgroundColor: palette.surface, borderColor: palette.hairline }]}>
+                                        <Text style={[styles.swatchAa, { color: palette.textPrimary }]}>Aa</Text>
+                                        <View style={[styles.swatchLine, { backgroundColor: palette.transcriptSpoken }]} />
+                                        <View style={[styles.swatchLine, styles.swatchLineShort, { backgroundColor: palette.transcriptFuture }]} />
+                                    </View>
+                                </View>
+                                <View style={styles.themeLabelRow}>
+                                    <Icon name={icon} size={13} color={selected ? colors.accent : colors.textMuted} />
+                                    <Text style={[styles.themeLabel, selected && styles.themeLabelOn]}>{label}</Text>
+                                </View>
+                                <Text style={styles.themeHint}>{hint}</Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </View>
+            </View>
 
             {/* Section: Learning */}
             <Text style={styles.sectionLabel}>LEARNING</Text>
@@ -386,7 +426,7 @@ const SettingsScreen = () => {
                         accessibilityRole="button"
                         accessibilityLabel="Download model"
                     >
-                        <Icon name="arrow-down-circle" size={16} color={colors.textPrimary} />
+                        <Icon name="arrow-down-circle" size={16} color={colors.onAccent} />
                         <Text style={styles.downloadBtnText}>Download model</Text>
                     </TouchableOpacity>
                 )
@@ -429,7 +469,7 @@ const SettingsScreen = () => {
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     content: { paddingTop: 16 },
 
@@ -474,6 +514,44 @@ const styles = StyleSheet.create({
         borderBottomWidth: 0.5,
         borderBottomColor: colors.hairlineFaint,
     },
+
+    /* Theme tiles */
+    themeRow: { flexDirection: 'row', gap: 10, padding: 12 },
+    themeTile: {
+        flex: 1,
+        borderRadius: 12,
+        padding: 8,
+        gap: 6,
+        borderWidth: 1,
+        borderColor: 'transparent',
+    },
+    themeTileOn: {
+        borderColor: colors.accent,
+        backgroundColor: withAlpha(colors.accent, 0.06),
+    },
+    swatch: {
+        height: 88,
+        borderRadius: 10,
+        borderWidth: 0.5,
+        padding: 10,
+        justifyContent: 'flex-end',
+        overflow: 'hidden',
+    },
+    swatchCard: {
+        borderRadius: 8,
+        borderWidth: 0.5,
+        paddingHorizontal: 9,
+        paddingVertical: 7,
+        gap: 5,
+    },
+    swatchAa: { fontSize: 14, fontWeight: '700', letterSpacing: -0.3, lineHeight: 16 },
+    swatchLine: { height: 3, borderRadius: 1.5, width: '78%' },
+    swatchLineShort: { width: '52%' },
+    swatchDot: { position: 'absolute', top: 10, right: 10, width: 10, height: 10, borderRadius: 5 },
+    themeLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+    themeLabel: { ...type.title, color: colors.textSecondary },
+    themeLabelOn: { color: colors.textPrimary },
+    themeHint: { fontSize: 12, color: colors.textMuted, lineHeight: 17 },
 
     /* Learning rows */
     settingRow: {
@@ -627,7 +705,7 @@ const styles = StyleSheet.create({
         paddingVertical: 15,
         borderRadius: 14,
     },
-    downloadBtnText: { color: colors.textPrimary, fontSize: 15, fontWeight: '700' },
+    downloadBtnText: { color: colors.onAccent, fontSize: 15, fontWeight: '700' },
 
     deleteBtn: {
         flexDirection: 'row',

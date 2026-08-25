@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors } from '../../theme';
+import { useTheme, useStyles } from '../../theme';
 import { fetchTranslation, langLabel, translateErrorMessage } from './translate';
 import { askAssistantAboutText, copyText, shareText } from './share';
 import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
@@ -11,6 +11,8 @@ import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
 const _cache = new Map();
 
 const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) => {
+    const { colors } = useTheme();
+    const ms = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const [translationParts, setTranslationParts] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -162,7 +164,7 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
     );
 };
 
-const ms = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     langRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 },
     lang: { color: colors.accent, fontWeight: '700', fontSize: 14 },
     arrow: { color: colors.textFaint, fontSize: 14 },

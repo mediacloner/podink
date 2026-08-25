@@ -19,13 +19,15 @@ import {
 } from '../services/whisperService';
 import { getEpisodeById, getTranscriptsForEpisode } from '../database/queries';
 import { extractColor } from '../services/colorExtractor';
-import { colors, radii, withAlpha } from '../theme';
+import { useTheme, useStyles, radii, withAlpha } from '../theme';
 
 // Minimum gap between transcript re-fetches while live transcription streams
 // 'transcript-progress' events — keeps chunk rebuilds >= 1.5s apart.
 const LIVE_REFETCH_MIN_MS = 1500;
 
 const PlayerScreen = ({ route, navigation }) => {
+    const { colors, isDark } = useTheme();
+    const styles = useStyles(makeStyles);
     useKeepAwake();
     const episodeParam = route.params.episode;
     const epId = episodeParam.id;
@@ -315,9 +317,19 @@ const PlayerScreen = ({ route, navigation }) => {
 
     const hasTranscript = !!ep?.has_transcript || segments.length > 0;
     const canTranscribe = !!ep?.local_audio_path;
-    // Artwork-derived accent only when bright enough to read on the dark player.
-    const accent = colorInfo && !colorInfo.isDark ? colorInfo.bgColor : colors.accent;
+    // Artwork-derived accent only when it contrasts with the page: bright tints
+    // on the dark player, dark tints on the paper one.
+    const accent = colorInfo && colorInfo.isDark !== isDark ? colorInfo.bgColor : colors.accent;
     const headerBg = colorInfo?.bgColor ?? colors.surfaceElevated;
+    // Header text must read against the artwork tint, not the theme. The dark
+    // theme keeps its always-white text; paper flips to cream on dark tints and
+    // drops the drop-shadow on light ones.
+    const headerIsDark = colorInfo ? colorInfo.isDark : isDark;
+    const headerFg = !isDark && headerIsDark ? colors.onAccent : colors.textPrimary;
+    const headerTextStyle = [
+        { color: headerFg },
+        !isDark && !headerIsDark && styles.noTextShadow,
+    ];
 
     return (
         <View style={styles.root}>
@@ -333,15 +345,15 @@ const PlayerScreen = ({ route, navigation }) => {
                     <Image source={{ uri: ep.image_url }} style={styles.artwork} />
                 ) : (
                     <View style={[styles.artwork, styles.artworkPlaceholder]}>
-                        <Icon name='headphones' size={20} color={withAlpha(colors.textPrimary, 0.25)} />
+                        <Icon name='headphones' size={20} color={withAlpha(headerFg, 0.25)} />
                     </View>
                 )}
 
                 <View style={styles.meta}>
-                    <Text style={styles.podcastName} numberOfLines={1}>
+                    <Text style={[styles.podcastName, headerTextStyle, { color: withAlpha(headerFg, 0.6) }]} numberOfLines={1}>
                         {ep.podcast_title}
                     </Text>
-                    <Text style={styles.episodeTitle} numberOfLines={2}>
+                    <Text style={[styles.episodeTitle, headerTextStyle]} numberOfLines={2}>
                         {ep.title}
                     </Text>
                 </View>
@@ -405,7 +417,7 @@ const PlayerScreen = ({ route, navigation }) => {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     root: {
         flex: 1,
         backgroundColor: colors.bgPlayer,
@@ -459,6 +471,7 @@ const styles = StyleSheet.create({
         textShadowOffset: { width: 0, height: 1 },
         textShadowRadius: 3,
     },
+    noTextShadow: { textShadowColor: 'transparent' },
 
     // ── Transcript ────────────────────────────────────────────
     transcriptArea: {

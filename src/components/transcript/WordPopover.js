@@ -4,7 +4,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
 import { createAudioPlayer } from 'expo-audio';
-import { colors, radii, withAlpha } from '../../theme';
+import { radii, withAlpha, useTheme, useStyles } from '../../theme';
 import {
     addVocabWord, getVocabWords, isVocabWordSaved,
     recordLookup, removeVocabWord,
@@ -57,6 +57,8 @@ export const normalizeWord = (raw) =>
 // Bottom-sheet word lookup: translation + dictionary senses, save-to-vocabulary
 // and replay-from-here. `data` is null (hidden) or {word, startMs, contextText}.
 const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onReplay }) => {
+    const { colors } = useTheme();
+    const st = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const [lookup, setLookup] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -394,7 +396,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     );
 };
 
-const st = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     wordRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 4 },
     word: { flex: 1, color: colors.textPrimary, fontSize: 30, fontWeight: '700', letterSpacing: -0.4 },
     phonetic: { color: colors.textMuted, fontSize: 14, marginBottom: 6 },

@@ -22,7 +22,7 @@ import {
     enqueueTranscription, dequeueTranscription, onQueueChange, getQueueIds,
 } from '../services/whisperService';
 import { notifyLibraryChange, onLibraryChange } from '../services/libraryEvents';
-import { colors, withAlpha, type } from '../theme';
+import { withAlpha, type, useStyles, useTheme } from '../theme';
 
 const MAX_NEW = 5;
 const EMPTY_EPISODES = [];
@@ -41,7 +41,10 @@ const PodcastRow = React.memo(({
     onDownload,
     onTranscribe,
     onCancel,
-}) => (
+}) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
+    return (
     <View>
         <SwipeableRow
             rightAction={{
@@ -113,9 +116,12 @@ const PodcastRow = React.memo(({
             </ReAnimated.View>
         )}
     </View>
-));
+    );
+});
 
 const PodcastsScreen = ({ navigation }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const [podcasts, setPodcasts] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -384,7 +390,7 @@ const PodcastsScreen = ({ navigation }) => {
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     loadingWrap: { alignItems: 'center', justifyContent: 'center' },
 
@@ -431,7 +437,7 @@ const styles = StyleSheet.create({
     badgeText: {
         fontSize: 12,
         fontWeight: '700',
-        color: colors.textPrimary,
+        color: colors.onAccent,
     },
 
     episodeGroup: {

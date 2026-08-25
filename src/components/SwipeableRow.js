@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { Animated, PanResponder, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
-import { colors } from '../theme';
+import { useStyles, useTheme } from '../theme';
 
 const ACTION_WIDTH = 80;
 const THRESHOLD = 50;
@@ -30,6 +30,8 @@ export const closeOpenRow = () => {
  *   'close'     — row springs shut, then onPress fires (use when onPress shows a confirmation)
  */
 const SwipeableRow = ({ children, leftAction, rightAction }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
     const translateX = useRef(new Animated.Value(0)).current;
     const openRef = useRef(null); // null | 'left' | 'right' — which action is revealed
 
@@ -133,7 +135,7 @@ const SwipeableRow = ({ children, leftAction, rightAction }) => {
             accessibilityRole="button"
             accessibilityLabel={action.accessibilityLabel || action.label || 'Row action'}
         >
-            <Icon name={action.icon} size={20} color={colors.textPrimary} />
+            <Icon name={action.icon} size={20} color={colors.onAccent} />
             {!!action.label && <Text style={styles.actionLabel}>{action.label}</Text>}
         </TouchableOpacity>
     );
@@ -149,7 +151,7 @@ const SwipeableRow = ({ children, leftAction, rightAction }) => {
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: { position: 'relative', overflow: 'hidden' },
     action: {
         position: 'absolute',
@@ -165,7 +167,7 @@ const styles = StyleSheet.create({
     actionLabel: {
         fontSize: 10,
         fontWeight: '700',
-        color: colors.textPrimary,
+        color: colors.onAccent,
         letterSpacing: 0.2,
     },
 });

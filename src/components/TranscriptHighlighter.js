@@ -25,7 +25,7 @@ import TrackPlayer, { State } from 'react-native-track-player';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
-import { colors, radii, withAlpha } from '../theme';
+import { useTheme, useStyles, radii, withAlpha } from '../theme';
 import PositionFeeder from './transcript/PositionFeeder';
 import TranslationModal from './transcript/TranslationModal';
 import WordPopover from './transcript/WordPopover';
@@ -46,7 +46,8 @@ const VIGNETTE_TOP_H = 110;
 const VIGNETTE_BOT_H = 130;
 
 const LIST_HEADER = <View style={{ height: TOP_PAD }} />;
-const CHUNK_RIPPLE = { color: withAlpha(colors.accent, 0.12), foreground: true };
+// Per-theme; components read it via useStyles(rippleFor).
+const rippleFor = (colors) => ({ color: withAlpha(colors.accent, 0.12), foreground: true });
 
 // Animated.FlatList silently overrides CellRendererComponent with its own
 // itemLayoutAnimation wrapper (props spread first, its cell renderer last) —
@@ -94,7 +95,7 @@ const keyExtractor = (item) => item.id;
 
 const TranscriptHighlighter = forwardRef(({
     segments,
-    fadeTo = colors.bgPlayer,
+    fadeTo: fadeToProp,
     loading = false,
     hasTranscript = false,
     canTranscribe = false,
@@ -106,6 +107,10 @@ const TranscriptHighlighter = forwardRef(({
     episodeId,
     episodeTitle,
 }, ref) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
+    const CHUNK_RIPPLE = useStyles(rippleFor);
+    const fadeTo = fadeToProp ?? colors.bgPlayer;
     const isFocused = useIsFocused();
     const { width: windowWidth } = useWindowDimensions();
     const contentWidth = windowWidth - 48; // paddingHorizontal: 24 * 2
@@ -985,7 +990,9 @@ const TranscriptHighlighter = forwardRef(({
 // RN 0.83 native linear gradient (new-arch). Transparent stop uses the bg's own
 // RGB so the fade never passes through gray. `color` must be a #RRGGBB hex.
 
-const FadeEdge = ({ height, position, color }) => (
+const FadeEdge = ({ height, position, color }) => {
+    const styles = useStyles(makeStyles);
+    return (
     <View
         pointerEvents='none'
         style={[
@@ -996,11 +1003,15 @@ const FadeEdge = ({ height, position, color }) => (
             },
         ]}
     />
-);
+    );
+};
 
 // ─── Keypoint ─────────────────────────────────────────────────────────────────
 
-const KeypointRow = React.memo(({ item, onPress }) => (
+const KeypointRow = React.memo(({ item, onPress }) => {
+    const styles = useStyles(makeStyles);
+    const CHUNK_RIPPLE = useStyles(rippleFor);
+    return (
     <Pressable
         onPress={() => onPress(item.timeMs)}
         android_ripple={CHUNK_RIPPLE}
@@ -1010,7 +1021,8 @@ const KeypointRow = React.memo(({ item, onPress }) => (
         <Text style={styles.keypointLabel}>{item.label}</Text>
         <View style={styles.keypointLine} />
     </Pressable>
-));
+    );
+});
 
 // ─── Chunk ────────────────────────────────────────────────────────────────────
 //
@@ -1029,6 +1041,9 @@ const Chunk = React.memo(({
     activeChunkSV, activeIndexSV, isPlayingSV,
     onPress, onLongPress, onWordPress, onCellLayout,
 }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
+    const CHUNK_RIPPLE = useStyles(rippleFor);
     const chunkIndex = item.chunkIndex;
     const text = useMemo(() => item.words.map(w => w.text).join('').trim(), [item]);
 
@@ -1114,6 +1129,7 @@ const Word = React.memo(({
     word, chunkIndex, fontSize, lineHeight,
     activeIndexSV, isPlayingSV, onWordPress, onWordLongPress,
 }) => {
+    const { colors } = useTheme();
     const colorState = useSharedValue(0); // 0 future · 1 spoken · 2 active
 
     useAnimatedReaction(
@@ -1138,7 +1154,7 @@ const Word = React.memo(({
         textShadowColor: interpolateColor(colorState.value, [1, 2], ['transparent', colors.transcriptGlow]),
         textShadowOffset: { width: 0, height: 0 },
         textShadowRadius: interpolate(colorState.value, [1, 2], [0, 14], 'clamp'),
-    }));
+    }), [colors]);
 
     const handlePress = useCallback(() => onWordPress(word, chunkIndex), [onWordPress, word, chunkIndex]);
 
@@ -1162,7 +1178,7 @@ const Word = React.memo(({
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     root: { flex: 1, backgroundColor: 'transparent' },
     container: { flex: 1, backgroundColor: 'transparent' },
     contentContainer: { paddingHorizontal: 24 },

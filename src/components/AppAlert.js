@@ -1,5 +1,5 @@
 /**
- * AppAlert — custom in-app alert that matches the app's dark design.
+ * AppAlert — custom in-app alert that follows the app theme.
  *
  * Usage (callable from anywhere, no setup required in the caller):
  *
@@ -32,7 +32,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { colors, radii } from '../theme';
+import { radii, useStyles } from '../theme';
 
 // ─── Imperative bridge ────────────────────────────────────────────────────────
 // The component registers _show when it mounts and clears it on unmount.
@@ -51,6 +51,7 @@ const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_WIDTH = Math.min(320, SCREEN_W - 56);
 
 const AppAlert = () => {
+    const s = useStyles(makeStyles);
     const [visible, setVisible] = useState(false);
     const [title, setTitle] = useState('');
     const [message, setMessage] = useState('');
@@ -202,10 +203,10 @@ export default AppAlert;
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const s = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     backdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.65)',
+        backgroundColor: colors.backdrop,
     },
     centerer: {
         ...StyleSheet.absoluteFillObject,

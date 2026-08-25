@@ -10,7 +10,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 import { getEpisodeById } from '../database/queries';
 import { persistProgress } from '../services/playbackService';
 import { notifyUserStop } from '../services/trackPlayer';
-import { colors, radii, withAlpha } from '../theme';
+import { radii, withAlpha, useStyles, useTheme } from '../theme';
 
 // ─── MiniPlayer ───────────────────────────────────────────────────────────────
 // Props:
@@ -19,6 +19,8 @@ import { colors, radii, withAlpha } from '../theme';
 //                     used to detect when Player is pushed on top so we can hide
 
 const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
+    const { colors }             = useTheme();
+    const styles                 = useStyles(makeStyles);
     const track                  = useActiveTrack();
     const { state }              = usePlaybackState();
     const { position, duration } = useProgress(500);
@@ -225,7 +227,7 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     wrapper: {
         position:  'absolute',
         left:      8,
