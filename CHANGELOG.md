@@ -3,7 +3,7 @@
 ## [2.2.0] - 2026-08-25
 
 ### Added
-- **Paper theme** — a light theme built from the app icon's sticker: the page is the icon's cream stock (`#F3F0E9`), cards are lighter sheets laid on it, text is warm ink instead of pure black, the accent is fountain-pen blue-black, and the transcript reads like print — unread words are faded, read words are body ink, and the current word gets a highlighter-amber halo instead of the dark theme's blue glow. Status colours are darkened to AA contrast on cream.
+- **Paper theme** — a light theme built from the app icon's sticker: the page is the icon's cream stock (`#F3F0E9`), cards are lighter sheets laid on it, text is warm ink instead of pure black, the accent is fountain-pen blue-black, and the transcript reads like print — unread words are faded, read words are body ink, and the current word sits on a highlighter-yellow band instead of the dark theme's blue glow (a blurred glow on a light page looked like a smudge). Status colours are darkened to AA contrast on cream.
 - **Settings › Appearance** — Dark / Paper selector with a miniature of each theme (page, card, text lines, accent dot). The choice is stored under `@theme` and applied instantly, including the navigation headers, tab bar and status-bar icons.
 
 ### Changed

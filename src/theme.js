@@ -47,17 +47,21 @@ const dark = {
     // Dim layer behind sheets and alerts
     backdrop: 'rgba(0,0,0,0.7)',
 
-    // Transcript reading palette (warm, low-glare)
+    // Transcript reading palette (warm, low-glare). The current word glows
+    // (text shadow); the highlight band is off (alpha 0).
     transcriptFuture: '#3A3530',
     transcriptSpoken: '#A09078',
     transcriptActive: '#FFF6E8',
     transcriptGlow: 'rgba(79,172,254,0.75)',
+    transcriptGlowRadius: 14,
+    transcriptHighlight: '#4FACFE',
+    transcriptHighlightAlpha: 0,
 };
 
 // "Paper": the app icon's sticker — cream stock (#F3F0E9) and ink — turned into
 // a reading surface. Cards are lighter sheets laid on the page, text is warm
 // ink rather than pure black, the accent is fountain-pen blue-black, and the
-// active transcript word gets a highlighter-amber halo instead of a blue glow.
+// active transcript word gets a highlighter-pen mark instead of a blue glow.
 const paper = {
     // Base surfaces
     bg: '#F3F0E9',
@@ -89,11 +93,15 @@ const paper = {
     backdrop: 'rgba(27,24,20,0.45)',
 
     // Transcript: unread text is faded print, read text is body ink, the
-    // current word is the deepest ink with a highlighter-pen halo.
+    // current word is the deepest ink on a highlighter-yellow band. No glow —
+    // a blurred shadow on a light page reads as a smudge.
     transcriptFuture: '#ABA294',
     transcriptSpoken: '#3F3931',
     transcriptActive: '#0F0D0B',
-    transcriptGlow: 'rgba(222,168,52,0.55)',
+    transcriptGlow: 'transparent',
+    transcriptGlowRadius: 0,
+    transcriptHighlight: '#FFD24D',
+    transcriptHighlightAlpha: 0.55,
 };
 
 export const THEMES = { dark, paper };

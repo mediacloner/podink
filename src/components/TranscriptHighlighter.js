@@ -1149,12 +1149,36 @@ const Word = React.memo(({
         },
     );
 
-    const animStyle = useAnimatedStyle(() => ({
-        color: interpolateColor(colorState.value, [0, 1, 2], [colors.transcriptFuture, colors.transcriptSpoken, colors.transcriptActive]),
-        textShadowColor: interpolateColor(colorState.value, [1, 2], ['transparent', colors.transcriptGlow]),
-        textShadowOffset: { width: 0, height: 0 },
-        textShadowRadius: interpolate(colorState.value, [1, 2], [0, 14], 'clamp'),
-    }), [colors]);
+    // Two ways to mark the current word, chosen by the palette: a soft glow
+    // (text shadow — dark theme) or a highlighter band behind the glyphs
+    // (background — paper theme, where a blurred shadow looks like a smudge).
+    const {
+        transcriptFuture, transcriptSpoken, transcriptActive,
+        transcriptGlow, transcriptGlowRadius, transcriptHighlight, transcriptHighlightAlpha,
+    } = colors;
+    const hasHighlight = transcriptHighlightAlpha > 0;
+    const highlightOn  = withAlpha(transcriptHighlight, transcriptHighlightAlpha);
+    const highlightOff = withAlpha(transcriptHighlight, 0);
+    const animStyle = useAnimatedStyle(() => {
+        const style = {
+            color: interpolateColor(colorState.value, [0, 1, 2], [transcriptFuture, transcriptSpoken, transcriptActive]),
+            textShadowColor: interpolateColor(colorState.value, [1, 2], ['transparent', transcriptGlow]),
+            textShadowOffset: { width: 0, height: 0 },
+            textShadowRadius: interpolate(colorState.value, [1, 2], [0, transcriptGlowRadius], 'clamp'),
+        };
+        if (hasHighlight) {
+            // Same hue at alpha 0 → alpha on, so the fade never passes through black.
+            style.backgroundColor = interpolateColor(colorState.value, [1, 2], [highlightOff, highlightOn]);
+        }
+        return style;
+    }, [colors]);
+
+    // Tokens carry their own spacing (" word"). Keep the whitespace outside the
+    // animated span so the highlight band hugs the glyphs, not the gap before them.
+    const [lead, core, trail] = useMemo(() => {
+        const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(word.text);
+        return m ? [m[1], m[2], m[3]] : ['', word.text, ''];
+    }, [word.text]);
 
     const handlePress = useCallback(() => onWordPress(word, chunkIndex), [onWordPress, word, chunkIndex]);
 
@@ -1169,9 +1193,11 @@ const Word = React.memo(({
             onPress={handlePress}
             onLongPress={onWordLongPress}
         >
+            {lead}
             <Animated.Text style={[{ fontSize, lineHeight, fontWeight: '500' }, animStyle]}>
-                {word.text}
+                {core}
             </Animated.Text>
+            {trail}
         </Text>
     );
 });
