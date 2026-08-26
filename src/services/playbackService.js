@@ -1,5 +1,5 @@
 import TrackPlayer, { Event, State } from 'react-native-track-player';
-import { savePlayPosition, markEpisodePlayed } from '../database/queries';
+import { savePlayPosition, markEpisodePlayed, setEpisodeDurationIfMissing } from '../database/queries';
 import { notifyLibraryChange } from './libraryEvents';
 
 // Centralized play-position persistence (contract 9): the 1s
@@ -8,6 +8,9 @@ import { notifyLibraryChange } from './libraryEvents';
 // immediately so the position survives the session ending.
 const SAVE_THROTTLE_MS = 5000;
 let lastSaveTs = 0;
+// Track ids whose duration has been backfilled this session: the UPDATE is
+// a no-op once a length is stored, so skip the round-trip on later ticks.
+const durationBackfilled = new Set();
 
 /** "Listened" once inside the final stretch of the episode: 5% of the
  *  duration, clamped to [10s, 2min] for normal episodes and to 25% of the
@@ -28,6 +31,13 @@ export const isPlaybackComplete = (position, duration) => {
 export const persistProgress = async (trackId, position, duration, { ended = false } = {}) => {
     if (!trackId) return;
     try {
+        // The player knows the real length as soon as the track loads; store
+        // it for feeds that shipped no <itunes:duration> so their rows can
+        // show a total time and "x left".
+        if (duration > 0 && !durationBackfilled.has(trackId)) {
+            durationBackfilled.add(trackId);
+            await setEpisodeDurationIfMissing(trackId, Math.round(duration));
+        }
         if (ended || isPlaybackComplete(position, duration)) {
             await savePlayPosition(trackId, 0);
             const justCompleted = await markEpisodePlayed(trackId);

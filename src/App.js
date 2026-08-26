@@ -4,6 +4,7 @@ import { NavigationContainer, DarkTheme, DefaultTheme, useIsFocused } from '@rea
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Feather as Icon } from '@expo/vector-icons';
 
 import { initDB } from './database/db';
@@ -194,6 +195,7 @@ const AppRoot = () => {
     }
 
     return (
+        <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>
             {statusBar}
             <AppAlert />
@@ -225,6 +227,7 @@ const AppRoot = () => {
                 </Stack.Navigator>
             </NavigationContainer>
         </SafeAreaProvider>
+        </GestureHandlerRootView>
     );
 };
 

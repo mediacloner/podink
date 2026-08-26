@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.2.1] - 2026-08-26
+
+### Added
+- **Episode length in every list** — rows in My Podcasts, Feed and Library show the total time next to the date ("1h 23m", "45 min"). Feeds that ship no `<itunes:duration>` get the length stored the first time the episode plays, so it appears from then on.
+- **Started episodes are marked** — an episode you have begun but not finished shows a blue "23 min left" tag (or "In progress" when the length is unknown) and a thin progress bar under the title. Finished episodes keep the green "Played" check.
+
+### Changed
+- **Translation and word cards open and close like a sheet** — the dim backdrop fades in place while the card slides up from the bottom (it used to slide up together with the card, reading like a scroll). Closing plays the reverse; the card keeps its content while it leaves.
+- **Swipe down to close, from anywhere on the card** — the drag is now a native gesture (`react-native-gesture-handler`) running alongside the body scroll: with the body at the top, a downward drag moves the card and past ~120 px or a quick fling dismisses it; a long body still scrolls normally, and swiping up never fights the scroll. Replaces the JS `PanResponder` that Android's `ScrollView` beat to the gesture whenever the text overflowed. **Native change — APK rebuild required.**
+- Card buttons (Close / Save / Replay) sit clear of the system navigation bar. The modal is edge-to-edge, so the previous margin equalled the bar height exactly and the buttons rested flush on it; the footer now adds 20 px above the inset.
+
 ## [2.2.0] - 2026-08-25
 
 ### Added

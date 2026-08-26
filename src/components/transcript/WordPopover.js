@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Speech from 'expo-speech';
 import { createAudioPlayer } from 'expo-audio';
 import { radii, withAlpha, useTheme, useStyles } from '../../theme';
@@ -59,7 +58,6 @@ export const normalizeWord = (raw) =>
 const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onReplay }) => {
     const { colors } = useTheme();
     const st = useStyles(makeStyles);
-    const { bottom } = useSafeAreaInsets();
     const [lookup, setLookup] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -312,7 +310,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     );
 
     const footer = (
-        <View style={[st.actions, { paddingBottom: Math.max(bottom, 16) }]}>
+        <View style={st.actions}>
             <TouchableOpacity
                 style={[st.actionBtn, saved ? st.actionBtnSaved : st.actionBtnPrimary]}
                 onPress={toggleSave}

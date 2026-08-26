@@ -194,6 +194,17 @@ export const savePlayPosition = async (id, positionSeconds) => {
   );
 };
 
+/** Feeds without <itunes:duration> leave duration at 0; once the player
+ *  knows the real length, keep it so lists can show a total time. Only
+ *  fills the gap — a feed-supplied duration is never overwritten. */
+export const setEpisodeDurationIfMissing = async (id, seconds) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `UPDATE Episodes SET duration = ? WHERE id = ? AND (duration IS NULL OR duration <= 0)`,
+    [seconds, id]
+  );
+};
+
 /** Mark an episode as fully listened. Returns true only on the 0→1
  *  transition so callers can skip redundant change notifications. */
 export const markEpisodePlayed = async (id) => {

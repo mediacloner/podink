@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, useStyles } from '../../theme';
 import { fetchTranslation, langLabel, translateErrorMessage } from './translate';
 import { askAssistantAboutText, copyText, shareText } from './share';
@@ -13,7 +12,6 @@ const _cache = new Map();
 const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) => {
     const { colors } = useTheme();
     const ms = useStyles(makeStyles);
-    const { bottom } = useSafeAreaInsets();
     const [translationParts, setTranslationParts] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -119,7 +117,7 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
     );
 
     const footer = (
-        <TouchableOpacity style={[ms.closeBtn, { marginBottom: Math.max(bottom, 16) }]} onPress={onClose}>
+        <TouchableOpacity style={ms.closeBtn} onPress={onClose}>
             <Text style={ms.closeBtnText}>Close</Text>
         </TouchableOpacity>
     );

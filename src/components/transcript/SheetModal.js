@@ -1,113 +1,182 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-    Animated, Modal, PanResponder, Pressable, ScrollView,
-    StyleSheet, Text, TouchableOpacity, View,
-} from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, {
+    Easing, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather as Icon } from '@expo/vector-icons';
 import { radii, withAlpha, useTheme, useStyles } from '../../theme';
 
 // Swipe-down-to-close thresholds: past this drag distance or fling speed
-// the sheet dismisses; anything less springs back into place.
+// (px/s) the sheet dismisses; anything less springs back into place.
 const CLOSE_DISTANCE = 120;
-const CLOSE_VELOCITY = 0.8;
+const CLOSE_VELOCITY = 800;
 
-const springBack = (value) =>
-    Animated.spring(value, { toValue: 0, useNativeDriver: true, bounciness: 4 }).start();
+// Where the card parks until it has been measured — below any screen edge.
+const OFFSCREEN = Dimensions.get('screen').height;
+const ENTER = { duration: 280, easing: Easing.out(Easing.cubic) };
+const EXIT = { duration: 200, easing: Easing.in(Easing.quad) };
+const FADE = { duration: 200 };
+const SPRING = { damping: 20, stiffness: 220, mass: 0.8 };
+
+// The Modal window is edge-to-edge, so the footer's own padding has to clear
+// the system navigation bar (safe-area inset) AND leave breathing room above
+// it — an inset-only margin puts the buttons flush against the bar.
+const FOOTER_GAP = 20;
 
 // Bottom sheet shared by the translation and word-lookup cards.
 //
-// Swipe-down works anywhere on the card, not just outside it. Two things
-// make that hold:
-//  - The drag lives on a plain Animated.View. It used to sit on a Pressable,
-//    but Pressable spreads its own responder handlers AFTER any props, so
-//    the PanResponder's move/release handlers were silently replaced and the
-//    drag never moved or closed anything. The backdrop is now a sibling
-//    behind the card, so taps on the card can't reach it and no swallowing
-//    Pressable is needed.
-//  - The body ScrollView is only scroll-enabled while its content actually
-//    overflows. Android's ScrollView intercepts every vertical drag once it
-//    can scroll and wins the race against the JS responder system; with
-//    scrolling off for short content (the common case) the card gets the
-//    gesture. Long content still dismisses from the header, the footer
-//    button, the backdrop, or the back button.
+//  - The Modal itself doesn't animate (animationType 'none'). RN's 'slide'
+//    moves the whole modal window, so the dim backdrop slid up together with
+//    the card. Now the backdrop fades in place while the card slides up from
+//    its measured height, and the reverse plays on close: the sheet stays
+//    mounted, showing the last content it had, until the exit ends (callers
+//    clear their text the moment they hide the card).
+//  - Dragging is a gesture-handler Pan on the card, declared simultaneous
+//    with the body ScrollView's native gesture. It reacts only to drags that
+//    begin with the body scrolled to the top, so a long body still scrolls
+//    normally; upward drags fail the pan at once so they never fight the
+//    scroll. This replaces a JS PanResponder that Android's ScrollView beat
+//    to the gesture whenever the content overflowed.
 const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '85%' }) => {
     const st = useStyles(makeStyles);
-    const translateY = useRef(new Animated.Value(0)).current;
-    const scrollOffsetRef = useRef(0);
-    const sizesRef = useRef({ content: 0, viewport: 0 });
-    const [canScroll, setCanScroll] = useState(false);
+    const { bottom } = useSafeAreaInsets();
+    const [mounted, setMounted] = useState(visible);
 
-    // The PanResponder is created once and freezes its closure; mirror the
-    // latest onClose so releasing a drag always calls the current handler.
+    const translateY = useSharedValue(OFFSCREEN);
+    const backdrop = useSharedValue(0);
+    const sheetHeight = useSharedValue(0);
+    const scrollY = useSharedValue(0);
+    const dragFromTop = useSharedValue(false);
+
+    const visibleRef = useRef(visible);
+    const enteredRef = useRef(false);
     const onCloseRef = useRef(onClose);
     useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
-    // A dismissed sheet keeps its dragged offset — reset before re-opening.
+    // Content frozen at the moment of closing, rendered while sliding out.
+    const shownRef = useRef({ header, footer, children });
+    if (visible) shownRef.current = { header, footer, children };
+    const shown = visible ? { header, footer, children } : shownRef.current;
+
+    const requestClose = useCallback(() => { onCloseRef.current?.(); }, []);
+    // Reached from the exit animation's completion; a re-open that interrupted
+    // the exit has already flipped `visible` back and must keep the sheet.
+    const unmount = useCallback(() => { if (!visibleRef.current) setMounted(false); }, []);
+
     useEffect(() => {
+        visibleRef.current = visible;
         if (visible) {
-            translateY.setValue(0);
-            scrollOffsetRef.current = 0;
+            if (mounted) {
+                // Re-opened while still sliding out: come straight back.
+                enteredRef.current = true;
+                translateY.value = withTiming(0, ENTER);
+                backdrop.value = withTiming(1, FADE);
+            } else {
+                enteredRef.current = false;
+                translateY.value = OFFSCREEN;
+                backdrop.value = 0;
+                scrollY.value = 0;
+                setMounted(true);
+            }
+        } else if (mounted) {
+            backdrop.value = withTiming(0, FADE);
+            translateY.value = withTiming(sheetHeight.value || OFFSCREEN, EXIT, () => {
+                runOnJS(unmount)();
+            });
         }
-    }, [visible, translateY]);
+        // Reacts to visibility flips only, reading the mount state at that
+        // moment; `mounted` changing on its own must not replay animations.
+    }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const updateCanScroll = useCallback(() => {
-        const { content, viewport } = sizesRef.current;
-        const next = viewport > 0 && content > viewport + 1;
-        if (!next) scrollOffsetRef.current = 0; // nothing to be scrolled away from
-        setCanScroll(next);
-    }, []);
+    // First layout of an open: start below the edge by exactly the card's
+    // height and slide in. Later layouts (content loaded) only refresh the
+    // height the exit animation travels.
+    const onSheetLayout = useCallback((e) => {
+        const h = e.nativeEvent.layout.height;
+        sheetHeight.value = h;
+        if (enteredRef.current) return;
+        enteredRef.current = true;
+        translateY.value = h;
+        translateY.value = withTiming(0, ENTER);
+        backdrop.value = withTiming(1, FADE);
+    }, [backdrop, sheetHeight, translateY]);
 
-    const dragResponder = useRef(PanResponder.create({
-        // Capture downward drags only while the body is scrolled to the top,
-        // so a scrollable body keeps normal scrolling in every other case.
-        onMoveShouldSetPanResponderCapture: (_, g) =>
-            scrollOffsetRef.current <= 0 && g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
-        onPanResponderTerminationRequest: () => false,
-        onPanResponderMove: (_, g) => translateY.setValue(Math.max(0, g.dy)),
-        onPanResponderRelease: (_, g) => {
-            if (g.dy > CLOSE_DISTANCE || g.vy > CLOSE_VELOCITY) onCloseRef.current?.();
-            else springBack(translateY);
-        },
-        onPanResponderTerminate: () => springBack(translateY),
-    })).current;
+    const nativeScroll = useMemo(() => Gesture.Native(), []);
+    const pan = useMemo(() => Gesture.Pan()
+        // Off while closing, so a stray drag can't interrupt the exit.
+        .enabled(visible)
+        .activeOffsetY(8)
+        .failOffsetY(-8)
+        .simultaneousWithExternalGesture(nativeScroll)
+        .onBegin(() => { dragFromTop.value = scrollY.value <= 0; })
+        .onUpdate((e) => {
+            if (dragFromTop.value) translateY.value = Math.max(0, e.translationY);
+        })
+        .onEnd((e) => {
+            if (!dragFromTop.value) return;
+            if (translateY.value > CLOSE_DISTANCE || e.velocityY > CLOSE_VELOCITY) {
+                runOnJS(requestClose)();
+            } else {
+                translateY.value = withSpring(0, SPRING);
+            }
+        })
+        .onFinalize((_, success) => {
+            // Cancelled mid-drag (not a normal release): snap back.
+            if (!success && dragFromTop.value && translateY.value > 0) {
+                translateY.value = withSpring(0, SPRING);
+            }
+        }),
+    [visible, nativeScroll, dragFromTop, scrollY, translateY, requestClose]);
+
+    const backdropStyle = useAnimatedStyle(() => ({ opacity: backdrop.value }));
+    const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }] }));
 
     return (
-        <Modal visible={visible} transparent animationType='slide' onRequestClose={onClose}>
-            <View style={st.root}>
-                <Pressable
-                    style={st.backdrop}
-                    onPress={onClose}
-                    accessibilityRole='button'
-                    accessibilityLabel='Close'
-                />
-                <Animated.View
-                    style={[st.sheet, { maxHeight, transform: [{ translateY }] }]}
-                    {...dragResponder.panHandlers}
-                >
-                    <View style={st.handle} />
-                    {header}
-                    <ScrollView
-                        style={st.scroll}
-                        contentContainerStyle={st.scrollContent}
-                        showsVerticalScrollIndicator={false}
-                        scrollEnabled={canScroll}
-                        bounces={false}
-                        scrollEventThrottle={16}
-                        onScroll={e => { scrollOffsetRef.current = e.nativeEvent.contentOffset.y; }}
-                        onLayout={e => {
-                            sizesRef.current.viewport = e.nativeEvent.layout.height;
-                            updateCanScroll();
-                        }}
-                        onContentSizeChange={(_, h) => {
-                            sizesRef.current.content = h;
-                            updateCanScroll();
-                        }}
-                    >
-                        {children}
-                    </ScrollView>
-                    {footer}
+        <Modal
+            visible={mounted}
+            transparent
+            animationType='none'
+            statusBarTranslucent
+            navigationBarTranslucent
+            onRequestClose={requestClose}
+        >
+            {/* A Modal is its own native window, so gesture handlers need
+                their own root inside it. Touches are cut while the card
+                slides out so nothing can strand it half-closed. */}
+            <GestureHandlerRootView style={st.root} pointerEvents={visible ? 'auto' : 'none'}>
+                <Animated.View style={[st.backdrop, backdropStyle]}>
+                    <Pressable
+                        style={StyleSheet.absoluteFill}
+                        onPress={requestClose}
+                        accessibilityRole='button'
+                        accessibilityLabel='Close'
+                    />
                 </Animated.View>
-            </View>
+                <GestureDetector gesture={pan}>
+                    <Animated.View style={[st.sheet, { maxHeight }, sheetStyle]} onLayout={onSheetLayout}>
+                        <View style={st.handle} />
+                        {shown.header}
+                        <GestureDetector gesture={nativeScroll}>
+                            <ScrollView
+                                style={st.scroll}
+                                contentContainerStyle={st.scrollContent}
+                                showsVerticalScrollIndicator={false}
+                                bounces={false}
+                                overScrollMode='never'
+                                scrollEventThrottle={16}
+                                onScroll={(e) => { scrollY.value = e.nativeEvent.contentOffset.y; }}
+                            >
+                                {shown.children}
+                            </ScrollView>
+                        </GestureDetector>
+                        {shown.footer != null && (
+                            <View style={{ paddingBottom: bottom + FOOTER_GAP }}>{shown.footer}</View>
+                        )}
+                    </Animated.View>
+                </GestureDetector>
+            </GestureHandlerRootView>
         </Modal>
     );
 };
