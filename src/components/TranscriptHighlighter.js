@@ -41,8 +41,11 @@ const KEYPOINT_INTERVAL_MS = 10 * 60 * 1000;
 const KEYPOINT_HEIGHT = 36;              // fixed — used in both layout and scroll math
 const SEEK_CHUNK_GAP = 3;                // chunk jumps larger than this fade-snap
 const FOLLOW_ANCHOR = 0.40;              // active chunk midpoint sits at 40% of viewport
-const TOP_PAD = 28;                      // ListHeader height, baked into item offsets
-const VIGNETTE_TOP_H = 110;
+// ListHeader height, baked into item offsets. Tall enough that the first
+// paragraph starts clear of the header's drop-shadow and of the top scrim
+// below — at 28 it sat under ~75 % of the fade and read as smudged.
+const TOP_PAD = 72;
+const VIGNETTE_TOP_H = 84;
 const VIGNETTE_BOT_H = 130;
 
 const LIST_HEADER = <View style={{ height: TOP_PAD }} />;
@@ -100,6 +103,10 @@ const TranscriptHighlighter = forwardRef(({
     hasTranscript = false,
     canTranscribe = false,
     onTranscribe,
+    // Streamed episode: "Download & transcribe" on the no-transcript card.
+    onDownload,
+    downloading = false,
+    downloadProgress = 0,
     transcribing = false,
     isQueued = false,
     transcribeProgress = 0,
@@ -878,6 +885,15 @@ const TranscriptHighlighter = forwardRef(({
                     </Text>
                 </View>
             );
+        } else if (downloading) {
+            statusPane = (
+                <View style={styles.empty}>
+                    <ActivityIndicator size='small' color={colors.accent} />
+                    <Text style={[styles.placeholder, styles.placeholderGap]}>
+                        Downloading… {clampPercent(downloadProgress)}%
+                    </Text>
+                </View>
+            );
         } else if (!hasTranscript) {
             statusPane = (
                 <View style={styles.empty}>
@@ -899,7 +915,23 @@ const TranscriptHighlighter = forwardRef(({
                                 </Pressable>
                             </>
                         ) : (
-                            <Text style={styles.ctaBody}>Download this episode first to transcribe it.</Text>
+                            <>
+                                <Text style={styles.ctaBody}>
+                                    Download the episode and its transcript is generated on-device, ready to read along.
+                                </Text>
+                                {onDownload && (
+                                    <Pressable
+                                        onPress={onDownload}
+                                        android_ripple={CHUNK_RIPPLE}
+                                        style={({ pressed }) => [styles.ctaBtn, pressed && styles.pressedChunk]}
+                                        accessibilityRole='button'
+                                        accessibilityLabel='Download and transcribe episode'
+                                    >
+                                        <Icon name='arrow-down-circle' size={15} color={colors.bg} />
+                                        <Text style={styles.ctaBtnText}>Download & transcribe</Text>
+                                    </Pressable>
+                                )}
+                            </>
                         )}
                     </View>
                 </View>

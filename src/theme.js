@@ -195,6 +195,7 @@ export const type = {
     body: { fontSize: 13, fontWeight: '400' },
     bodyStrong: { fontSize: 13, fontWeight: '600' },
     title: { fontSize: 15, fontWeight: '600' },
-    heading: { fontSize: 17, fontWeight: '700', letterSpacing: -0.3 },
+    // Navigation header titles (tab sections, Settings). 19 = the old 17 + ~10 %.
+    heading: { fontSize: 19, fontWeight: '700', letterSpacing: -0.3 },
     display: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3 },
 };

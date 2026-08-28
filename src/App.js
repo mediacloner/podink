@@ -121,10 +121,16 @@ const TabNavigator = ({ navigation }) => {
                         borderTopWidth:  StyleSheet.hairlineWidth,
                         borderTopColor:  colors.hairlineStrong,
                         height:          tabBarHeight,
-                        paddingBottom:   bottom + 10,
-                        paddingTop:      6,
+                        // Symmetric padding so the icon + label group sits in
+                        // the middle of the bar above the nav inset.
+                        paddingBottom:   bottom + 8,
+                        paddingTop:      8,
                     },
-                    tabBarLabelStyle:        { fontSize: 10, fontWeight: '600' },
+                    // v6 bottom-aligns icon + label inside each tab
+                    // (justifyContent 'flex-end'), which left a gap above the
+                    // icon; centre the pair instead.
+                    tabBarItemStyle:         { justifyContent: 'center' },
+                    tabBarLabelStyle:        { fontSize: 12, fontWeight: '600', marginTop: 2 },
                     tabBarActiveTintColor:   colors.accent,
                     tabBarInactiveTintColor: colors.textMuted,
                     tabBarIcon: ({ color, size }) => (
@@ -133,7 +139,9 @@ const TabNavigator = ({ navigation }) => {
                     // Settings left the tab bar in 2.3.0 — it sits behind a
                     // gear in every tab header (the Feed adds its own copy
                     // next to "+", since setOptions replaces headerRight).
-                    headerRight: () => <SettingsGearButton style={{ marginRight: 16 }} />,
+                    // marginTop: the gear's centre sat a touch above the
+                    // title's optical centre (x-height); 3 px settles it level.
+                    headerRight: () => <SettingsGearButton style={{ marginRight: 16, marginTop: 3 }} />,
                 })}
             >
                 <Tab.Screen name="Timeline" component={SubscribedTimeline} options={{ title: 'Feed' }} />

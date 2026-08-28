@@ -14,13 +14,15 @@ import EmptyState from '../components/EmptyState';
 import {
     getPodcasts, deletePodcast,
     getNewEpisodesCountForPodcast, getLatestEpisodesForPodcast,
-    markPodcastEpisodesAsSeen, capNewEpisodes, updateEpisodeLocalPath,
+    markPodcastEpisodesAsSeen, capNewEpisodes,
     pruneOldEpisodesForPodcast, getDownloadedEpisodesForPodcast,
 } from '../database/queries';
-import { downloadAudioFile, deleteAudioFile } from '../services/downloadService';
+import { deleteAudioFile } from '../services/downloadService';
+import { dequeueTranscription } from '../services/whisperService';
 import {
-    enqueueTranscription, dequeueTranscription, onQueueChange, getQueueIds,
-} from '../services/whisperService';
+    downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
+} from '../services/episodeService';
+import { useTranscriptionQueue } from '../hooks/useTranscriptionQueue';
 import { notifyLibraryChange, onLibraryChange } from '../services/libraryEvents';
 import { withAlpha, type, useStyles, useTheme } from '../theme';
 
@@ -129,8 +131,7 @@ const PodcastsScreen = ({ navigation }) => {
     const [expandedFeedUrl, _setExpanded] = useState(null);
     const [episodesMap, setEpisodesMap] = useState({});
     const [downloads, setDownloads] = useState({}); // { [episodeId]: progress 0-100 }
-    const [activeId, setActiveId] = useState(null); // transcribing episode id
-    const [queuedIds, setQueuedIds] = useState([]);
+    const { activeId, queuedIds } = useTranscriptionQueue();
     const [isConnected, setIsConnected] = useState(true);
     const expandedRef = useRef(null);
     const episodesMapRef = useRef({});
@@ -148,14 +149,14 @@ const PodcastsScreen = ({ navigation }) => {
         return () => unsub();
     }, []);
 
-    useEffect(() => {
-        const unsub = onQueueChange(() => setQueuedIds(getQueueIds()));
-        return unsub;
-    }, []);
+    // Mirror for the library-event listener below, which is subscribed once.
+    const podcastsRef = useRef([]);
+    const listRef = useRef(null);
 
     const loadPodcasts = useCallback(async () => {
         try {
             const data = await getPodcasts();
+            podcastsRef.current = data;
             setPodcasts(data);
             const counts = {};
             await Promise.all(data.map(async p => {
@@ -182,18 +183,31 @@ const PodcastsScreen = ({ navigation }) => {
         });
     }, [refreshEpisodesFor]);
 
+    // The red per-podcast numbers only (no cap / prune pass): a download
+    // marks its episode seen (episodeService), so the count changes without
+    // this tab being refocused — e.g. when downloading from an expanded
+    // folder right here.
+    const refreshNewCounts = useCallback(async () => {
+        const counts = {};
+        await Promise.all(podcastsRef.current.map(async p => {
+            counts[p.feed_url] = await getNewEpisodesCountForPodcast(p.feed_url);
+        }));
+        setNewCountMap(counts);
+    }, []);
+
     // Event-driven updates instead of reload-on-every-focus-only: transcripts
     // and downloads completed anywhere update the expanded rows in place.
     useEffect(() => onLibraryChange((payload) => {
         const t = payload?.type;
         if (t === 'transcript-progress') return;
+        if (t === 'download-complete') refreshNewCounts().catch(() => {});
         if (t === 'transcript-complete' || t === 'transcript-error'
             || t === 'transcript-delete'
             || t === 'download-complete' || t === 'episode-delete'
             || t === 'playback-complete' || t === 'playback-reset') {
             refreshLoadedEpisodes();
         }
-    }), [refreshLoadedEpisodes]);
+    }), [refreshLoadedEpisodes, refreshNewCounts]);
 
     useEffect(() => {
         if (isFocused) {
@@ -223,6 +237,16 @@ const PodcastsScreen = ({ navigation }) => {
             const eps = await getLatestEpisodesForPodcast(podcast.feed_url, MAX_NEW);
             setEpisodesMap(prev => ({ ...prev, [podcast.feed_url]: eps }));
             setExpanded(podcast.feed_url);
+            // Bring the unfolded podcast to the top so its episodes are on
+            // screen — low in the list they used to open below the fold. The
+            // delay lets the group render and the content size grow first,
+            // otherwise the scroll clamps to the old, shorter content.
+            const index = podcastsRef.current.findIndex(p => p.feed_url === podcast.feed_url);
+            if (index >= 0) {
+                setTimeout(() => {
+                    listRef.current?.scrollToIndex({ index, viewPosition: 0, viewOffset: 4, animated: true });
+                }, 120);
+            }
         }
     }, [setExpanded]);
 
@@ -254,83 +278,56 @@ const PodcastsScreen = ({ navigation }) => {
         );
     }, [loadPodcasts, setExpanded]);
 
-    // Download an episode's audio. Returns the local URI on success, or null if
-    // the download fails or is rejected. Notifies the Library so it picks up
-    // the new downloaded episode without waiting for a tab focus.
-    const downloadEpisode = useCallback(async (episode) => {
+    // Download an episode's audio. The transcription is queued automatically
+    // (episodeService), so the row goes Download → Downloaded → Queued / % →
+    // Transcript on its own; per-row percent arrives via
+    // whisperService.onTranscriptProgress inside the row. Returns the local
+    // URI on success, or null if the download fails or is rejected.
+    const handleDownload = useCallback(async (episode) => {
         if (!isConnected) {
             showAlert('Offline', 'You need an internet connection to download episodes.');
             return null;
         }
         if (!episode.audio_url) return null;
-        const safeId = episode.id.toString().replace(/[^a-zA-Z0-9]/g, '_');
         setDownloads(prev => ({ ...prev, [episode.id]: 0 }));
         try {
-            const localPath = await downloadAudioFile(
-                episode.audio_url,
-                `episode_${safeId}.mp3`,
-                (p) => setDownloads(prev => {
+            const localPath = await downloadEpisode(episode, {
+                onProgress: (p) => setDownloads(prev => {
                     // Quantize to whole percent: returning the same object
                     // reference for sub-percent ticks skips re-rendering every
                     // PodcastRow (which receives the whole downloads object).
                     const pct = Math.round(p);
                     return prev[episode.id] === pct ? prev : { ...prev, [episode.id]: pct };
                 }),
-            );
-            await updateEpisodeLocalPath(episode.id, localPath);
+            });
             await refreshEpisodesFor(episode.podcast_feed_url);
-            notifyLibraryChange({ type: 'download-complete', episodeId: episode.id });
             return localPath;
         } catch (e) {
-            showAlert('Error', 'Failed to download episode.');
+            reportDownloadError(e);
             return null;
         } finally {
             setDownloads(prev => { const n = { ...prev }; delete n[episode.id]; return n; });
         }
     }, [isConnected, refreshEpisodesFor]);
 
-    // Single tap from the feed: download if needed, then transcribe. Per-row
-    // progress arrives via whisperService.onTranscriptProgress inside the row.
+    // The Transcribe pill only appears on a downloaded row whose automatic
+    // transcription failed or was cancelled — this is the retry. (A row
+    // without a file downloads instead; the download queues the transcript.)
     const handleTranscribe = useCallback(async (episode) => {
-        const id = episode.id;
-        let localPath = episode.local_audio_path;
-        if (!localPath) {
-            localPath = await downloadEpisode(episode);
-            if (!localPath) return;
+        if (!episode.local_audio_path) {
+            await handleDownload(episode);
+            return;
         }
         try {
-            await enqueueTranscription(
-                id,
-                localPath,
-                () => {},
-                () => setActiveId(id),
-                episode.duration || 0,
-            );
+            await transcribeEpisode(episode);
             await refreshEpisodesFor(episode.podcast_feed_url);
         } catch (e) {
-            const errStr = e?.message || String(e);
-            if (errStr !== 'Cancelled' && errStr !== 'Already queued' && errStr !== 'Queue reset') {
-                const isAudioError = errStr.includes('Audio file') || errStr.includes('audio file') || errStr.includes('unrecognized header');
-                showAlert(
-                    isAudioError ? 'Invalid Audio File' : 'Transcription Failed',
-                    isAudioError
-                        ? 'This audio file appears to be corrupted or missing. Try deleting and re-downloading the episode.'
-                        : 'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
-                );
-            }
-        } finally {
-            setActiveId(prev => prev === id ? null : prev);
+            reportTranscriptionError(e);
         }
-    }, [downloadEpisode, refreshEpisodesFor]);
+    }, [handleDownload, refreshEpisodesFor]);
 
     const handleCancel = useCallback((episode) => {
-        const id = episode.id;
-        dequeueTranscription(id);
-        setActiveId(prev => {
-            if (prev !== id) return prev;           // a queued (non-active) item
-            const next = getQueueIds();             // active item — promote next or clear
-            return next.length > 0 ? next[0] : null;
-        });
+        dequeueTranscription(episode.id);
     }, []);
 
     const handleOpenEpisode = useCallback((episode) => {
@@ -349,13 +346,13 @@ const PodcastsScreen = ({ navigation }) => {
             onToggleExpand={handleToggleExpand}
             onUnsubscribe={handleUnsubscribe}
             onOpenEpisode={handleOpenEpisode}
-            onDownload={downloadEpisode}
+            onDownload={handleDownload}
             onTranscribe={handleTranscribe}
             onCancel={handleCancel}
         />
     ), [
         newCountMap, expandedFeedUrl, episodesMap, downloads, activeId, queuedIds,
-        handleToggleExpand, handleUnsubscribe, handleOpenEpisode, downloadEpisode, handleTranscribe, handleCancel,
+        handleToggleExpand, handleUnsubscribe, handleOpenEpisode, handleDownload, handleTranscribe, handleCancel,
     ]);
 
     if (isLoading) {
@@ -369,8 +366,10 @@ const PodcastsScreen = ({ navigation }) => {
     return (
         <View style={styles.container}>
             <FlatList
+                ref={listRef}
                 data={podcasts}
                 keyExtractor={item => item.id.toString()}
+                onScrollToIndexFailed={() => {}}
                 renderItem={renderItem}
                 ItemSeparatorComponent={() => <View style={styles.separator} />}
                 contentContainerStyle={podcasts.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 130 }}

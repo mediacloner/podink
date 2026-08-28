@@ -80,9 +80,31 @@ export const savePodcast = async (podcast) => {
   );
 };
 
+/** Refresh a subscription's cover from its feed. savePodcast is INSERT OR
+ *  IGNORE, so a cover missed at subscribe time (or changed since) would
+ *  otherwise stay wrong forever; feeds that send no artwork leave the stored
+ *  one alone. */
+export const updatePodcastImage = async (feedUrl, imageUrl) => {
+  if (!imageUrl) return;
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `UPDATE Podcasts SET image_url = ? WHERE feed_url = ? AND (image_url IS NULL OR image_url != ?)`,
+    [imageUrl, feedUrl, imageUrl]
+  );
+};
+
+/** Subscriptions, the one with the newest episode first (My Podcasts), so
+ *  a show that just published rises to the top. release_date is ISO-8601,
+ *  so string order is date order; a podcast with no episodes yet sorts last
+ *  (NULL is smallest in SQLite), then by subscription date. */
 export const getPodcasts = async () => {
   const db = await openDatabaseContext();
-  return db.getAllAsync('SELECT * FROM Podcasts ORDER BY subscribed_at DESC');
+  return db.getAllAsync(`
+    SELECT p.*,
+           (SELECT MAX(e.release_date) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS latest_episode_at
+    FROM Podcasts p
+    ORDER BY latest_episode_at DESC, p.subscribed_at DESC
+  `);
 };
 
 export const deletePodcast = async (feedUrl) => {
@@ -218,16 +240,18 @@ export const clearPlayProgress = async (id) => {
   );
 };
 
-/** Episodes by listening state, for the Listening tab. Completion resets
- *  play_position to 0, so the three states partition every episode:
- *    new          is_played = 0, position = 0   newest release first
- *    in-progress  is_played = 0, position > 0   most recently heard first
- *    finished     is_played = 1                 most recently finished first
- *  Rows last heard before last_played_at existed (NULL) sort after the
- *  stamped ones, newest release first. */
+/** Episodes by listening state, for the Listening tab — a pipeline:
+ *    downloaded   on the device, not started      newest release first
+ *                 (is_downloaded 1, is_played 0, position 0)
+ *    in-progress  is_played 0, position > 0       most recently heard first
+ *    finished     is_played 1                     most recently finished first
+ *  Not-started episodes that are not downloaded belong to the Feed, not here.
+ *  Completion resets play_position to 0, so the segments are disjoint. Rows
+ *  last heard before last_played_at existed (NULL) sort after the stamped
+ *  ones, newest release first. */
 const LISTENING_STATE_SQL = {
-  'new':
-    `WHERE e.is_played = 0 AND COALESCE(e.play_position, 0) = 0
+  'downloaded':
+    `WHERE e.is_downloaded = 1 AND e.is_played = 0 AND COALESCE(e.play_position, 0) = 0
      ORDER BY e.release_date DESC`,
   'in-progress':
     `WHERE e.is_played = 0 AND e.play_position > 0
@@ -304,6 +328,13 @@ export const getLatestEpisodesForPodcast = async (feedUrl, limit = 5) => {
     ORDER BY e.release_date DESC
     LIMIT ?
   `, [feedUrl, limit]);
+};
+
+/** One episode drops out of the "new" count — the user acted on it
+ *  (downloaded it from the Feed), so it no longer needs the badge. */
+export const markEpisodeSeen = async (id) => {
+  const db = await openDatabaseContext();
+  await db.runAsync('UPDATE Episodes SET is_new = 0 WHERE id = ? AND is_new = 1', [id]);
 };
 
 export const markPodcastEpisodesAsSeen = async (feedUrl) => {

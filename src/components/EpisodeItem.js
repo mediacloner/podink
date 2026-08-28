@@ -106,7 +106,9 @@ const EpisodeItem = ({
                     ? `${expanded ? 'Hide' : 'Show'} details for ${episode.title}`
                     : `Open ${episode.title}`)
                     + (durationLabel ? `, ${durationLabel}` : '')
-                    + (hideActions && episode.is_downloaded ? ', downloaded' : '')
+                    + (hideActions && isDownloading ? ', downloading' : '')
+                    + (hideActions && !isDownloading && episode.is_downloaded ? ', downloaded' : '')
+                    + (hideActions && episode.has_transcript ? ', transcript' : '')
                     + (episode.is_played ? ', played' : progressLabel ? `, ${progressLabel}` : '')}
                 accessibilityState={expandOnPress ? { expanded } : undefined}
             >
@@ -142,12 +144,28 @@ const EpisodeItem = ({
                             </>
                         )}
                         {/* With the pill column hidden this is the only sign
-                            the audio is on the device (and that a swipe-delete
-                            took effect) */}
-                        {hideActions && !!episode.is_downloaded && (
+                            of what is on the device: a swipe-to-download in
+                            flight, then the audio (and its transcript, once
+                            the automatic transcription lands) — or that a
+                            swipe-delete took effect */}
+                        {hideActions && isDownloading && (
+                            <>
+                                <Text style={styles.metaDot}>·</Text>
+                                <View style={styles.stateTag}>
+                                    <Icon name="arrow-down-circle" size={11} color={colors.accent} />
+                                    <Text style={styles.progressText}>
+                                        {downloadProgress > 0 ? `${Math.round(downloadProgress)}%` : 'Downloading…'}
+                                    </Text>
+                                </View>
+                            </>
+                        )}
+                        {hideActions && !isDownloading && !!episode.is_downloaded && (
                             <>
                                 <Text style={styles.metaDot}>·</Text>
                                 <Icon name="arrow-down-circle" size={11} color={colors.success} />
+                                {!!episode.has_transcript && (
+                                    <Icon name="align-left" size={11} color={colors.success} />
+                                )}
                             </>
                         )}
                         {episode.is_played ? (

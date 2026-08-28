@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator, View, Text, FlatList, TouchableOpacity, StyleSheet, Image,
 } from 'react-native';
@@ -11,14 +11,13 @@ import SwipeableRow, { closeOpenRow } from '../components/SwipeableRow';
 import EmptyState from '../components/EmptyState';
 import { getDownloadedEpisodes, deleteEpisodeTranscript } from '../database/queries';
 import {
-    enqueueTranscription,
     dequeueTranscription,
     onQueueChange,
     getQueueIds,
     getActiveId,
     getAbortingId,
 } from '../services/whisperService';
-import { removeEpisodeDownload } from '../services/episodeService';
+import { removeEpisodeDownload, reportTranscriptionError, transcribeEpisode } from '../services/episodeService';
 import { onLibraryChange, notifyLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
 import { withAlpha, type, useStyles, useTheme } from '../theme';
@@ -125,6 +124,11 @@ const DownloadedTimeline = ({ navigation }) => {
     const [queuedIds, setQueuedIds] = useState([]);
     const [expandedKey, setExpandedKey] = useState(null);
     const isFocused = useIsFocused();
+    // Mirrors for handleToggleExpand (memoised once) and the list ref it scrolls.
+    const expandedKeyRef = useRef(null);
+    useEffect(() => { expandedKeyRef.current = expandedKey; }, [expandedKey]);
+    const groupsRef = useRef([]);
+    const listRef = useRef(null);
 
     const loadData = useCallback(async () => {
         try {
@@ -152,6 +156,7 @@ const DownloadedTimeline = ({ navigation }) => {
         }
         return Array.from(map.values());
     }, [episodes]);
+    useEffect(() => { groupsRef.current = groups; }, [groups]);
 
     // Drop a stale expandedKey once its folder is gone (last episode deleted),
     // otherwise the folder would reappear pre-expanded on a later download.
@@ -253,32 +258,19 @@ const DownloadedTimeline = ({ navigation }) => {
         // still queued behind a different, still-active job.
         let becameActive = false;
         try {
-            await enqueueTranscription(
-                id,
-                episode.local_audio_path,
-                () => {},
-                () => {
+            await transcribeEpisode(episode, {
+                onStart: () => {
                     log('UI', 'onStart callback fired', { id });
                     becameActive = true;
                     setActiveId(id);
                 },
-                episode.duration || 0,
-            );
+            });
             log('UI', 'Transcription promise resolved', { id });
             loadData();
         } catch (e) {
             const errStr = e?.message || String(e);
             log('UI', 'Transcription catch', { id, error: errStr, stack: e?.stack?.slice(0, 300) });
-            if (errStr !== 'Cancelled' && errStr !== 'Already queued' && errStr !== 'Queue reset') {
-                log('UI', '*** ERROR ALERT SHOWN ***', { id, error: errStr });
-                const isAudioError = errStr.includes('Audio file') || errStr.includes('audio file') || errStr.includes('unrecognized header');
-                showAlert(
-                    isAudioError ? 'Invalid Audio File' : 'Transcription Failed',
-                    isAudioError
-                        ? 'This audio file appears to be corrupted or missing. Try deleting and re-downloading the episode.'
-                        : 'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
-                );
-            }
+            reportTranscriptionError(e);
         } finally {
             if (becameActive) {
                 // This job actually ran and is now finishing: optimistically
@@ -348,7 +340,19 @@ const DownloadedTimeline = ({ navigation }) => {
 
     const handleToggleExpand = useCallback((group) => {
         log('UI', 'Library folder toggled', { key: group.key, title: group.title });
-        setExpandedKey(prev => (prev === group.key ? null : group.key));
+        const expanding = expandedKeyRef.current !== group.key;
+        setExpandedKey(expanding ? group.key : null);
+        if (!expanding) return;
+        // Bring the unfolded folder to the top so its episodes are on screen.
+        // Only one folder is open at a time, so in the flattened list the
+        // folder's index equals its position among the folders. The delay lets
+        // the rows render and the content size grow before scrolling.
+        const index = groupsRef.current.findIndex(g => g.key === group.key);
+        if (index >= 0) {
+            setTimeout(() => {
+                listRef.current?.scrollToIndex({ index, viewPosition: 0, viewOffset: 4, animated: true });
+            }, 120);
+        }
     }, []);
 
     const renderItem = useCallback(({ item, index }) => {
@@ -390,8 +394,10 @@ const DownloadedTimeline = ({ navigation }) => {
     return (
         <View style={styles.container}>
             <FlatList
+                ref={listRef}
                 data={listData}
                 keyExtractor={item => item.key}
+                onScrollToIndexFailed={() => {}}
                 renderItem={renderItem}
                 contentContainerStyle={listData.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 130 }}
                 initialNumToRender={10}

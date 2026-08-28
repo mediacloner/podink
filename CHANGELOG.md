@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.3.0] - 2026-08-28
+
+### Added
+- **Listening tab** — a fourth tab showing the listening pipeline, one segment per stage: *Downloaded* (on the device, not started — newest first), *In progress* (started, most recently heard first) and *Finished* (most recently finished first); episodes that are neither downloaded nor started stay in the Feed. The chosen segment is remembered (`@listening_filter`). Rows resume with a tap; swipe right for **Done** (or **Unplayed** on a finished row); swipe left for **Delete** on downloaded rows — or **Download** on the others (see below). The list stays live while it is on screen (every ~5 s position save).
+- **Finished-episode prompt** — when a *downloaded* episode plays to its real end, asks whether to delete the download and transcript to free space (Keep / Delete). Asked on the next launch if the episode ended while the app was gone. Off switch: Settings → **Storage** → "Ask to delete finished episodes" (`@ask_delete_on_finish`).
+- **Feed loading line** — feed refreshes show as a thin animated line under the Feed title instead of holding the pull-to-refresh spinner open, so the list never jumps and the tabs stay usable.
+- **Download & transcribe in the Player** — a streamed episode's "No transcript yet" card now has a *Download & transcribe* button; the card walks through Downloading → Queued → Transcribing → text without leaving the screen.
+- Schema **v5**: `Episodes.last_played_at` (epoch ms), stamped on every position save — orders the In progress / Finished segments.
+
+### Changed
+- **A download now produces a transcript on its own.** Every download — Feed, My Podcasts, the Player card, a Listening swipe — queues the on-device transcription as soon as the file lands; there is no separate "Transcribe" tap any more. The row goes Download → Downloaded → Queued / 42 % → Transcript, and the Feed shows that progress too (it previously only showed "Downloaded"). The *Transcribe* pill remains only as a retry on a downloaded row whose job failed or was cancelled. All of this lives in `services/episodeService.js` (`downloadEpisode`, `transcribeEpisode`), which also documents the listening-state / on-device-state model.
+- **Replaying a finished episode makes it In progress again**, and the Feed's Play pill reads *Resume* / *Play again* accordingly. Completion still resets the position to 0 so a replay starts from the top.
+- **Done / Unplayed on the episode that is playing now stop it first.** They used to change the row, and the very next progress save (~5 s) wrote a position back and silently returned it to In progress.
+- **Settings moved behind a gear** in every tab header (it is no longer a tab).
+- **Player header tint is softened** — the cover's hue is kept but its saturation is capped and its lightness pinned to a band per theme, so a loud cover no longer fills the top of the screen with raw yellow or magenta.
+- **Settings alignment** — section labels, row icons and card text share one left edge; hints indent under their title.
+- Mini player shadow reduced (it read as floating too high).
+- Section titles in the tab headers (and Settings) are ~10 % larger (19 pt); the Settings gear — and the Feed's "+" — sit 3 px lower, level with the title.
+- Player header text is a notch larger (podcast label 12 pt, episode title 16 pt, artwork 56 px).
+- Tab bar labels (Feed · My Podcasts · Library · Listening) are larger (12 pt) and each icon + label pair is centred in the bar; the v6 default bottom-aligned the pair, leaving a gap above the icon.
+- The transcript's first paragraph starts lower (72 px instead of 28) and the top fade is shorter (84 px instead of 110), so the opening line no longer sits under the header's shadow and scrim.
+
+### Fixed
+- **Tabs froze while feeds were loading.** Podcast feeds ship their whole back catalogue — The Daily's RSS is ~20 MB and 2,960 items — and the XML parser builds the full document synchronously on the JS thread, so every tap on the tab bar waited for the parse. The feed text is now cut after the first 50 `<item>`s (all that is ever stored) before parsing: 20 MB → 330 KB, same title, image and episodes.
+- **Paper theme: the Player header text had a dark smudge under it.** The drop-shadow was meant only for dark header tints, but the Android override that removed it on light tints (`textShadowColor: 'transparent'`) still drew the default dark shadow. The shadow style is now added only on dark tints.
+- Listening rows show what is on the device: a swipe-to-download's progress, then the download mark and — once the automatic transcription finishes — a transcript mark.
+- **My Podcasts is ordered by each show's newest episode** (was: by subscription date), so a podcast that just published rises to the top.
+- **Unfolding a podcast low in My Podcasts (or a folder in the Library) scrolls it to the top**, so its episodes appear on screen instead of opening below the fold.
+- **Downloading an episode from the Feed now takes it off the My Podcasts "new" badge** — the count dropped only when you opened and closed the podcast's folder, so a podcast you had already acted on kept its red number.
+- **Some podcasts had no cover** (Dwarkesh Podcast, The Waterstones Podcast). Their feeds declare the artwork only as `<itunes:image href>` and ship no RSS `<image>` block, which was the only element read. Both are read now, and a refresh updates a subscription's stored cover when the feed's differs (covers subscribed without one fill in on the next refresh). The 50-item feed cut also keeps channel-level elements that some hosts place *after* the items — the Dwarkesh feed's cover is one.
+
 ## [2.2.1] - 2026-08-26
 
 ### Added

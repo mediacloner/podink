@@ -17,10 +17,14 @@ import EmptyState from '../components/EmptyState';
 import LoadingBar from '../components/LoadingBar';
 import SettingsGearButton from '../components/SettingsGearButton';
 import {
-    getSubscribedEpisodes, saveEpisodesBatch, updateEpisodeLocalPath, savePodcast,
+    getSubscribedEpisodes, saveEpisodesBatch, savePodcast, updatePodcastImage,
     getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes,
 } from '../database/queries';
-import { downloadAudioFile } from '../services/downloadService';
+import {
+    downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
+} from '../services/episodeService';
+import { dequeueTranscription } from '../services/whisperService';
+import { useTranscriptionQueue } from '../hooks/useTranscriptionQueue';
 import { fetchPodcastFeed } from '../api/rssParser';
 import { resolveToRssUrl, detectService } from '../api/podcastResolver';
 import { isUrlLike, searchPodcasts } from '../api/podcastSearch';
@@ -52,6 +56,9 @@ const SubscribedTimeline = ({ navigation }) => {
     const searchTimerRef = useRef(null);
     const searchAbortRef = useRef(null);
     const isFocused = useIsFocused();
+    // Which row is transcribing / waiting, so a download's automatic
+    // transcription shows its progress right here in the Feed.
+    const { activeId, queuedIds } = useTranscriptionQueue();
 
     const heightSV = useSharedValue(0);
     const opacitySV = useSharedValue(0);
@@ -96,11 +103,15 @@ const SubscribedTimeline = ({ navigation }) => {
         }
     }, [isFocused]);
 
-    // An episode can finish in the background (MiniPlayer) while this tab is
-    // already focused — refresh so its row picks up the Played badge.
+    // Rows change under a focused tab: an episode finishes in the MiniPlayer
+    // (Played badge), a download or its automatic transcription completes
+    // from any tab (Downloaded → Transcript pill), a download is deleted.
+    // Per-window transcript ticks and ~5 s position saves are skipped — the
+    // rows show neither.
     useEffect(() => onLibraryChange((payload) => {
         const t = payload?.type;
-        if (t === 'playback-complete' || t === 'playback-reset') loadData();
+        if (t === 'transcript-progress' || t === 'playback-progress') return;
+        loadData();
     }), []);
 
     // setOptions replaces the tab-level headerRight (the Settings gear), so
@@ -139,32 +150,42 @@ const SubscribedTimeline = ({ navigation }) => {
             return;
         }
         if (!episode.audio_url) return;
-        const safeId = episode.id.toString().replace(/[^a-zA-Z0-9]/g, '_');
-        const filename = `episode_${safeId}.mp3`;
         setDownloads(prev => ({ ...prev, [episode.id]: 0 }));
         try {
-            const localPath = await downloadAudioFile(
-                episode.audio_url,
-                filename,
-                (p) => setDownloads(prev => {
+            // The download queues its own transcription (episodeService), so
+            // the row goes Download → Downloaded → Queued / % → Transcript
+            // without another tap. The 'download-complete' event reloads.
+            await downloadEpisode(episode, {
+                onProgress: (p) => setDownloads(prev => {
                     // Quantize to whole percent: returning the same object
                     // reference for sub-percent ticks skips the re-render.
                     const pct = Math.round(p);
                     return prev[episode.id] === pct ? prev : { ...prev, [episode.id]: pct };
                 }),
-            );
-            log('UI', 'Download completed', { id: episode.id });
-            await updateEpisodeLocalPath(episode.id, localPath);
-            loadData();
-            notifyLibraryChange({ type: 'download-complete', episodeId: episode.id });
+            });
         } catch (e) {
-            log('UI', 'Download failed', { id: episode.id, error: e.message });
-            console.error('Download failed', e);
-            showAlert('Error', 'Failed to download episode.');
+            log('UI', 'Download failed', { id: episode.id, error: e?.message || String(e) });
+            reportDownloadError(e);
         } finally {
             setDownloads(prev => { const n = { ...prev }; delete n[episode.id]; return n; });
         }
     }, [isConnected]);
+
+    // The Transcribe pill only appears on a downloaded row whose automatic
+    // transcription failed or was cancelled — this is the retry.
+    const handleTranscribe = useCallback(async (episode) => {
+        log('UI', 'Transcribe tapped', { id: episode.id, title: episode.title });
+        try {
+            await transcribeEpisode(episode);
+        } catch (e) {
+            reportTranscriptionError(e);
+        }
+    }, []);
+
+    const handleCancel = useCallback((episode) => {
+        log('UI', 'Cancel transcription', { id: episode.id });
+        dequeueTranscription(episode.id);
+    }, []);
 
     const prevServiceRef = useRef('RSS');
     useEffect(() => {
@@ -194,7 +215,10 @@ const SubscribedTimeline = ({ navigation }) => {
         try {
             const podcasts = await getPodcasts();
             const results = await Promise.allSettled(podcasts.map(async (podcast) => {
-                const feedData = await fetchPodcastFeed(podcast.feed_url);
+                const feedData = await fetchPodcastFeed(podcast.feed_url, { maxItems: MAX_EPISODES_PER_PODCAST });
+                // Covers subscribed without one (itunes:image-only feeds
+                // before 2.3.0) fill in on the first refresh.
+                await updatePodcastImage(podcast.feed_url, feedData.image);
                 const latest = feedData.episodes
                     .slice(0, MAX_EPISODES_PER_PODCAST)
                     .map(ep => ({
@@ -240,7 +264,7 @@ const SubscribedTimeline = ({ navigation }) => {
         setIsFetching(true);
         try {
             const rss = await resolveToRssUrl(input);
-            const feedData = await fetchPodcastFeed(rss);
+            const feedData = await fetchPodcastFeed(rss, { maxItems: MAX_EPISODES_PER_PODCAST });
             await savePodcast({
                 title: feedData.title,
                 description: feedData.description,
@@ -372,12 +396,16 @@ const SubscribedTimeline = ({ navigation }) => {
             episode={item}
             onPress={handleOpenEpisode}
             onDownload={handleDownload}
+            onTranscribe={handleTranscribe}
+            onCancel={handleCancel}
             isDownloading={item.id in downloads}
             downloadProgress={downloads[item.id] ?? 0}
+            isTranscribing={activeId === item.id}
+            isQueued={queuedIds.includes(item.id)}
             showArtwork
             expandOnPress
         />
-    ), [handleOpenEpisode, handleDownload, downloads]);
+    ), [handleOpenEpisode, handleDownload, handleTranscribe, handleCancel, downloads, activeId, queuedIds]);
 
     return (
         <View style={styles.container}>
@@ -523,7 +551,8 @@ const SubscribedTimeline = ({ navigation }) => {
 
 const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
-    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 20, marginRight: 16 },
+    // marginTop matches the tab-level gear nudge (App.js) so "+" and gear stay level with the title.
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 20, marginRight: 16, marginTop: 3 },
 
     inputPanel: {
         borderBottomWidth: 0.5,
