@@ -191,7 +191,7 @@ const migrateToV4 = async (txn) => {
 };
 
 const migrateToV5 = async (txn) => {
-    // "Continue Listening" lists started-but-unfinished episodes most recent
+    // The Listening tab orders in-progress episodes most recent
     // first, and recency of *listening* was never recorded (release_date is
     // the feed's date). Epoch ms, stamped by savePlayPosition on every write;
     // NULL for rows last touched before this column existed.

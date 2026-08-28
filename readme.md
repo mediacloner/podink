@@ -9,7 +9,8 @@ A React Native podcast app with on-device AI transcription, word-by-word transcr
 - Browse episodes from all subscribed feeds
 - Stream episodes or download for offline listening
 - Resume playback from where you left off (position saved every 5s)
-- Continue Listening tab — every episode you started but haven't finished, most recently heard first; swipe to mark as played
+- Listening tab — every episode by state: New · In progress · Finished; swipe right to mark Done (or Unplayed on a finished row), swipe left to delete a download
+- Refreshing feeds shows a thin loading line under the Feed title and never blocks the tabs
 - When a downloaded episode plays to the end, a prompt offers to delete the download (audio + transcript) to free up space — switchable off in Settings → Storage
 - Settings live behind a gear in the header, not a tab
 - Background audio with lock screen / notification controls
@@ -18,7 +19,7 @@ A React Native podcast app with on-device AI transcription, word-by-word transcr
 - Full-screen player with artwork, episode info, and transcript
 - Mini player floating above tab bar — quick controls without leaving the current screen
 - Skip ±10 seconds, seek slider, time display
-- Dynamic header color extracted from podcast artwork
+- Player header tinted from the podcast artwork — softened (capped saturation, theme-banded lightness) so loud covers stay calm
 
 ### On-Device Transcription (sherpa-onnx)
 - Fully offline — no audio ever leaves the device
@@ -65,6 +66,8 @@ src/
 │   ├── EpisodeItem.js            # Episode list row with download/transcribe actions
 │   ├── FinishedEpisodePrompt.js  # "Delete the download?" alert when a downloaded episode ends
 │   ├── SettingsGearButton.js     # Header gear that opens Settings
+│   ├── SegmentedControl.js       # Filter switch used by the Listening tab
+│   ├── LoadingBar.js             # Thin indeterminate line under a header while feeds load
 │   ├── MiniPlayer.js             # Floating compact player above tab bar
 │   ├── PlayerControls.js         # Full-screen playback controls (slider, skip, play/pause)
 │   └── TranscriptHighlighter.js  # Word-synced transcript with auto-scroll & translation
@@ -74,7 +77,7 @@ src/
 ├── screens/
 │   ├── SubscribedTimeline.js     # "Discover" tab — browse & add podcast feeds
 │   ├── DownloadedTimeline.js     # "Library" tab — manage downloads & transcription queue
-│   ├── InProgressScreen.js       # "In Progress" tab — started-but-unfinished episodes (Continue Listening)
+│   ├── ListeningScreen.js        # "Listening" tab — episodes by state (New / In progress / Finished)
 │   ├── PodcastsScreen.js         # "My Podcasts" tab — subscriptions list
 │   ├── PlayerScreen.js           # Full-screen player modal
 │   └── SettingsScreen.js         # Settings (stack screen behind the header gear)

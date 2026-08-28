@@ -190,7 +190,7 @@ const PodcastsScreen = ({ navigation }) => {
         if (t === 'transcript-complete' || t === 'transcript-error'
             || t === 'transcript-delete'
             || t === 'download-complete' || t === 'episode-delete'
-            || t === 'playback-complete') {
+            || t === 'playback-complete' || t === 'playback-reset') {
             refreshLoadedEpisodes();
         }
     }), [refreshLoadedEpisodes]);

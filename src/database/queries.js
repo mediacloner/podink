@@ -188,28 +188,63 @@ export const deleteEpisodeLocalData = async (id) => {
 
 export const savePlayPosition = async (id, positionSeconds) => {
   const db = await openDatabaseContext();
-  // last_played_at orders the Continue Listening tab; stamped on every write
+  // last_played_at orders the Listening tab; stamped on every write
   // (including the reset to 0 on completion) so it always means "last heard".
-  await db.runAsync(
-    `UPDATE Episodes SET play_position = ?, last_played_at = ? WHERE id = ?`,
-    [positionSeconds, Date.now(), id]
-  );
+  // A real position also clears is_played: replaying a finished episode makes
+  // it "in progress" again (Played tag gone, back under In progress) and
+  // lets markEpisodePlayed's 0→1 transition fire once more when it re-ends.
+  // The completion path saves 0 and must NOT touch is_played, or every tick
+  // inside the final-stretch window would re-emit 'playback-complete'.
+  if (positionSeconds > 0) {
+    await db.runAsync(
+      `UPDATE Episodes SET play_position = ?, last_played_at = ?, is_played = 0 WHERE id = ?`,
+      [positionSeconds, Date.now(), id]
+    );
+  } else {
+    await db.runAsync(
+      `UPDATE Episodes SET play_position = ?, last_played_at = ? WHERE id = ?`,
+      [positionSeconds, Date.now(), id]
+    );
+  }
 };
 
-/** Started but unfinished episodes, most recently listened first. Completion
- *  resets play_position to 0, so position > 0 with is_played = 0 is exactly
- *  "in progress". Rows last heard before last_played_at existed (NULL) sort
- *  after the stamped ones, newest release first. */
-export const getInProgressEpisodes = async () => {
+/** Back to a never-started row (Listening → Finished → "Unplayed"): not
+ *  played, no position, no listening timestamp — it reappears under New. */
+export const clearPlayProgress = async (id) => {
   const db = await openDatabaseContext();
-  return db.getAllAsync(
-    `${EPISODE_WITH_IMAGE}
-     WHERE e.is_played = 0 AND e.play_position > 0
-     ORDER BY (e.last_played_at IS NULL), e.last_played_at DESC, e.release_date DESC`
+  await db.runAsync(
+    `UPDATE Episodes SET play_position = 0, is_played = 0, last_played_at = NULL WHERE id = ?`,
+    [id]
   );
 };
 
-/** Manual "mark as played" (Continue Listening swipe). Same end state as a
+/** Episodes by listening state, for the Listening tab. Completion resets
+ *  play_position to 0, so the three states partition every episode:
+ *    new          is_played = 0, position = 0   newest release first
+ *    in-progress  is_played = 0, position > 0   most recently heard first
+ *    finished     is_played = 1                 most recently finished first
+ *  Rows last heard before last_played_at existed (NULL) sort after the
+ *  stamped ones, newest release first. */
+const LISTENING_STATE_SQL = {
+  'new':
+    `WHERE e.is_played = 0 AND COALESCE(e.play_position, 0) = 0
+     ORDER BY e.release_date DESC`,
+  'in-progress':
+    `WHERE e.is_played = 0 AND e.play_position > 0
+     ORDER BY (e.last_played_at IS NULL), e.last_played_at DESC, e.release_date DESC`,
+  'finished':
+    `WHERE e.is_played = 1
+     ORDER BY (e.last_played_at IS NULL), e.last_played_at DESC, e.release_date DESC`,
+};
+
+export const getEpisodesByListeningState = async (state) => {
+  const clause = LISTENING_STATE_SQL[state];
+  if (!clause) throw new Error(`Unknown listening state: ${state}`);
+  const db = await openDatabaseContext();
+  return db.getAllAsync(`${EPISODE_WITH_IMAGE} ${clause}`);
+};
+
+/** Manual "mark as played" (Listening tab swipe). Same end state as a
  *  natural finish — played, position back at the top — regardless of the
  *  current is_played value, unlike markEpisodePlayed's 0→1 guard. */
 export const markEpisodeFinished = async (id) => {

@@ -35,7 +35,7 @@ const EpisodeItem = ({
     // the description (with an explicit Play button) instead of navigating.
     showArtwork = false,
     expandOnPress = false,
-    // Continue Listening variant: no download/transcribe column — the row
+    // Listening-tab variant: no download/transcribe column — the row
     // exists to be resumed, so a single play glyph stands in for the pills.
     hideActions = false,
 }) => {
@@ -106,6 +106,7 @@ const EpisodeItem = ({
                     ? `${expanded ? 'Hide' : 'Show'} details for ${episode.title}`
                     : `Open ${episode.title}`)
                     + (durationLabel ? `, ${durationLabel}` : '')
+                    + (hideActions && episode.is_downloaded ? ', downloaded' : '')
                     + (episode.is_played ? ', played' : progressLabel ? `, ${progressLabel}` : '')}
                 accessibilityState={expandOnPress ? { expanded } : undefined}
             >
@@ -138,6 +139,15 @@ const EpisodeItem = ({
                             <>
                                 <Text style={styles.metaDot}>·</Text>
                                 <Text style={styles.duration}>{durationLabel}</Text>
+                            </>
+                        )}
+                        {/* With the pill column hidden this is the only sign
+                            the audio is on the device (and that a swipe-delete
+                            took effect) */}
+                        {hideActions && !!episode.is_downloaded && (
+                            <>
+                                <Text style={styles.metaDot}>·</Text>
+                                <Icon name="arrow-down-circle" size={11} color={colors.success} />
                             </>
                         )}
                         {episode.is_played ? (

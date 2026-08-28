@@ -14,6 +14,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
 import EmptyState from '../components/EmptyState';
+import LoadingBar from '../components/LoadingBar';
 import SettingsGearButton from '../components/SettingsGearButton';
 import {
     getSubscribedEpisodes, saveEpisodesBatch, updateEpisodeLocalPath, savePodcast,
@@ -98,7 +99,8 @@ const SubscribedTimeline = ({ navigation }) => {
     // An episode can finish in the background (MiniPlayer) while this tab is
     // already focused — refresh so its row picks up the Played badge.
     useEffect(() => onLibraryChange((payload) => {
-        if (payload?.type === 'playback-complete') loadData();
+        const t = payload?.type;
+        if (t === 'playback-complete' || t === 'playback-reset') loadData();
     }), []);
 
     // setOptions replaces the tab-level headerRight (the Settings gear), so
@@ -379,6 +381,13 @@ const SubscribedTimeline = ({ navigation }) => {
 
     return (
         <View style={styles.container}>
+            {/* Feed work in flight (refresh on open, pull-to-refresh, adding a
+                feed) shows as a thin line right under the header title. The
+                pull spinner itself is not held open (refreshing={false} below):
+                it would push the list down for the whole fetch, and this bar
+                never blocks the tabs, so you can keep browsing meanwhile. */}
+            <LoadingBar visible={isRefreshing || isFetching} />
+
             {/* Collapsible RSS input panel */}
             <Animated.View style={[styles.inputPanel, panelStyle]}>
                 <View style={styles.inputRow}>
@@ -494,7 +503,7 @@ const SubscribedTimeline = ({ navigation }) => {
                 data={episodes}
                 keyExtractor={item => item.id.toString()}
                 onRefresh={() => handleRefresh(true)}
-                refreshing={isRefreshing}
+                refreshing={false}
                 renderItem={renderItem}
                 initialNumToRender={10}
                 maxToRenderPerBatch={10}

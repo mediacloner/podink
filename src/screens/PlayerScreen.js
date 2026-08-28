@@ -18,7 +18,7 @@ import {
     getQueueIds, onQueueChange, onTranscriptProgress,
 } from '../services/whisperService';
 import { getEpisodeById, getTranscriptsForEpisode } from '../database/queries';
-import { extractColor } from '../services/colorExtractor';
+import { extractColor, softenForHeader } from '../services/colorExtractor';
 import { useTheme, useStyles, radii, withAlpha } from '../theme';
 
 // Minimum gap between transcript re-fetches while live transcription streams
@@ -325,11 +325,15 @@ const PlayerScreen = ({ route, navigation }) => {
     // Artwork-derived accent only when it contrasts with the page: bright tints
     // on the dark player, dark tints on the paper one.
     const accent = colorInfo && colorInfo.isDark !== isDark ? colorInfo.bgColor : colors.accent;
-    const headerBg = colorInfo?.bgColor ?? colors.surfaceElevated;
+    // The header gets a softened version of the cover colour (hue kept,
+    // saturation capped, lightness pinned to a theme band) — the raw colour
+    // was fine as an accent but far too loud as a full-width surface.
+    const headerTint = colorInfo ? softenForHeader(colorInfo.bgColor, isDark) : null;
+    const headerBg = headerTint?.hex ?? colors.surfaceElevated;
     // Header text must read against the artwork tint, not the theme. The dark
     // theme keeps its always-white text; paper flips to cream on dark tints and
     // drops the drop-shadow on light ones.
-    const headerIsDark = colorInfo ? colorInfo.isDark : isDark;
+    const headerIsDark = headerTint ? headerTint.isDark : isDark;
     const headerFg = !isDark && headerIsDark ? colors.onAccent : colors.textPrimary;
     const headerTextStyle = [
         { color: headerFg },

@@ -203,7 +203,7 @@ const DownloadedTimeline = ({ navigation }) => {
         const unsubQueue = onQueueChange(syncQueue);
         // Library events are payload-aware: per-window transcript progress is
         // handled inside each row and play-position ticks (~5s while playing)
-        // only matter to Continue Listening, so skip the full reload for both.
+        // only matter to the Listening tab, so skip the full reload for both.
         const unsubLib = onLibraryChange((payload) => {
             const t = payload?.type;
             if (t === 'transcript-progress' || t === 'playback-progress') return;

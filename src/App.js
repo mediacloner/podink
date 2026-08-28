@@ -19,7 +19,7 @@ import { ThemeProvider, useTheme, useStyles, type } from './theme';
 
 import SubscribedTimeline from './screens/SubscribedTimeline';
 import DownloadedTimeline from './screens/DownloadedTimeline';
-import InProgressScreen from './screens/InProgressScreen';
+import ListeningScreen from './screens/ListeningScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import PodcastsScreen from './screens/PodcastsScreen';
@@ -38,7 +38,7 @@ const TAB_ICONS = {
     Timeline:   'rss',
     Podcasts:   'headphones',
     Library:    'archive',
-    InProgress: 'play-circle',
+    Listening:  'play-circle',
 };
 
 // React Navigation theme derived from the active palette (headers, tab bar
@@ -146,11 +146,7 @@ const TabNavigator = ({ navigation }) => {
                     }}
                 />
                 <Tab.Screen name="Library"  component={DownloadedTimeline}  options={{ title: 'Library' }} />
-                <Tab.Screen
-                    name="InProgress"
-                    component={InProgressScreen}
-                    options={{ title: 'Continue Listening', tabBarLabel: 'In Progress' }}
-                />
+                <Tab.Screen name="Listening" component={ListeningScreen} options={{ title: 'Listening' }} />
             </Tab.Navigator>
 
             {showMiniPlayer && (

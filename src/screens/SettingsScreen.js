@@ -262,9 +262,12 @@ const SettingsScreen = () => {
                 </TouchableOpacity>
 
                 <View style={[styles.settingBlock, styles.rowBorder]}>
-                    <Text style={styles.settingTitle}>Translation language</Text>
-                    <Text style={styles.settingHint}>Tapped words are translated to this language</Text>
-                    <View style={styles.chipWrap}>
+                    <View style={styles.settingHead}>
+                        <Icon name="globe" size={15} color={colors.accent} />
+                        <Text style={styles.settingTitle}>Translation language</Text>
+                    </View>
+                    <Text style={[styles.settingHint, styles.indent]}>Tapped words are translated to this language</Text>
+                    <View style={[styles.chipWrap, styles.indent]}>
                         {LANGUAGES.map(({ code, label }) => {
                             const selected = translationLang === code;
                             return (
@@ -286,8 +289,11 @@ const SettingsScreen = () => {
 
                 <View style={[styles.settingRow, styles.rowBorder]}>
                     <View style={{ flex: 1 }}>
-                        <Text style={styles.settingTitle}>Pause while looking up</Text>
-                        <Text style={styles.settingHint}>
+                        <View style={styles.settingHead}>
+                            <Icon name="pause-circle" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Pause while looking up</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>
                             Playback pauses when you open a word or sentence card and resumes when you close it
                         </Text>
                     </View>
@@ -303,8 +309,11 @@ const SettingsScreen = () => {
 
                 <View style={[styles.settingRow, styles.rowBorder]}>
                     <View style={{ flex: 1 }}>
-                        <Text style={styles.settingTitle}>Transcript text size</Text>
-                        <Text style={styles.settingHint}>{`${FONT_SIZE_MIN}–${FONT_SIZE_MAX} pt`}</Text>
+                        <View style={styles.settingHead}>
+                            <Icon name="type" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Transcript text size</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>{`${FONT_SIZE_MIN}–${FONT_SIZE_MAX} pt`}</Text>
                     </View>
                     <View style={styles.stepper}>
                         <TouchableOpacity
@@ -330,8 +339,11 @@ const SettingsScreen = () => {
                 </View>
 
                 <View style={styles.settingBlock}>
-                    <Text style={styles.settingTitle}>Default playback speed</Text>
-                    <View style={styles.chipWrap}>
+                    <View style={styles.settingHead}>
+                        <Icon name="fast-forward" size={15} color={colors.accent} />
+                        <Text style={styles.settingTitle}>Default playback speed</Text>
+                    </View>
+                    <View style={[styles.chipWrap, styles.indent]}>
                         {RATES.map((rate) => {
                             const selected = playbackRate === rate;
                             return (
@@ -358,8 +370,11 @@ const SettingsScreen = () => {
             <View style={styles.card}>
                 <View style={styles.settingRow}>
                     <View style={{ flex: 1 }}>
-                        <Text style={styles.settingTitle}>Ask to delete finished episodes</Text>
-                        <Text style={styles.settingHint}>
+                        <View style={styles.settingHead}>
+                            <Icon name="trash-2" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Ask to delete finished episodes</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>
                             When a downloaded episode plays to the end, offer to delete its download and transcript
                         </Text>
                     </View>
@@ -517,12 +532,16 @@ const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     content: { paddingTop: 16 },
 
+    // One left edge for everything: section labels, row icons and card text
+    // all start 32dp in (card margin 16 + card padding 16). Every row leads
+    // with a 15px icon + 10 gap, so titles line up and hints/chips indent by
+    // the same 25 under them.
     sectionLabel: {
         ...type.caption,
         fontWeight: '700',
         color: colors.textMuted,
         letterSpacing: 0.7,
-        paddingHorizontal: 20,
+        paddingHorizontal: 32,
         marginBottom: 10,
         marginTop: 24,
     },
@@ -611,6 +630,8 @@ const makeStyles = (colors) => StyleSheet.create({
         paddingVertical: 14,
         gap: 4,
     },
+    settingHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    indent: { marginLeft: 25 },
     settingTitle: { ...type.title, color: colors.textPrimary },
     settingHint: { fontSize: 12, color: colors.textMuted, lineHeight: 17 },
 
@@ -796,7 +817,7 @@ const makeStyles = (colors) => StyleSheet.create({
         marginHorizontal: 16,
         marginTop: 10,
         paddingVertical: 15,
-        paddingHorizontal: 18,
+        paddingHorizontal: 16,
         borderRadius: 14,
         backgroundColor: withAlpha(colors.purple, 0.07),
         borderWidth: 0.5,

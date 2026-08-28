@@ -245,10 +245,12 @@ const makeStyles = (colors) => StyleSheet.create({
         gap:             12,
         borderWidth:     0.5,
         borderColor:     colors.hairline,
-        shadowOffset:    { width: 0, height: 6 },
-        shadowOpacity:   0.45,
-        shadowRadius:    14,
-        elevation:       12,
+        // Soft lift only — the old 12dp elevation / 45% shadow read as a
+        // card floating high above the tab bar.
+        shadowOffset:    { width: 0, height: 2 },
+        shadowOpacity:   0.18,
+        shadowRadius:    6,
+        elevation:       4,
         overflow:        'hidden',
     },
     artwork: {
