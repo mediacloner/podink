@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -201,6 +201,24 @@ const migrateToV5 = async (txn) => {
     }
 };
 
+const migrateToV6 = async (txn) => {
+    // When the audio landed on the device (epoch ms; updateEpisodeLocalPath
+    // stamps it, deleteEpisodeLocalData clears it). The automatic cleanup of
+    // finished downloads (episodeService.sweepStaleFinishedDownloads) needs
+    // it: a Finished episode re-downloaded yesterday for a read-along must not
+    // be swept just because it was *heard* a month ago. Rows downloaded before
+    // the column existed are stamped with the upgrade moment, so their week
+    // starts now — nothing is deleted on the first launch after updating.
+    const cols = await txn.getAllAsync(`PRAGMA table_info(Episodes)`);
+    if (!cols.some(c => c.name === 'downloaded_at')) {
+        await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN downloaded_at INTEGER`);
+    }
+    await txn.runAsync(
+        `UPDATE Episodes SET downloaded_at = ? WHERE is_downloaded = 1 AND downloaded_at IS NULL`,
+        [Date.now()]
+    );
+};
+
 export const initDB = async () => {
     const db = await openDatabaseContext();
 
@@ -221,6 +239,7 @@ export const initDB = async () => {
         if (cur < 3) await migrateToV3(db);
         if (cur < 4) await migrateToV4(db);
         if (cur < 5) await migrateToV5(db);
+        if (cur < 6) await migrateToV6(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

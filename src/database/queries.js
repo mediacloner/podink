@@ -123,11 +123,14 @@ export const deletePodcast = async (feedUrl) => {
   });
 };
 
+/** The audio is on the device. downloaded_at (epoch ms) is the start of the
+ *  week the automatic cleanup gives a finished download (see
+ *  getStaleFinishedDownloads); re-stamped on every (re-)download. */
 export const updateEpisodeLocalPath = async (id, localPath) => {
   const db = await openDatabaseContext();
   await db.runAsync(
-    `UPDATE Episodes SET local_audio_path = ?, is_downloaded = 1 WHERE id = ?`,
-    [localPath, id]
+    `UPDATE Episodes SET local_audio_path = ?, is_downloaded = 1, downloaded_at = ? WHERE id = ?`,
+    [localPath, Date.now(), id]
   );
 };
 
@@ -202,7 +205,8 @@ export const deleteEpisodeLocalData = async (id) => {
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
     await db.runAsync(
-      `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0 WHERE id = ?`,
+      `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0, downloaded_at = NULL
+       WHERE id = ?`,
       [id]
     );
   });
@@ -269,13 +273,37 @@ export const getEpisodesByListeningState = async (state) => {
 };
 
 /** Manual "mark as played" (Listening tab swipe). Same end state as a
- *  natural finish — played, position back at the top — regardless of the
- *  current is_played value, unlike markEpisodePlayed's 0→1 guard. */
+ *  natural finish — played, position back at the top, last_played_at = now
+ *  (the Finished segment is "most recently finished first", and the week
+ *  the automatic cleanup allows a finished download counts from here) —
+ *  regardless of the current is_played value, unlike markEpisodePlayed's
+ *  0→1 guard. */
 export const markEpisodeFinished = async (id) => {
   const db = await openDatabaseContext();
   await db.runAsync(
-    `UPDATE Episodes SET is_played = 1, play_position = 0 WHERE id = ?`,
-    [id]
+    `UPDATE Episodes SET is_played = 1, play_position = 0, last_played_at = ? WHERE id = ?`,
+    [Date.now(), id]
+  );
+};
+
+/** Finished episodes whose download has outlived its use: heard to the end
+ *  (or marked Done) before `cutoffMs`, not replayed since — a replay clears
+ *  is_played (savePlayPosition) and so drops the row out of here until it
+ *  ends again with a fresh stamp — and downloaded before `cutoffMs` too, so
+ *  a re-download for a read-along gets its own week. Finished rows from
+ *  before last_played_at existed (NULL) count as old; their downloaded_at
+ *  was stamped at the v6 upgrade, which is what gives them a week's grace.
+ *  A NULL downloaded_at (never expected on a downloaded row) is left alone. */
+export const getStaleFinishedDownloads = async (cutoffMs) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT * FROM Episodes
+     WHERE is_played = 1
+       AND is_downloaded = 1 AND local_audio_path IS NOT NULL
+       AND COALESCE(last_played_at, 0) < ?
+       AND downloaded_at IS NOT NULL AND downloaded_at < ?
+     ORDER BY last_played_at ASC`,
+    [cutoffMs, cutoffMs]
   );
 };
 

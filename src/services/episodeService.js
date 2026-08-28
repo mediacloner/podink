@@ -1,7 +1,9 @@
 import TrackPlayer from 'react-native-track-player';
 import NetInfo from '@react-native-community/netinfo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-    clearPlayProgress, deleteEpisodeLocalData, markEpisodeFinished, markEpisodeSeen, updateEpisodeLocalPath,
+    clearPlayProgress, deleteEpisodeLocalData, getStaleFinishedDownloads, markEpisodeFinished, markEpisodeSeen,
+    updateEpisodeLocalPath,
 } from '../database/queries';
 import { deleteAudioFile, downloadAudioFile } from './downloadService';
 import { dequeueTranscription, enqueueTranscription } from './whisperService';
@@ -46,10 +48,16 @@ import { log } from './logService';
  *                                   job failed or was cancelled)
  *     delete download               removeEpisodeDownload — audio + transcript
  *                                   go, the row and its listening state stay
+ *     automatic cleanup             sweepStaleFinishedDownloads — a Finished
+ *                                   download that has not been replayed for a
+ *                                   week is removed the same way, on launch
+ *                                   and on resume (off switch in Settings →
+ *                                   Storage)
  *   Neither changes the listening state: a Finished episode whose download
- *   was deleted (the end-of-episode prompt) stays Finished; re-downloading it
- *   — from the Player's "Download & transcribe", a Listening swipe, or the
- *   Feed — brings the transcript back without touching played / position.
+ *   was deleted (the end-of-episode prompt, or the weekly sweep) stays
+ *   Finished; re-downloading it — from the Player's "Download & transcribe",
+ *   a Listening swipe, or the Feed — brings the transcript back without
+ *   touching played / position, and gives the download a fresh week.
  */
 
 // ─── Download ⇒ transcript ────────────────────────────────────────────────────
@@ -163,6 +171,71 @@ export const removeEpisodeDownload = async (episode) => {
     if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
     await deleteEpisodeLocalData(id);
     notifyLibraryChange({ type: 'episode-delete', episodeId: id });
+};
+
+// ─── Automatic cleanup of finished downloads ─────────────────────────────────
+
+/** Settings → Storage → "Delete finished episodes after a week": '1'/'0',
+ *  absent = on (same shape as ASK_DELETE_ON_FINISH_KEY). Read at sweep time,
+ *  so flipping it takes effect on the next launch / resume. */
+export const AUTO_DELETE_FINISHED_KEY = '@auto_delete_finished';
+/** How long a finished download is kept without a replay. */
+export const FINISHED_DOWNLOAD_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+/** The rule is day-granular; a sweep per foreground is plenty. */
+const SWEEP_MIN_INTERVAL_MS = 60 * 60 * 1000;
+let _lastSweepAt = 0;
+
+/**
+ * Remove the download (audio + transcript) of every Finished episode that
+ * has gone a week without a replay — heard to the end or marked Done more
+ * than FINISHED_DOWNLOAD_KEEP_MS ago, and downloaded at least that long ago
+ * too (a re-download for a read-along gets its own week). The episode row
+ * stays Finished and streamable, exactly as after the end-of-episode
+ * prompt's "Delete"; the prompt's "Keep" only defers to this sweep.
+ *
+ * Called on launch (after initDB) and on every return to the foreground —
+ * the app can sit cached in the background for days. Throttled to one run an
+ * hour unless `force`. The loaded track is skipped (it would tear the player
+ * down under the MiniPlayer); it is picked up on the next cold start, when
+ * nothing is loaded. Never throws; resolves with the number of downloads
+ * removed.
+ */
+export const sweepStaleFinishedDownloads = async ({ force = false } = {}) => {
+    const now = Date.now();
+    if (!force && now - _lastSweepAt < SWEEP_MIN_INTERVAL_MS) return 0;
+
+    // Checked before the throttle is armed, so switching the setting on in
+    // Settings takes effect on the very next resume, not an hour later.
+    let enabled = true;
+    try { enabled = (await AsyncStorage.getItem(AUTO_DELETE_FINISHED_KEY)) !== '0'; } catch (_) {}
+    if (!enabled) return 0;
+    _lastSweepAt = now;
+
+    let stale = [];
+    try {
+        stale = await getStaleFinishedDownloads(now - FINISHED_DOWNLOAD_KEEP_MS);
+    } catch (e) {
+        log('SYSTEM', 'Finished-download sweep query failed', { error: e?.message || String(e) });
+        return 0;
+    }
+    if (!stale.length) return 0;
+
+    let activeId = null;
+    try { activeId = (await TrackPlayer.getActiveTrack())?.id ?? null; } catch (_) {}
+
+    log('SYSTEM', 'Finished-download sweep', { candidates: stale.length, activeId });
+    let removed = 0;
+    for (const ep of stale) {
+        if (ep.id === activeId) continue;
+        try {
+            await removeEpisodeDownload(ep);
+            removed += 1;
+        } catch (e) {
+            log('SYSTEM', 'Finished-download sweep: remove failed', { id: ep.id, error: e?.message || String(e) });
+        }
+    }
+    log('SYSTEM', 'Finished-download sweep done', { removed });
+    return removed;
 };
 
 // ─── Manual listening-state changes ──────────────────────────────────────────

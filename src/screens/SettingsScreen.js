@@ -10,6 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SHERPA_MODELS, ensureSherpaModel, isSherpaModelDownloaded, deleteSherpaModel } from '../services/downloadService';
 import { resetService } from '../services/whisperService';
 import { ASK_DELETE_ON_FINISH_KEY } from '../services/playbackService';
+import { AUTO_DELETE_FINISHED_KEY } from '../services/episodeService';
 import { showAlert } from '../components/AppAlert';
 import { useTheme, useStyles, withAlpha, type, THEMES, THEME_OPTIONS } from '../theme';
 
@@ -67,6 +68,8 @@ const SettingsScreen = () => {
     const [pauseOnLookup, setPauseOnLookup] = useState(true);
     // Same shape; FinishedEpisodePrompt reads it when a downloaded episode ends.
     const [askDeleteOnFinish, setAskDeleteOnFinish] = useState(true);
+    // Same shape; episodeService's sweep reads it on launch / resume.
+    const [autoDeleteFinished, setAutoDeleteFinished] = useState(true);
 
     useEffect(() => { loadPreference(); loadLearningPrefs(); }, []);
     useEffect(() => { checkModelStatus(selectedModel); }, [selectedModel]);
@@ -94,16 +97,18 @@ const SettingsScreen = () => {
 
     const loadLearningPrefs = async () => {
         try {
-            const [lang, size, rate, pause, askDelete] = await Promise.all([
+            const [lang, size, rate, pause, askDelete, autoDelete] = await Promise.all([
                 AsyncStorage.getItem('@translation_lang'),
                 AsyncStorage.getItem('@transcript_font_size'),
                 AsyncStorage.getItem('@playback_rate'),
                 AsyncStorage.getItem('@pause_on_lookup'),
                 AsyncStorage.getItem(ASK_DELETE_ON_FINISH_KEY),
+                AsyncStorage.getItem(AUTO_DELETE_FINISHED_KEY),
             ]);
             if (lang) setTranslationLang(lang);
             setPauseOnLookup(pause !== '0');
             setAskDeleteOnFinish(askDelete !== '0');
+            setAutoDeleteFinished(autoDelete !== '0');
             if (size) {
                 const parsed = parseInt(size, 10);
                 if (!Number.isNaN(parsed)) {
@@ -143,6 +148,11 @@ const SettingsScreen = () => {
     const saveAskDeleteOnFinish = async (on) => {
         setAskDeleteOnFinish(on);
         try { await AsyncStorage.setItem(ASK_DELETE_ON_FINISH_KEY, on ? '1' : '0'); } catch (e) {}
+    };
+
+    const saveAutoDeleteFinished = async (on) => {
+        setAutoDeleteFinished(on);
+        try { await AsyncStorage.setItem(AUTO_DELETE_FINISHED_KEY, on ? '1' : '0'); } catch (e) {}
     };
 
     const savePreference = async (modelId) => {
@@ -368,7 +378,7 @@ const SettingsScreen = () => {
             <Text style={styles.sectionLabel}>STORAGE</Text>
 
             <View style={styles.card}>
-                <View style={styles.settingRow}>
+                <View style={[styles.settingRow, styles.rowBorder]}>
                     <View style={{ flex: 1 }}>
                         <View style={styles.settingHead}>
                             <Icon name="trash-2" size={15} color={colors.accent} />
@@ -385,6 +395,25 @@ const SettingsScreen = () => {
                         thumbColor={askDeleteOnFinish ? colors.accent : colors.textSecondary}
                         ios_backgroundColor={colors.surfaceHigh}
                         accessibilityLabel="Ask to delete a downloaded episode when it finishes"
+                    />
+                </View>
+                <View style={styles.settingRow}>
+                    <View style={{ flex: 1 }}>
+                        <View style={styles.settingHead}>
+                            <Icon name="clock" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Delete finished episodes after a week</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>
+                            Downloads and transcripts of episodes you finished a week ago and haven't replayed are removed automatically. The episodes stay in your feed, marked as played.
+                        </Text>
+                    </View>
+                    <Switch
+                        value={autoDeleteFinished}
+                        onValueChange={saveAutoDeleteFinished}
+                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.accent, 0.45) }}
+                        thumbColor={autoDeleteFinished ? colors.accent : colors.textSecondary}
+                        ios_backgroundColor={colors.surfaceHigh}
+                        accessibilityLabel="Automatically delete finished episodes that have not been replayed for a week"
                     />
                 </View>
             </View>

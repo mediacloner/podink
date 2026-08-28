@@ -13,6 +13,11 @@ import { log } from '../services/logService';
  * never prompt, and Settings → Storage → "Ask to delete finished episodes"
  * turns the prompt off entirely (checked on every ask, not cached).
  *
+ * "Keep" keeps the download for now, not forever: unless switched off in
+ * Settings → Storage, the weekly sweep — episodeService's
+ * sweepStaleFinishedDownloads — removes it once the episode has gone a week
+ * without a replay.
+ *
  * Two entry points, same handler:
  *  - live: playbackService's onEpisodeEnded (State.Ended, i.e. the real end
  *    of the audio — not the final-stretch "played" window, which would

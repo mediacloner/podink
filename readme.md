@@ -12,6 +12,7 @@ A React Native podcast app with on-device AI transcription, word-by-word transcr
 - Listening tab — every episode by state: New · In progress · Finished; swipe right to mark Done (or Unplayed on a finished row), swipe left to delete a download
 - Refreshing feeds shows a thin loading line under the Feed title and never blocks the tabs
 - When a downloaded episode plays to the end, a prompt offers to delete the download (audio + transcript) to free up space — switchable off in Settings → Storage
+- Finished episodes that go a week without a replay have their download and transcript removed automatically (the episode stays, marked as played; re-download it from Listening → Finished) — switchable off in Settings → Storage
 - Settings live behind a gear in the header, not a tab
 - Background audio with lock screen / notification controls
 
@@ -84,7 +85,7 @@ src/
 └── services/
     ├── trackPlayer.js            # react-native-track-player wrapper
     ├── playbackService.js        # Background playback event handler
-    ├── episodeService.js         # Remove an episode's download (shared by Library + finished prompt)
+    ├── episodeService.js         # Episode actions shared by every tab: download ⇒ transcribe, remove download, Done / Unplayed, weekly cleanup of finished downloads
     ├── whisperService.js         # Transcription queue & model management
     ├── downloadService.js        # Audio & model downloads with progress
     └── colorExtractor.js         # Dominant color extraction from artwork
@@ -109,7 +110,8 @@ src/
 | has_transcript | INTEGER | 0 or 1 |
 | play_position | INTEGER | Seconds |
 | is_played | INTEGER | 0 or 1 — set when playback reaches the end |
-| last_played_at | INTEGER | Epoch ms of the last saved position (orders Continue Listening) |
+| last_played_at | INTEGER | Epoch ms of the last saved position or manual Done (orders the Listening tab; start of a finished download's cleanup week) |
+| downloaded_at | INTEGER | Epoch ms the audio landed on the device; NULL when not downloaded (a re-download gets a fresh cleanup week) |
 
 **Podcasts**
 | Column | Type | Notes |

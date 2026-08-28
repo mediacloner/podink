@@ -13,6 +13,7 @@ import { setupPlayer, ensurePlayerAlive, onUserPlay, onUserStop } from './servic
 import { restoreQueue, initializeWhisper } from './services/whisperService';
 import { cleanupOldWhisperModels } from './services/downloadService';
 import { restoreLogs } from './services/logService';
+import { sweepStaleFinishedDownloads } from './services/episodeService';
 import { getTotalNewEpisodesCount } from './database/queries';
 import { onLibraryChange } from './services/libraryEvents';
 import { ThemeProvider, useTheme, useStyles, type } from './theme';
@@ -178,6 +179,9 @@ const AppRoot = () => {
                 console.log('Database Initialized');
                 restoreQueue();
                 cleanupOldWhisperModels();
+                // Finished downloads that went a week without a replay go
+                // (audio + transcript); the rows stay. Also on each resume.
+                sweepStaleFinishedDownloads();
                 // Pre-warm STT model so the first transcription doesn't pay cold-start.
                 initializeWhisper();
             })
@@ -189,12 +193,17 @@ const AppRoot = () => {
     // Android can destroy the track-player service while this JS process stays
     // cached, so resuming from recents leaves every transport command hitting a
     // dead player (play button does nothing). Probe on each resume and rebuild.
+    // The same resume is when a cached process notices that days have passed:
+    // re-run the finished-download sweep (self-throttled to once an hour).
     useEffect(() => {
         const sub = AppState.addEventListener('change', (next) => {
-            if (next === 'active') ensurePlayerAlive();
+            if (next === 'active') {
+                ensurePlayerAlive();
+                if (dbReady) sweepStaleFinishedDownloads();
+            }
         });
         return () => sub.remove();
-    }, []);
+    }, [dbReady]);
 
     // Status-bar icons follow the palette; the bar itself is transparent
     // (edge-to-edge), so only the icon style matters.
