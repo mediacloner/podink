@@ -7,8 +7,13 @@
  * { type, episodeId?, percent? } with type one of:
  * 'download-complete' | 'episode-delete' | 'transcript-progress' |
  * 'transcript-complete' | 'transcript-error' | 'transcript-delete' |
- * 'subscribe' | 'unsubscribe' | 'playback-complete'.
+ * 'subscribe' | 'unsubscribe' | 'playback-complete' | 'playback-progress'.
  * Subscribers must tolerate an undefined payload.
+ *
+ * 'playback-progress' fires on every persisted play position (~5s while
+ * something plays). Like 'transcript-progress' it is a high-frequency tick —
+ * list screens should skip their full reload for it unless they show
+ * progress (Continue Listening does).
  */
 const _listeners = new Set();
 

@@ -35,6 +35,9 @@ const EpisodeItem = ({
     // the description (with an explicit Play button) instead of navigating.
     showArtwork = false,
     expandOnPress = false,
+    // Continue Listening variant: no download/transcribe column — the row
+    // exists to be resumed, so a single play glyph stands in for the pills.
+    hideActions = false,
 }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -163,6 +166,11 @@ const EpisodeItem = ({
                 </View>
 
                 {/* Right: action pills intercept their own touches */}
+                {hideActions ? (
+                    <View style={styles.resumeCol} pointerEvents="none">
+                        <Icon name="play-circle" size={24} color={colors.accent} />
+                    </View>
+                ) : (
                 <View style={styles.right} collapsable={false}>
                     {!episode.is_downloaded ? (
                         <Pill
@@ -237,6 +245,7 @@ const EpisodeItem = ({
                         </View>
                     )}
                 </View>
+                )}
             </TouchableOpacity>
 
             {/* Bottom strip. With expandOnPress the whole row is the toggle, so
@@ -360,6 +369,7 @@ const makeStyles = (colors) => StyleSheet.create({
 
     /* Right column */
     right: { alignItems: 'flex-end', justifyContent: 'center', minWidth: 90 },
+    resumeCol: { justifyContent: 'center', paddingLeft: 4 },
     downloadedCol: { alignItems: 'flex-end', gap: 8 },
     actionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 

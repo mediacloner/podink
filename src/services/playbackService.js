@@ -1,4 +1,5 @@
 import TrackPlayer, { Event, State } from 'react-native-track-player';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { savePlayPosition, markEpisodePlayed, setEpisodeDurationIfMissing } from '../database/queries';
 import { notifyLibraryChange } from './libraryEvents';
 
@@ -46,8 +47,32 @@ export const persistProgress = async (trackId, position, duration, { ended = fal
             }
         } else if (position > 0) {
             await savePlayPosition(trackId, Math.floor(position));
+            notifyLibraryChange({ type: 'playback-progress', episodeId: trackId });
         }
     } catch (_) {}
+};
+
+// ─── "Episode ended" signal ──────────────────────────────────────────────────
+// Distinct from 'playback-complete' (which fires once, on the is_played 0→1
+// transition, and also inside the final-stretch window while audio is still
+// playing): this fires every time the player actually reaches the end of the
+// track — including re-listens of an already-played episode — and is what
+// the finished-episode prompt ("delete the download?") keys off. Prompting on
+// the window would interrupt the outro and offer to delete a file in use.
+//
+// The id is parked in AsyncStorage before listeners run: with
+// ContinuePlayback the foreground service keeps playing after the app is
+// swiped from recents, so the UI (and its listeners) may be gone when the
+// episode ends. FinishedEpisodePrompt reads the key on mount and clears it
+// once the user answers.
+export const FINISHED_PROMPT_KEY = '@finished_episode_prompt';
+const _endedListeners = new Set();
+export const onEpisodeEnded = (cb) => { _endedListeners.add(cb); return () => _endedListeners.delete(cb); };
+
+const announceEpisodeEnded = async (trackId) => {
+    if (!trackId) return;
+    try { await AsyncStorage.setItem(FINISHED_PROMPT_KEY, String(trackId)); } catch (_) {}
+    [..._endedListeners].forEach(cb => { try { cb(trackId); } catch (_) {} });
 };
 
 const saveCurrentPositionNow = async ({ ended = false } = {}) => {
@@ -60,6 +85,7 @@ const saveCurrentPositionNow = async ({ ended = false } = {}) => {
         // Player-reported duration (not Episodes.duration), so completion
         // works even for feeds without an <itunes:duration> tag.
         await persistProgress(track?.id, position, duration, { ended });
+        if (ended) await announceEpisodeEnded(track?.id);
     } catch (_) {}
 };
 

@@ -9,7 +9,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
 import SwipeableRow, { closeOpenRow } from '../components/SwipeableRow';
 import EmptyState from '../components/EmptyState';
-import { getDownloadedEpisodes, deleteEpisodeLocalData, deleteEpisodeTranscript } from '../database/queries';
+import { getDownloadedEpisodes, deleteEpisodeTranscript } from '../database/queries';
 import {
     enqueueTranscription,
     dequeueTranscription,
@@ -18,7 +18,7 @@ import {
     getActiveId,
     getAbortingId,
 } from '../services/whisperService';
-import { deleteAudioFile } from '../services/downloadService';
+import { removeEpisodeDownload } from '../services/episodeService';
 import { onLibraryChange, notifyLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
 import { withAlpha, type, useStyles, useTheme } from '../theme';
@@ -202,9 +202,11 @@ const DownloadedTimeline = ({ navigation }) => {
     useEffect(() => {
         const unsubQueue = onQueueChange(syncQueue);
         // Library events are payload-aware: per-window transcript progress is
-        // handled inside each row, so skip the full reload for those ticks.
+        // handled inside each row and play-position ticks (~5s while playing)
+        // only matter to Continue Listening, so skip the full reload for both.
         const unsubLib = onLibraryChange((payload) => {
-            if (payload?.type === 'transcript-progress') return;
+            const t = payload?.type;
+            if (t === 'transcript-progress' || t === 'playback-progress') return;
             loadData();
         });
         return () => { unsubQueue(); unsubLib(); };
@@ -326,12 +328,10 @@ const DownloadedTimeline = ({ navigation }) => {
     }, [loadData]);
 
     const handleDelete = useCallback(async (episode) => {
-        log('UI', 'Delete episode', { id: episode.id, title: episode.title });
         try {
-            dequeueTranscription(episode.id);
-            if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
-            await deleteEpisodeLocalData(episode.id);
-            notifyLibraryChange({ type: 'episode-delete', episodeId: episode.id });
+            // Shared with the finished-episode prompt: dequeues, stops the
+            // player if this is the loaded track, deletes file + transcript.
+            await removeEpisodeDownload(episode);
         } catch (e) {
             log('UI', 'Delete failed', { id: episode.id, error: e?.message || String(e) });
             showAlert('Delete failed', 'Could not remove this episode. Please try again.');

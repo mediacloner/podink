@@ -68,6 +68,18 @@ const SettingsScreen = () => {
     useEffect(() => { loadPreference(); loadLearningPrefs(); }, []);
     useEffect(() => { checkModelStatus(selectedModel); }, [selectedModel]);
 
+    // A stack screen since 2.3.0 (opened from the header gear), so it styles
+    // its own header like Vocabulary / Debug Log do.
+    useEffect(() => {
+        navigation.setOptions({
+            headerStyle: { backgroundColor: colors.bg },
+            headerTintColor: colors.textPrimary,
+            headerTitleStyle: { ...type.heading },
+            headerShadowVisible: false,
+            title: 'Settings',
+        });
+    }, [navigation, colors]);
+
     const loadPreference = async () => {
         try {
             const saved = await AsyncStorage.getItem('@whisper_model');
@@ -183,7 +195,7 @@ const SettingsScreen = () => {
     };
 
     return (
-        <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingBottom: bottom + 58 }]}>
+        <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingBottom: bottom + 24 }]}>
 
             {/* Section: Appearance */}
             <Text style={styles.sectionLabel}>APPEARANCE</Text>
@@ -229,7 +241,7 @@ const SettingsScreen = () => {
             <View style={styles.card}>
                 <TouchableOpacity
                     style={[styles.settingRow, styles.rowBorder]}
-                    onPress={() => navigation.getParent()?.navigate('Vocabulary')}
+                    onPress={() => navigation.navigate('Vocabulary')}
                     activeOpacity={0.7}
                     accessibilityRole="button"
                     accessibilityLabel="Open saved vocabulary"
@@ -453,7 +465,7 @@ const SettingsScreen = () => {
 
             <TouchableOpacity
                 style={styles.logBtn}
-                onPress={() => navigation.getParent()?.navigate('DebugLog')}
+                onPress={() => navigation.navigate('DebugLog')}
                 accessibilityRole="button"
                 accessibilityLabel="Open debug log"
             >

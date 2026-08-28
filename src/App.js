@@ -19,12 +19,15 @@ import { ThemeProvider, useTheme, useStyles, type } from './theme';
 
 import SubscribedTimeline from './screens/SubscribedTimeline';
 import DownloadedTimeline from './screens/DownloadedTimeline';
+import InProgressScreen from './screens/InProgressScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import PodcastsScreen from './screens/PodcastsScreen';
 import LogScreen from './screens/LogScreen';
 import VocabularyScreen from './screens/VocabularyScreen';
 import MiniPlayer from './components/MiniPlayer';
+import FinishedEpisodePrompt from './components/FinishedEpisodePrompt';
+import SettingsGearButton from './components/SettingsGearButton';
 
 LogBox.ignoreLogs(['Attempted to import the module']);
 
@@ -32,10 +35,10 @@ const Stack = createNativeStackNavigator();
 const Tab   = createBottomTabNavigator();
 
 const TAB_ICONS = {
-    Timeline: 'rss',
-    Podcasts: 'headphones',
-    Library:  'archive',
-    Settings: 'sliders',
+    Timeline:   'rss',
+    Podcasts:   'headphones',
+    Library:    'archive',
+    InProgress: 'play-circle',
 };
 
 // React Navigation theme derived from the active palette (headers, tab bar
@@ -127,6 +130,10 @@ const TabNavigator = ({ navigation }) => {
                     tabBarIcon: ({ color, size }) => (
                         <Icon name={TAB_ICONS[route.name] || 'circle'} size={size} color={color} />
                     ),
+                    // Settings left the tab bar in 2.3.0 — it sits behind a
+                    // gear in every tab header (the Feed adds its own copy
+                    // next to "+", since setOptions replaces headerRight).
+                    headerRight: () => <SettingsGearButton style={{ marginRight: 16 }} />,
                 })}
             >
                 <Tab.Screen name="Timeline" component={SubscribedTimeline} options={{ title: 'Feed' }} />
@@ -139,7 +146,11 @@ const TabNavigator = ({ navigation }) => {
                     }}
                 />
                 <Tab.Screen name="Library"  component={DownloadedTimeline}  options={{ title: 'Library' }} />
-                <Tab.Screen name="Settings" component={SettingsScreen} />
+                <Tab.Screen
+                    name="InProgress"
+                    component={InProgressScreen}
+                    options={{ title: 'Continue Listening', tabBarLabel: 'In Progress' }}
+                />
             </Tab.Navigator>
 
             {showMiniPlayer && (
@@ -199,6 +210,7 @@ const AppRoot = () => {
         <SafeAreaProvider>
             {statusBar}
             <AppAlert />
+            <FinishedEpisodePrompt />
             <NavigationContainer theme={navTheme}>
                 <Stack.Navigator screenOptions={{ headerShown: false }}>
                     <Stack.Screen
@@ -213,6 +225,11 @@ const AppRoot = () => {
                             gestureEnabled:   true,
                             gestureDirection: 'vertical',
                         }}
+                    />
+                    <Stack.Screen
+                        name="Settings"
+                        component={SettingsScreen}
+                        options={{ headerShown: true }}
                     />
                     <Stack.Screen
                         name="Vocabulary"

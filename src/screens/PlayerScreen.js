@@ -254,13 +254,18 @@ const PlayerScreen = ({ route, navigation }) => {
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
             } else if (payload.type === 'transcript-error') {
                 setTranscribing(false);
+            } else if (payload.type === 'episode-delete') {
+                // The finished-episode prompt (or the Library) removed this
+                // episode's download and transcript and reset the player —
+                // there is nothing left to show or play here.
+                if (navigation.canGoBack()) navigation.goBack();
             }
         });
         return () => {
             unsub();
             if (st.timer) clearTimeout(st.timer);
         };
-    }, [epId, refetchTranscript]);
+    }, [epId, refetchTranscript, navigation]);
 
     // ── Transcription queue state for this episode ────────────────────────────
     const syncQueue = useCallback(() => {

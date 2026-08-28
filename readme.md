@@ -9,6 +9,9 @@ A React Native podcast app with on-device AI transcription, word-by-word transcr
 - Browse episodes from all subscribed feeds
 - Stream episodes or download for offline listening
 - Resume playback from where you left off (position saved every 5s)
+- Continue Listening tab — every episode you started but haven't finished, most recently heard first; swipe to mark as played
+- When a downloaded episode plays to the end, a prompt offers to delete the download (audio + transcript) to free up space
+- Settings live behind a gear in the header, not a tab
 - Background audio with lock screen / notification controls
 
 ### Playback
@@ -60,6 +63,8 @@ src/
 │   └── podcastResolver.js        # Resolves Apple Podcasts URLs → RSS feed URLs
 ├── components/
 │   ├── EpisodeItem.js            # Episode list row with download/transcribe actions
+│   ├── FinishedEpisodePrompt.js  # "Delete the download?" alert when a downloaded episode ends
+│   ├── SettingsGearButton.js     # Header gear that opens Settings
 │   ├── MiniPlayer.js             # Floating compact player above tab bar
 │   ├── PlayerControls.js         # Full-screen playback controls (slider, skip, play/pause)
 │   └── TranscriptHighlighter.js  # Word-synced transcript with auto-scroll & translation
@@ -69,12 +74,14 @@ src/
 ├── screens/
 │   ├── SubscribedTimeline.js     # "Discover" tab — browse & add podcast feeds
 │   ├── DownloadedTimeline.js     # "Library" tab — manage downloads & transcription queue
+│   ├── InProgressScreen.js       # "In Progress" tab — started-but-unfinished episodes (Continue Listening)
 │   ├── PodcastsScreen.js         # "My Podcasts" tab — subscriptions list
 │   ├── PlayerScreen.js           # Full-screen player modal
-│   └── SettingsScreen.js         # Transcription model management
+│   └── SettingsScreen.js         # Settings (stack screen behind the header gear)
 └── services/
     ├── trackPlayer.js            # react-native-track-player wrapper
     ├── playbackService.js        # Background playback event handler
+    ├── episodeService.js         # Remove an episode's download (shared by Library + finished prompt)
     ├── whisperService.js         # Transcription queue & model management
     ├── downloadService.js        # Audio & model downloads with progress
     └── colorExtractor.js         # Dominant color extraction from artwork
@@ -98,6 +105,8 @@ src/
 | is_downloaded | INTEGER | 0 or 1 |
 | has_transcript | INTEGER | 0 or 1 |
 | play_position | INTEGER | Seconds |
+| is_played | INTEGER | 0 or 1 — set when playback reaches the end |
+| last_played_at | INTEGER | Epoch ms of the last saved position (orders Continue Listening) |
 
 **Podcasts**
 | Column | Type | Notes |

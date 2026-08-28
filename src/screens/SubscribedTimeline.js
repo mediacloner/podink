@@ -14,6 +14,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
 import EmptyState from '../components/EmptyState';
+import SettingsGearButton from '../components/SettingsGearButton';
 import {
     getSubscribedEpisodes, saveEpisodesBatch, updateEpisodeLocalPath, savePodcast,
     getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes,
@@ -100,21 +101,25 @@ const SubscribedTimeline = ({ navigation }) => {
         if (payload?.type === 'playback-complete') loadData();
     }), []);
 
+    // setOptions replaces the tab-level headerRight (the Settings gear), so
+    // render both here: "+" for feeds, gear for Settings.
     useEffect(() => {
         navigation.setOptions({
             headerRight: () => (
-                <TouchableOpacity
-                    onPress={togglePanel}
-                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                    style={{ marginRight: 16 }}
-                    accessibilityRole="button"
-                    accessibilityLabel={panelOpen ? 'Close add-feed panel' : 'Add a podcast feed'}
-                >
-                    <Icon name={panelOpen ? 'x' : 'plus'} size={22} color={colors.accent} />
-                </TouchableOpacity>
+                <View style={styles.headerActions}>
+                    <TouchableOpacity
+                        onPress={togglePanel}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={panelOpen ? 'Close add-feed panel' : 'Add a podcast feed'}
+                    >
+                        <Icon name={panelOpen ? 'x' : 'plus'} size={22} color={colors.accent} />
+                    </TouchableOpacity>
+                    <SettingsGearButton />
+                </View>
             ),
         });
-    }, [panelOpen]);
+    }, [panelOpen, colors, styles]);
 
     const loadData = async () => {
         try {
@@ -509,6 +514,7 @@ const SubscribedTimeline = ({ navigation }) => {
 
 const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 20, marginRight: 16 },
 
     inputPanel: {
         borderBottomWidth: 0.5,
