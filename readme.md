@@ -10,7 +10,7 @@ A React Native podcast app with on-device AI transcription, word-by-word transcr
 - Stream episodes or download for offline listening
 - Resume playback from where you left off (position saved every 5s)
 - Continue Listening tab — every episode you started but haven't finished, most recently heard first; swipe to mark as played
-- When a downloaded episode plays to the end, a prompt offers to delete the download (audio + transcript) to free up space
+- When a downloaded episode plays to the end, a prompt offers to delete the download (audio + transcript) to free up space — switchable off in Settings → Storage
 - Settings live behind a gear in the header, not a tab
 - Background audio with lock screen / notification controls
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { showAlert } from './AppAlert';
-import { onEpisodeEnded, FINISHED_PROMPT_KEY } from '../services/playbackService';
+import { onEpisodeEnded, FINISHED_PROMPT_KEY, ASK_DELETE_ON_FINISH_KEY } from '../services/playbackService';
 import { removeEpisodeDownload } from '../services/episodeService';
 import { getEpisodeById } from '../database/queries';
 import { log } from '../services/logService';
@@ -10,7 +10,8 @@ import { log } from '../services/logService';
  * FinishedEpisodePrompt — renders nothing. When a *downloaded* episode plays
  * to its end, asks whether to delete the download (audio + transcript) now
  * that it has been heard. Streamed episodes have nothing to free, so they
- * never prompt.
+ * never prompt, and Settings → Storage → "Ask to delete finished episodes"
+ * turns the prompt off entirely (checked on every ask, not cached).
  *
  * Two entry points, same handler:
  *  - live: playbackService's onEpisodeEnded (State.Ended, i.e. the real end
@@ -37,11 +38,16 @@ const FinishedEpisodePrompt = () => {
             if (!alive || !episodeId || askingRef.current === episodeId) return;
             askingRef.current = episodeId;
 
+            let enabled = true;
+            try { enabled = (await AsyncStorage.getItem(ASK_DELETE_ON_FINISH_KEY)) !== '0'; } catch (_) {}
             let ep = null;
-            try { ep = await getEpisodeById(episodeId); } catch (_) {}
+            if (enabled) {
+                try { ep = await getEpisodeById(episodeId); } catch (_) {}
+            }
             if (!alive) return;
-            if (!ep || !ep.is_downloaded || !ep.local_audio_path) {
-                // Streamed, unsubscribed, or already deleted: nothing to free.
+            if (!enabled || !ep || !ep.is_downloaded || !ep.local_audio_path) {
+                // Turned off in Settings — or streamed, unsubscribed, already
+                // deleted: nothing to ask. Drop the parked id either way.
                 askingRef.current = null;
                 clearPending();
                 return;

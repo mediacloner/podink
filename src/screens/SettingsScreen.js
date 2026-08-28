@@ -9,6 +9,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SHERPA_MODELS, ensureSherpaModel, isSherpaModelDownloaded, deleteSherpaModel } from '../services/downloadService';
 import { resetService } from '../services/whisperService';
+import { ASK_DELETE_ON_FINISH_KEY } from '../services/playbackService';
 import { showAlert } from '../components/AppAlert';
 import { useTheme, useStyles, withAlpha, type, THEMES, THEME_OPTIONS } from '../theme';
 
@@ -64,6 +65,8 @@ const SettingsScreen = () => {
     const [playbackRate, setPlaybackRate] = useState('1');
     // Stored as '1'/'0'; absent means on (TranscriptHighlighter reads the same key).
     const [pauseOnLookup, setPauseOnLookup] = useState(true);
+    // Same shape; FinishedEpisodePrompt reads it when a downloaded episode ends.
+    const [askDeleteOnFinish, setAskDeleteOnFinish] = useState(true);
 
     useEffect(() => { loadPreference(); loadLearningPrefs(); }, []);
     useEffect(() => { checkModelStatus(selectedModel); }, [selectedModel]);
@@ -91,14 +94,16 @@ const SettingsScreen = () => {
 
     const loadLearningPrefs = async () => {
         try {
-            const [lang, size, rate, pause] = await Promise.all([
+            const [lang, size, rate, pause, askDelete] = await Promise.all([
                 AsyncStorage.getItem('@translation_lang'),
                 AsyncStorage.getItem('@transcript_font_size'),
                 AsyncStorage.getItem('@playback_rate'),
                 AsyncStorage.getItem('@pause_on_lookup'),
+                AsyncStorage.getItem(ASK_DELETE_ON_FINISH_KEY),
             ]);
             if (lang) setTranslationLang(lang);
             setPauseOnLookup(pause !== '0');
+            setAskDeleteOnFinish(askDelete !== '0');
             if (size) {
                 const parsed = parseInt(size, 10);
                 if (!Number.isNaN(parsed)) {
@@ -133,6 +138,11 @@ const SettingsScreen = () => {
     const savePauseOnLookup = async (on) => {
         setPauseOnLookup(on);
         try { await AsyncStorage.setItem('@pause_on_lookup', on ? '1' : '0'); } catch (e) {}
+    };
+
+    const saveAskDeleteOnFinish = async (on) => {
+        setAskDeleteOnFinish(on);
+        try { await AsyncStorage.setItem(ASK_DELETE_ON_FINISH_KEY, on ? '1' : '0'); } catch (e) {}
     };
 
     const savePreference = async (modelId) => {
@@ -339,6 +349,28 @@ const SettingsScreen = () => {
                             );
                         })}
                     </View>
+                </View>
+            </View>
+
+            {/* Section: Storage */}
+            <Text style={styles.sectionLabel}>STORAGE</Text>
+
+            <View style={styles.card}>
+                <View style={styles.settingRow}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={styles.settingTitle}>Ask to delete finished episodes</Text>
+                        <Text style={styles.settingHint}>
+                            When a downloaded episode plays to the end, offer to delete its download and transcript
+                        </Text>
+                    </View>
+                    <Switch
+                        value={askDeleteOnFinish}
+                        onValueChange={saveAskDeleteOnFinish}
+                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.accent, 0.45) }}
+                        thumbColor={askDeleteOnFinish ? colors.accent : colors.textSecondary}
+                        ios_backgroundColor={colors.surfaceHigh}
+                        accessibilityLabel="Ask to delete a downloaded episode when it finishes"
+                    />
                 </View>
             </View>
 

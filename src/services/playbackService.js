@@ -66,6 +66,10 @@ export const persistProgress = async (trackId, position, duration, { ended = fal
 // episode ends. FinishedEpisodePrompt reads the key on mount and clears it
 // once the user answers.
 export const FINISHED_PROMPT_KEY = '@finished_episode_prompt';
+// Settings → Storage toggle for that prompt: '1'/'0', absent = on (same shape
+// as '@pause_on_lookup'). The service parks the id regardless; the prompt
+// reads this at ask time, so flipping it takes effect on the next finish.
+export const ASK_DELETE_ON_FINISH_KEY = '@ask_delete_on_finish';
 const _endedListeners = new Set();
 export const onEpisodeEnded = (cb) => { _endedListeners.add(cb); return () => _endedListeners.delete(cb); };
 
