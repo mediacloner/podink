@@ -5,8 +5,19 @@ import Animated, {
     FadeInDown, FadeOut, useAnimatedStyle, useSharedValue, withSpring,
 } from 'react-native-reanimated';
 import Pill from './Pill';
-import { colors, type } from '../theme';
+import { type, useStyles, useTheme } from '../theme';
 import { onTranscriptProgress, getLastProgress } from '../services/whisperService';
+
+// "1h 23m" / "45 min" / "<1 min". Whole minutes throughout, so 1h 59m 40s
+// reads "2h" rather than "1h 60m".
+export const formatDuration = (seconds) => {
+    const minutes = Math.round((seconds || 0) / 60);
+    if (minutes < 1) return '<1 min';
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    return `${minutes} min`;
+};
 
 const EpisodeItem = ({
     episode,
@@ -24,7 +35,12 @@ const EpisodeItem = ({
     // the description (with an explicit Play button) instead of navigating.
     showArtwork = false,
     expandOnPress = false,
+    // Listening-tab variant: no download/transcribe column — the row
+    // exists to be resumed, so a single play glyph stands in for the pills.
+    hideActions = false,
 }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
     const [expanded, setExpanded] = useState(false);
     // Per-row transcription progress: subscribing here means a 1% tick
     // re-renders this row only, never the whole screen.
@@ -64,6 +80,19 @@ const EpisodeItem = ({
         year: 'numeric',
     });
 
+    // Total length (from the feed, or stored by the player once it has run)
+    // and where a started-but-unfinished listen stands. Completion resets
+    // play_position to 0, so a position > 0 always means "in progress".
+    const durationSec = episode.duration > 0 ? episode.duration : 0;
+    const inProgress = !episode.is_played && episode.play_position > 0;
+    const durationLabel = durationSec > 0 ? formatDuration(durationSec) : '';
+    const progressFraction = inProgress && durationSec > 0
+        ? Math.min(1, episode.play_position / durationSec)
+        : 0;
+    const progressLabel = !inProgress ? ''
+        : durationSec > 0 ? `${formatDuration(Math.max(0, durationSec - episode.play_position))} left`
+        : 'In progress';
+
     return (
         <View style={[styles.card, cardStyle]}>
             {/* Main row: tap = open player, or expand the description when
@@ -76,7 +105,11 @@ const EpisodeItem = ({
                 accessibilityLabel={(expandOnPress
                     ? `${expanded ? 'Hide' : 'Show'} details for ${episode.title}`
                     : `Open ${episode.title}`)
-                    + (episode.is_played ? ', played' : '')}
+                    + (durationLabel ? `, ${durationLabel}` : '')
+                    + (hideActions && isDownloading ? ', downloading' : '')
+                    + (hideActions && !isDownloading && episode.is_downloaded ? ', downloaded' : '')
+                    + (hideActions && episode.has_transcript ? ', transcript' : '')
+                    + (episode.is_played ? ', played' : progressLabel ? `, ${progressLabel}` : '')}
                 accessibilityState={expandOnPress ? { expanded } : undefined}
             >
                 {showArtwork && (
@@ -100,20 +133,72 @@ const EpisodeItem = ({
                     >
                         {episode.title}
                     </Text>
+                    {/* Visual only — the row's accessibilityLabel carries the
+                        length and played / in-progress state for screen readers */}
                     <View style={styles.metaRow}>
                         <Text style={styles.date}>{formattedDate}</Text>
-                        {/* Visual only — the row's accessibilityLabel carries
-                            the played state for screen readers */}
-                        {!!episode.is_played && (
-                            <View style={styles.playedTag}>
-                                <Icon name="check-circle" size={11} color={colors.success} />
-                                <Text style={styles.playedText}>Played</Text>
-                            </View>
+                        {!!durationLabel && (
+                            <>
+                                <Text style={styles.metaDot}>·</Text>
+                                <Text style={styles.duration}>{durationLabel}</Text>
+                            </>
                         )}
+                        {/* With the pill column hidden this is the only sign
+                            of what is on the device: a swipe-to-download in
+                            flight, then the audio (and its transcript, once
+                            the automatic transcription lands) — or that a
+                            swipe-delete took effect */}
+                        {hideActions && isDownloading && (
+                            <>
+                                <Text style={styles.metaDot}>·</Text>
+                                <View style={styles.stateTag}>
+                                    <Icon name="arrow-down-circle" size={11} color={colors.accent} />
+                                    <Text style={styles.progressText}>
+                                        {downloadProgress > 0 ? `${Math.round(downloadProgress)}%` : 'Downloading…'}
+                                    </Text>
+                                </View>
+                            </>
+                        )}
+                        {hideActions && !isDownloading && !!episode.is_downloaded && (
+                            <>
+                                <Text style={styles.metaDot}>·</Text>
+                                <Icon name="arrow-down-circle" size={11} color={colors.success} />
+                                {!!episode.has_transcript && (
+                                    <Icon name="align-left" size={11} color={colors.success} />
+                                )}
+                            </>
+                        )}
+                        {episode.is_played ? (
+                            <>
+                                <Text style={styles.metaDot}>·</Text>
+                                <View style={styles.stateTag}>
+                                    <Icon name="check-circle" size={11} color={colors.success} />
+                                    <Text style={styles.playedText}>Played</Text>
+                                </View>
+                            </>
+                        ) : inProgress ? (
+                            <>
+                                <Text style={styles.metaDot}>·</Text>
+                                <View style={styles.stateTag}>
+                                    <Icon name="play" size={10} color={colors.accent} />
+                                    <Text style={styles.progressText}>{progressLabel}</Text>
+                                </View>
+                            </>
+                        ) : null}
                     </View>
+                    {progressFraction > 0 && (
+                        <View style={styles.progressTrack}>
+                            <View style={[styles.progressFill, { width: `${Math.max(2, progressFraction * 100)}%` }]} />
+                        </View>
+                    )}
                 </View>
 
                 {/* Right: action pills intercept their own touches */}
+                {hideActions ? (
+                    <View style={styles.resumeCol} pointerEvents="none">
+                        <Icon name="play-circle" size={24} color={colors.accent} />
+                    </View>
+                ) : (
                 <View style={styles.right} collapsable={false}>
                     {!episode.is_downloaded ? (
                         <Pill
@@ -188,6 +273,7 @@ const EpisodeItem = ({
                         </View>
                     )}
                 </View>
+                )}
             </TouchableOpacity>
 
             {/* Bottom strip. With expandOnPress the whole row is the toggle, so
@@ -251,7 +337,7 @@ const EpisodeItem = ({
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     card: {
         borderBottomWidth: 0.5,
         borderBottomColor: colors.hairlineFaint,
@@ -291,13 +377,27 @@ const styles = StyleSheet.create({
         lineHeight: 21,
     },
     episodeTitlePlayed: { color: colors.textSecondary },
-    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    // Wraps on narrow screens so the state tag drops to its own line instead
+    // of pushing the date out of the column.
+    metaRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 6, rowGap: 2 },
     date: { ...type.label, fontWeight: '400', color: colors.textMuted },
-    playedTag: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    metaDot: { ...type.label, color: colors.textFaint },
+    duration: { ...type.label, fontWeight: '400', color: colors.textMuted },
+    stateTag: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     playedText: { ...type.label, color: colors.success },
+    progressText: { ...type.label, color: colors.accent },
+    progressTrack: {
+        height: 3,
+        borderRadius: 1.5,
+        backgroundColor: colors.hairlineStrong,
+        overflow: 'hidden',
+        marginTop: 2,
+    },
+    progressFill: { height: '100%', borderRadius: 1.5, backgroundColor: colors.accent },
 
     /* Right column */
     right: { alignItems: 'flex-end', justifyContent: 'center', minWidth: 90 },
+    resumeCol: { justifyContent: 'center', paddingLeft: 4 },
     downloadedCol: { alignItems: 'flex-end', gap: 8 },
     actionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 

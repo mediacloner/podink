@@ -9,8 +9,10 @@ import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SHERPA_MODELS, ensureSherpaModel, isSherpaModelDownloaded, deleteSherpaModel } from '../services/downloadService';
 import { resetService } from '../services/whisperService';
+import { ASK_DELETE_ON_FINISH_KEY } from '../services/playbackService';
+import { AUTO_DELETE_FINISHED_KEY } from '../services/episodeService';
 import { showAlert } from '../components/AppAlert';
-import { colors, withAlpha, type } from '../theme';
+import { useTheme, useStyles, withAlpha, type, THEMES, THEME_OPTIONS } from '../theme';
 
 // Learning-focused copy overrides for the model picker.
 const MODEL_COPY = {
@@ -49,6 +51,8 @@ const FONT_SIZE_MIN = 18;
 const FONT_SIZE_MAX = 30;
 
 const SettingsScreen = () => {
+    const { colors, themeName, setTheme } = useTheme();
+    const styles = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const navigation = useNavigation();
     const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_KEY);
@@ -62,9 +66,25 @@ const SettingsScreen = () => {
     const [playbackRate, setPlaybackRate] = useState('1');
     // Stored as '1'/'0'; absent means on (TranscriptHighlighter reads the same key).
     const [pauseOnLookup, setPauseOnLookup] = useState(true);
+    // Same shape; FinishedEpisodePrompt reads it when a downloaded episode ends.
+    const [askDeleteOnFinish, setAskDeleteOnFinish] = useState(true);
+    // Same shape; episodeService's sweep reads it on launch / resume.
+    const [autoDeleteFinished, setAutoDeleteFinished] = useState(true);
 
     useEffect(() => { loadPreference(); loadLearningPrefs(); }, []);
     useEffect(() => { checkModelStatus(selectedModel); }, [selectedModel]);
+
+    // A stack screen since 2.3.0 (opened from the header gear), so it styles
+    // its own header like Vocabulary / Debug Log do.
+    useEffect(() => {
+        navigation.setOptions({
+            headerStyle: { backgroundColor: colors.bg },
+            headerTintColor: colors.textPrimary,
+            headerTitleStyle: { ...type.heading },
+            headerShadowVisible: false,
+            title: 'Settings',
+        });
+    }, [navigation, colors]);
 
     const loadPreference = async () => {
         try {
@@ -77,14 +97,18 @@ const SettingsScreen = () => {
 
     const loadLearningPrefs = async () => {
         try {
-            const [lang, size, rate, pause] = await Promise.all([
+            const [lang, size, rate, pause, askDelete, autoDelete] = await Promise.all([
                 AsyncStorage.getItem('@translation_lang'),
                 AsyncStorage.getItem('@transcript_font_size'),
                 AsyncStorage.getItem('@playback_rate'),
                 AsyncStorage.getItem('@pause_on_lookup'),
+                AsyncStorage.getItem(ASK_DELETE_ON_FINISH_KEY),
+                AsyncStorage.getItem(AUTO_DELETE_FINISHED_KEY),
             ]);
             if (lang) setTranslationLang(lang);
             setPauseOnLookup(pause !== '0');
+            setAskDeleteOnFinish(askDelete !== '0');
+            setAutoDeleteFinished(autoDelete !== '0');
             if (size) {
                 const parsed = parseInt(size, 10);
                 if (!Number.isNaN(parsed)) {
@@ -119,6 +143,16 @@ const SettingsScreen = () => {
     const savePauseOnLookup = async (on) => {
         setPauseOnLookup(on);
         try { await AsyncStorage.setItem('@pause_on_lookup', on ? '1' : '0'); } catch (e) {}
+    };
+
+    const saveAskDeleteOnFinish = async (on) => {
+        setAskDeleteOnFinish(on);
+        try { await AsyncStorage.setItem(ASK_DELETE_ON_FINISH_KEY, on ? '1' : '0'); } catch (e) {}
+    };
+
+    const saveAutoDeleteFinished = async (on) => {
+        setAutoDeleteFinished(on);
+        try { await AsyncStorage.setItem(AUTO_DELETE_FINISHED_KEY, on ? '1' : '0'); } catch (e) {}
     };
 
     const savePreference = async (modelId) => {
@@ -181,7 +215,45 @@ const SettingsScreen = () => {
     };
 
     return (
-        <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingBottom: bottom + 58 }]}>
+        <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingBottom: bottom + 24 }]}>
+
+            {/* Section: Appearance */}
+            <Text style={styles.sectionLabel}>APPEARANCE</Text>
+
+            <View style={styles.card}>
+                <View style={styles.themeRow}>
+                    {THEME_OPTIONS.map(({ id, label, icon, hint }) => {
+                        const palette = THEMES[id];
+                        const selected = themeName === id;
+                        return (
+                            <TouchableOpacity
+                                key={id}
+                                style={[styles.themeTile, selected && styles.themeTileOn]}
+                                onPress={() => setTheme(id)}
+                                activeOpacity={0.7}
+                                accessibilityRole="radio"
+                                accessibilityLabel={`${label} theme. ${hint}`}
+                                accessibilityState={{ selected }}
+                            >
+                                {/* Miniature of the theme: page, a card with two text lines, accent dot */}
+                                <View style={[styles.swatch, { backgroundColor: palette.bg, borderColor: palette.hairlineStrong }]}>
+                                    <View style={[styles.swatchDot, { backgroundColor: palette.accent }]} />
+                                    <View style={[styles.swatchCard, { backgroundColor: palette.surface, borderColor: palette.hairline }]}>
+                                        <Text style={[styles.swatchAa, { color: palette.textPrimary }]}>Aa</Text>
+                                        <View style={[styles.swatchLine, { backgroundColor: palette.transcriptSpoken }]} />
+                                        <View style={[styles.swatchLine, styles.swatchLineShort, { backgroundColor: palette.transcriptFuture }]} />
+                                    </View>
+                                </View>
+                                <View style={styles.themeLabelRow}>
+                                    <Icon name={icon} size={13} color={selected ? colors.accent : colors.textMuted} />
+                                    <Text style={[styles.themeLabel, selected && styles.themeLabelOn]}>{label}</Text>
+                                </View>
+                                <Text style={styles.themeHint}>{hint}</Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </View>
+            </View>
 
             {/* Section: Learning */}
             <Text style={styles.sectionLabel}>LEARNING</Text>
@@ -189,7 +261,7 @@ const SettingsScreen = () => {
             <View style={styles.card}>
                 <TouchableOpacity
                     style={[styles.settingRow, styles.rowBorder]}
-                    onPress={() => navigation.getParent()?.navigate('Vocabulary')}
+                    onPress={() => navigation.navigate('Vocabulary')}
                     activeOpacity={0.7}
                     accessibilityRole="button"
                     accessibilityLabel="Open saved vocabulary"
@@ -200,9 +272,12 @@ const SettingsScreen = () => {
                 </TouchableOpacity>
 
                 <View style={[styles.settingBlock, styles.rowBorder]}>
-                    <Text style={styles.settingTitle}>Translation language</Text>
-                    <Text style={styles.settingHint}>Tapped words are translated to this language</Text>
-                    <View style={styles.chipWrap}>
+                    <View style={styles.settingHead}>
+                        <Icon name="globe" size={15} color={colors.accent} />
+                        <Text style={styles.settingTitle}>Translation language</Text>
+                    </View>
+                    <Text style={[styles.settingHint, styles.indent]}>Tapped words are translated to this language</Text>
+                    <View style={[styles.chipWrap, styles.indent]}>
                         {LANGUAGES.map(({ code, label }) => {
                             const selected = translationLang === code;
                             return (
@@ -224,8 +299,11 @@ const SettingsScreen = () => {
 
                 <View style={[styles.settingRow, styles.rowBorder]}>
                     <View style={{ flex: 1 }}>
-                        <Text style={styles.settingTitle}>Pause while looking up</Text>
-                        <Text style={styles.settingHint}>
+                        <View style={styles.settingHead}>
+                            <Icon name="pause-circle" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Pause while looking up</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>
                             Playback pauses when you open a word or sentence card and resumes when you close it
                         </Text>
                     </View>
@@ -241,8 +319,11 @@ const SettingsScreen = () => {
 
                 <View style={[styles.settingRow, styles.rowBorder]}>
                     <View style={{ flex: 1 }}>
-                        <Text style={styles.settingTitle}>Transcript text size</Text>
-                        <Text style={styles.settingHint}>{`${FONT_SIZE_MIN}–${FONT_SIZE_MAX} pt`}</Text>
+                        <View style={styles.settingHead}>
+                            <Icon name="type" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Transcript text size</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>{`${FONT_SIZE_MIN}–${FONT_SIZE_MAX} pt`}</Text>
                     </View>
                     <View style={styles.stepper}>
                         <TouchableOpacity
@@ -268,8 +349,11 @@ const SettingsScreen = () => {
                 </View>
 
                 <View style={styles.settingBlock}>
-                    <Text style={styles.settingTitle}>Default playback speed</Text>
-                    <View style={styles.chipWrap}>
+                    <View style={styles.settingHead}>
+                        <Icon name="fast-forward" size={15} color={colors.accent} />
+                        <Text style={styles.settingTitle}>Default playback speed</Text>
+                    </View>
+                    <View style={[styles.chipWrap, styles.indent]}>
                         {RATES.map((rate) => {
                             const selected = playbackRate === rate;
                             return (
@@ -287,6 +371,50 @@ const SettingsScreen = () => {
                             );
                         })}
                     </View>
+                </View>
+            </View>
+
+            {/* Section: Storage */}
+            <Text style={styles.sectionLabel}>STORAGE</Text>
+
+            <View style={styles.card}>
+                <View style={[styles.settingRow, styles.rowBorder]}>
+                    <View style={{ flex: 1 }}>
+                        <View style={styles.settingHead}>
+                            <Icon name="trash-2" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Ask to delete finished episodes</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>
+                            When a downloaded episode plays to the end, offer to delete its download and transcript
+                        </Text>
+                    </View>
+                    <Switch
+                        value={askDeleteOnFinish}
+                        onValueChange={saveAskDeleteOnFinish}
+                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.accent, 0.45) }}
+                        thumbColor={askDeleteOnFinish ? colors.accent : colors.textSecondary}
+                        ios_backgroundColor={colors.surfaceHigh}
+                        accessibilityLabel="Ask to delete a downloaded episode when it finishes"
+                    />
+                </View>
+                <View style={styles.settingRow}>
+                    <View style={{ flex: 1 }}>
+                        <View style={styles.settingHead}>
+                            <Icon name="clock" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Delete finished episodes after a week</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>
+                            Downloads and transcripts of episodes you finished a week ago and haven't replayed are removed automatically. The episodes stay in your feed, marked as played.
+                        </Text>
+                    </View>
+                    <Switch
+                        value={autoDeleteFinished}
+                        onValueChange={saveAutoDeleteFinished}
+                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.accent, 0.45) }}
+                        thumbColor={autoDeleteFinished ? colors.accent : colors.textSecondary}
+                        ios_backgroundColor={colors.surfaceHigh}
+                        accessibilityLabel="Automatically delete finished episodes that have not been replayed for a week"
+                    />
                 </View>
             </View>
 
@@ -386,7 +514,7 @@ const SettingsScreen = () => {
                         accessibilityRole="button"
                         accessibilityLabel="Download model"
                     >
-                        <Icon name="arrow-down-circle" size={16} color={colors.textPrimary} />
+                        <Icon name="arrow-down-circle" size={16} color={colors.onAccent} />
                         <Text style={styles.downloadBtnText}>Download model</Text>
                     </TouchableOpacity>
                 )
@@ -413,7 +541,7 @@ const SettingsScreen = () => {
 
             <TouchableOpacity
                 style={styles.logBtn}
-                onPress={() => navigation.getParent()?.navigate('DebugLog')}
+                onPress={() => navigation.navigate('DebugLog')}
                 accessibilityRole="button"
                 accessibilityLabel="Open debug log"
             >
@@ -429,16 +557,20 @@ const SettingsScreen = () => {
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     content: { paddingTop: 16 },
 
+    // One left edge for everything: section labels, row icons and card text
+    // all start 32dp in (card margin 16 + card padding 16). Every row leads
+    // with a 15px icon + 10 gap, so titles line up and hints/chips indent by
+    // the same 25 under them.
     sectionLabel: {
         ...type.caption,
         fontWeight: '700',
         color: colors.textMuted,
         letterSpacing: 0.7,
-        paddingHorizontal: 20,
+        paddingHorizontal: 32,
         marginBottom: 10,
         marginTop: 24,
     },
@@ -475,6 +607,44 @@ const styles = StyleSheet.create({
         borderBottomColor: colors.hairlineFaint,
     },
 
+    /* Theme tiles */
+    themeRow: { flexDirection: 'row', gap: 10, padding: 12 },
+    themeTile: {
+        flex: 1,
+        borderRadius: 12,
+        padding: 8,
+        gap: 6,
+        borderWidth: 1,
+        borderColor: 'transparent',
+    },
+    themeTileOn: {
+        borderColor: colors.accent,
+        backgroundColor: withAlpha(colors.accent, 0.06),
+    },
+    swatch: {
+        height: 88,
+        borderRadius: 10,
+        borderWidth: 0.5,
+        padding: 10,
+        justifyContent: 'flex-end',
+        overflow: 'hidden',
+    },
+    swatchCard: {
+        borderRadius: 8,
+        borderWidth: 0.5,
+        paddingHorizontal: 9,
+        paddingVertical: 7,
+        gap: 5,
+    },
+    swatchAa: { fontSize: 14, fontWeight: '700', letterSpacing: -0.3, lineHeight: 16 },
+    swatchLine: { height: 3, borderRadius: 1.5, width: '78%' },
+    swatchLineShort: { width: '52%' },
+    swatchDot: { position: 'absolute', top: 10, right: 10, width: 10, height: 10, borderRadius: 5 },
+    themeLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+    themeLabel: { ...type.title, color: colors.textSecondary },
+    themeLabelOn: { color: colors.textPrimary },
+    themeHint: { fontSize: 12, color: colors.textMuted, lineHeight: 17 },
+
     /* Learning rows */
     settingRow: {
         flexDirection: 'row',
@@ -489,6 +659,8 @@ const styles = StyleSheet.create({
         paddingVertical: 14,
         gap: 4,
     },
+    settingHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    indent: { marginLeft: 25 },
     settingTitle: { ...type.title, color: colors.textPrimary },
     settingHint: { fontSize: 12, color: colors.textMuted, lineHeight: 17 },
 
@@ -627,7 +799,7 @@ const styles = StyleSheet.create({
         paddingVertical: 15,
         borderRadius: 14,
     },
-    downloadBtnText: { color: colors.textPrimary, fontSize: 15, fontWeight: '700' },
+    downloadBtnText: { color: colors.onAccent, fontSize: 15, fontWeight: '700' },
 
     deleteBtn: {
         flexDirection: 'row',
@@ -674,7 +846,7 @@ const styles = StyleSheet.create({
         marginHorizontal: 16,
         marginTop: 10,
         paddingVertical: 15,
-        paddingHorizontal: 18,
+        paddingHorizontal: 16,
         borderRadius: 14,
         backgroundColor: withAlpha(colors.purple, 0.07),
         borderWidth: 0.5,

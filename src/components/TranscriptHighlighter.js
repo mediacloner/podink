@@ -25,7 +25,7 @@ import TrackPlayer, { State } from 'react-native-track-player';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
-import { colors, radii, withAlpha } from '../theme';
+import { useTheme, useStyles, radii, withAlpha } from '../theme';
 import PositionFeeder from './transcript/PositionFeeder';
 import TranslationModal from './transcript/TranslationModal';
 import WordPopover from './transcript/WordPopover';
@@ -41,12 +41,16 @@ const KEYPOINT_INTERVAL_MS = 10 * 60 * 1000;
 const KEYPOINT_HEIGHT = 36;              // fixed — used in both layout and scroll math
 const SEEK_CHUNK_GAP = 3;                // chunk jumps larger than this fade-snap
 const FOLLOW_ANCHOR = 0.40;              // active chunk midpoint sits at 40% of viewport
-const TOP_PAD = 28;                      // ListHeader height, baked into item offsets
-const VIGNETTE_TOP_H = 110;
+// ListHeader height, baked into item offsets. Tall enough that the first
+// paragraph starts clear of the header's drop-shadow and of the top scrim
+// below — at 28 it sat under ~75 % of the fade and read as smudged.
+const TOP_PAD = 72;
+const VIGNETTE_TOP_H = 84;
 const VIGNETTE_BOT_H = 130;
 
 const LIST_HEADER = <View style={{ height: TOP_PAD }} />;
-const CHUNK_RIPPLE = { color: withAlpha(colors.accent, 0.12), foreground: true };
+// Per-theme; components read it via useStyles(rippleFor).
+const rippleFor = (colors) => ({ color: withAlpha(colors.accent, 0.12), foreground: true });
 
 // Animated.FlatList silently overrides CellRendererComponent with its own
 // itemLayoutAnimation wrapper (props spread first, its cell renderer last) —
@@ -94,11 +98,15 @@ const keyExtractor = (item) => item.id;
 
 const TranscriptHighlighter = forwardRef(({
     segments,
-    fadeTo = colors.bgPlayer,
+    fadeTo: fadeToProp,
     loading = false,
     hasTranscript = false,
     canTranscribe = false,
     onTranscribe,
+    // Streamed episode: "Download & transcribe" on the no-transcript card.
+    onDownload,
+    downloading = false,
+    downloadProgress = 0,
     transcribing = false,
     isQueued = false,
     transcribeProgress = 0,
@@ -106,6 +114,10 @@ const TranscriptHighlighter = forwardRef(({
     episodeId,
     episodeTitle,
 }, ref) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
+    const CHUNK_RIPPLE = useStyles(rippleFor);
+    const fadeTo = fadeToProp ?? colors.bgPlayer;
     const isFocused = useIsFocused();
     const { width: windowWidth } = useWindowDimensions();
     const contentWidth = windowWidth - 48; // paddingHorizontal: 24 * 2
@@ -873,6 +885,15 @@ const TranscriptHighlighter = forwardRef(({
                     </Text>
                 </View>
             );
+        } else if (downloading) {
+            statusPane = (
+                <View style={styles.empty}>
+                    <ActivityIndicator size='small' color={colors.accent} />
+                    <Text style={[styles.placeholder, styles.placeholderGap]}>
+                        Downloading… {clampPercent(downloadProgress)}%
+                    </Text>
+                </View>
+            );
         } else if (!hasTranscript) {
             statusPane = (
                 <View style={styles.empty}>
@@ -894,7 +915,23 @@ const TranscriptHighlighter = forwardRef(({
                                 </Pressable>
                             </>
                         ) : (
-                            <Text style={styles.ctaBody}>Download this episode first to transcribe it.</Text>
+                            <>
+                                <Text style={styles.ctaBody}>
+                                    Download the episode and its transcript is generated on-device, ready to read along.
+                                </Text>
+                                {onDownload && (
+                                    <Pressable
+                                        onPress={onDownload}
+                                        android_ripple={CHUNK_RIPPLE}
+                                        style={({ pressed }) => [styles.ctaBtn, pressed && styles.pressedChunk]}
+                                        accessibilityRole='button'
+                                        accessibilityLabel='Download and transcribe episode'
+                                    >
+                                        <Icon name='arrow-down-circle' size={15} color={colors.bg} />
+                                        <Text style={styles.ctaBtnText}>Download & transcribe</Text>
+                                    </Pressable>
+                                )}
+                            </>
                         )}
                     </View>
                 </View>
@@ -985,7 +1022,9 @@ const TranscriptHighlighter = forwardRef(({
 // RN 0.83 native linear gradient (new-arch). Transparent stop uses the bg's own
 // RGB so the fade never passes through gray. `color` must be a #RRGGBB hex.
 
-const FadeEdge = ({ height, position, color }) => (
+const FadeEdge = ({ height, position, color }) => {
+    const styles = useStyles(makeStyles);
+    return (
     <View
         pointerEvents='none'
         style={[
@@ -996,11 +1035,15 @@ const FadeEdge = ({ height, position, color }) => (
             },
         ]}
     />
-);
+    );
+};
 
 // ─── Keypoint ─────────────────────────────────────────────────────────────────
 
-const KeypointRow = React.memo(({ item, onPress }) => (
+const KeypointRow = React.memo(({ item, onPress }) => {
+    const styles = useStyles(makeStyles);
+    const CHUNK_RIPPLE = useStyles(rippleFor);
+    return (
     <Pressable
         onPress={() => onPress(item.timeMs)}
         android_ripple={CHUNK_RIPPLE}
@@ -1010,7 +1053,8 @@ const KeypointRow = React.memo(({ item, onPress }) => (
         <Text style={styles.keypointLabel}>{item.label}</Text>
         <View style={styles.keypointLine} />
     </Pressable>
-));
+    );
+});
 
 // ─── Chunk ────────────────────────────────────────────────────────────────────
 //
@@ -1029,6 +1073,9 @@ const Chunk = React.memo(({
     activeChunkSV, activeIndexSV, isPlayingSV,
     onPress, onLongPress, onWordPress, onCellLayout,
 }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
+    const CHUNK_RIPPLE = useStyles(rippleFor);
     const chunkIndex = item.chunkIndex;
     const text = useMemo(() => item.words.map(w => w.text).join('').trim(), [item]);
 
@@ -1114,6 +1161,7 @@ const Word = React.memo(({
     word, chunkIndex, fontSize, lineHeight,
     activeIndexSV, isPlayingSV, onWordPress, onWordLongPress,
 }) => {
+    const { colors } = useTheme();
     const colorState = useSharedValue(0); // 0 future · 1 spoken · 2 active
 
     useAnimatedReaction(
@@ -1133,12 +1181,36 @@ const Word = React.memo(({
         },
     );
 
-    const animStyle = useAnimatedStyle(() => ({
-        color: interpolateColor(colorState.value, [0, 1, 2], [colors.transcriptFuture, colors.transcriptSpoken, colors.transcriptActive]),
-        textShadowColor: interpolateColor(colorState.value, [1, 2], ['transparent', colors.transcriptGlow]),
-        textShadowOffset: { width: 0, height: 0 },
-        textShadowRadius: interpolate(colorState.value, [1, 2], [0, 14], 'clamp'),
-    }));
+    // Two ways to mark the current word, chosen by the palette: a soft glow
+    // (text shadow — dark theme) or a highlighter band behind the glyphs
+    // (background — paper theme, where a blurred shadow looks like a smudge).
+    const {
+        transcriptFuture, transcriptSpoken, transcriptActive,
+        transcriptGlow, transcriptGlowRadius, transcriptHighlight, transcriptHighlightAlpha,
+    } = colors;
+    const hasHighlight = transcriptHighlightAlpha > 0;
+    const highlightOn  = withAlpha(transcriptHighlight, transcriptHighlightAlpha);
+    const highlightOff = withAlpha(transcriptHighlight, 0);
+    const animStyle = useAnimatedStyle(() => {
+        const style = {
+            color: interpolateColor(colorState.value, [0, 1, 2], [transcriptFuture, transcriptSpoken, transcriptActive]),
+            textShadowColor: interpolateColor(colorState.value, [1, 2], ['transparent', transcriptGlow]),
+            textShadowOffset: { width: 0, height: 0 },
+            textShadowRadius: interpolate(colorState.value, [1, 2], [0, transcriptGlowRadius], 'clamp'),
+        };
+        if (hasHighlight) {
+            // Same hue at alpha 0 → alpha on, so the fade never passes through black.
+            style.backgroundColor = interpolateColor(colorState.value, [1, 2], [highlightOff, highlightOn]);
+        }
+        return style;
+    }, [colors]);
+
+    // Tokens carry their own spacing (" word"). Keep the whitespace outside the
+    // animated span so the highlight band hugs the glyphs, not the gap before them.
+    const [lead, core, trail] = useMemo(() => {
+        const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(word.text);
+        return m ? [m[1], m[2], m[3]] : ['', word.text, ''];
+    }, [word.text]);
 
     const handlePress = useCallback(() => onWordPress(word, chunkIndex), [onWordPress, word, chunkIndex]);
 
@@ -1153,16 +1225,18 @@ const Word = React.memo(({
             onPress={handlePress}
             onLongPress={onWordLongPress}
         >
+            {lead}
             <Animated.Text style={[{ fontSize, lineHeight, fontWeight: '500' }, animStyle]}>
-                {word.text}
+                {core}
             </Animated.Text>
+            {trail}
         </Text>
     );
 });
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     root: { flex: 1, backgroundColor: 'transparent' },
     container: { flex: 1, backgroundColor: 'transparent' },
     contentContainer: { paddingHorizontal: 24 },

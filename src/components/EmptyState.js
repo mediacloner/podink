@@ -1,19 +1,23 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
-import { colors, type } from '../theme';
+import { type, useStyles, useTheme } from '../theme';
 
-const EmptyState = ({ icon, title, subtitle }) => (
-    <View style={styles.container}>
-        <View style={styles.tile}>
-            <Icon name={icon} size={28} color={colors.textFaint} />
+const EmptyState = ({ icon, title, subtitle }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
+    return (
+        <View style={styles.container}>
+            <View style={styles.tile}>
+                <Icon name={icon} size={28} color={colors.textFaint} />
+            </View>
+            <Text style={styles.title}>{title}</Text>
+            {!!subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
         </View>
-        <Text style={styles.title}>{title}</Text>
-        {!!subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
-    </View>
-);
+    );
+};
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: {
         flex: 1,
         alignItems: 'center',

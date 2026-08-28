@@ -10,16 +10,17 @@ import {
     isLoggingEnabled, setLoggingEnabled, exportLogsAsText,
 } from '../services/logService';
 import { showAlert } from '../components/AppAlert';
-import { colors, withAlpha } from '../theme';
+import { withAlpha, useTheme, useStyles } from '../theme';
 
 // ─── Category badge colours ──────────────────────────────────────────────────
 
-const CAT_COLORS = {
+// Built per theme; `useStyles` caches any colors-derived object.
+const makeCatColors = (colors) => ({
     UI:      { bg: withAlpha(colors.accent, 0.12),  fg: colors.accent },
     SERVICE: { bg: withAlpha(colors.success, 0.12), fg: colors.success },
     QUEUE:   { bg: withAlpha(colors.warning, 0.12), fg: colors.warning },
     SYSTEM:  { bg: withAlpha(colors.purple, 0.12),  fg: colors.purple },
-};
+});
 
 const formatTime = (ts) => {
     const d = new Date(ts);
@@ -38,6 +39,9 @@ const formatDate = (ts) => {
 // ─── Log entry row ───────────────────────────────────────────────────────────
 
 const LogEntry = React.memo(({ item }) => {
+    const { colors } = useTheme();
+    const s = useStyles(makeStyles);
+    const CAT_COLORS = useStyles(makeCatColors);
     const cat = CAT_COLORS[item.cat] || CAT_COLORS.SYSTEM;
     const hasData = item.data !== undefined;
     const [expanded, setExpanded] = useState(false);
@@ -73,6 +77,8 @@ const LogEntry = React.memo(({ item }) => {
 // ─── Screen ──────────────────────────────────────────────────────────────────
 
 const LogScreen = ({ navigation }) => {
+    const { colors } = useTheme();
+    const s = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const [logs, setLogs]       = useState(getLogs);
     const [enabled, setEnabled] = useState(isLoggingEnabled);
@@ -86,7 +92,7 @@ const LogScreen = ({ navigation }) => {
             headerShadowVisible: false,
             title: 'Debug Log',
         });
-    }, [navigation]);
+    }, [navigation, colors]);
 
     const refresh = useCallback(() => {
         setLogs([...getLogs()]);
@@ -146,7 +152,7 @@ const LogScreen = ({ navigation }) => {
                     <Switch
                         value={enabled}
                         onValueChange={handleToggle}
-                        trackColor={{ false: colors.surfaceElevated, true: withAlpha(colors.success, 0.35) }}
+                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.success, 0.35) }}
                         thumbColor={enabled ? colors.success : colors.textMuted}
                     />
                 </View>
@@ -187,7 +193,7 @@ const LogScreen = ({ navigation }) => {
             {/* Export button — fixed at bottom */}
             <View style={[s.exportBar, { paddingBottom: bottom + 16 }]}>
                 <TouchableOpacity style={s.exportBtn} onPress={handleExport} accessibilityRole="button" accessibilityLabel="Export log">
-                    <Icon name="share" size={16} color={colors.textPrimary} />
+                    <Icon name="share" size={16} color={colors.onAccent} />
                     <Text style={s.exportBtnText}>Export log</Text>
                 </TouchableOpacity>
             </View>
@@ -197,7 +203,7 @@ const LogScreen = ({ navigation }) => {
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
-const s = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
 
     toolbar: {
@@ -287,7 +293,7 @@ const s = StyleSheet.create({
         paddingVertical: 15,
         borderRadius: 14,
     },
-    exportBtnText: { color: colors.textPrimary, fontSize: 15, fontWeight: '700' },
+    exportBtnText: { color: colors.onAccent, fontSize: 15, fontWeight: '700' },
 });
 
 export default LogScreen;

@@ -1,28 +1,32 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
-import { colors, radii, withAlpha } from '../../theme';
+import { radii, withAlpha, useStyles, useTheme } from '../../theme';
 
 // Floating "Back to current" pill shown when follow-mode is off and the active
 // line has drifted off-center. The chevron points toward the active line.
-const FollowPill = ({ direction, onPress }) => (
-    <View style={st.wrap} pointerEvents='box-none'>
-        <Pressable
-            onPress={onPress}
-            hitSlop={8}
-            style={({ pressed }) => [st.pill, pressed && st.pressed]}
-        >
-            <Icon
-                name={direction === 'down' ? 'chevron-down' : 'chevron-up'}
-                size={15}
-                color={colors.textPrimary}
-            />
-            <Text style={st.label}>Back to current</Text>
-        </Pressable>
-    </View>
-);
+const FollowPill = ({ direction, onPress }) => {
+    const { colors } = useTheme();
+    const st = useStyles(makeStyles);
+    return (
+        <View style={st.wrap} pointerEvents='box-none'>
+            <Pressable
+                onPress={onPress}
+                hitSlop={8}
+                style={({ pressed }) => [st.pill, pressed && st.pressed]}
+            >
+                <Icon
+                    name={direction === 'down' ? 'chevron-down' : 'chevron-up'}
+                    size={15}
+                    color={colors.textPrimary}
+                />
+                <Text style={st.label}>Back to current</Text>
+            </Pressable>
+        </View>
+    );
+};
 
-const st = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     wrap: {
         position: 'absolute',
         left: 0,

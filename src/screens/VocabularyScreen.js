@@ -12,7 +12,7 @@ import {
     getVocabWords, removeVocabWord, searchTranscripts,
 } from '../services/vocabularyService';
 import { getEpisodeById } from '../database/queries';
-import { colors, withAlpha, type } from '../theme';
+import { withAlpha, type, useTheme, useStyles } from '../theme';
 
 const formatTimestamp = (ms) => {
     const totalSec = Math.max(0, Math.floor((ms || 0) / 1000));
@@ -26,6 +26,7 @@ const formatTimestamp = (ms) => {
 
 // Context sentence with the saved word visually emphasized.
 const ContextText = ({ context, word }) => {
+    const styles = useStyles(makeStyles);
     if (!context) return null;
     const idx = word ? context.toLowerCase().indexOf(word.toLowerCase()) : -1;
     if (idx < 0) {
@@ -40,7 +41,10 @@ const ContextText = ({ context, word }) => {
     );
 };
 
-const VocabRow = React.memo(({ item, expanded, onToggle, onPlay, onDelete }) => (
+const VocabRow = React.memo(({ item, expanded, onToggle, onPlay, onDelete }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
+    return (
     <SwipeableRow
         rightAction={{
             icon: 'trash-2',
@@ -91,9 +95,13 @@ const VocabRow = React.memo(({ item, expanded, onToggle, onPlay, onDelete }) => 
             )}
         </TouchableOpacity>
     </SwipeableRow>
-));
+    );
+});
 
-const ResultRow = React.memo(({ item, onPlay }) => (
+const ResultRow = React.memo(({ item, onPlay }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
+    return (
     <TouchableOpacity
         style={styles.row}
         onPress={() => onPlay(item.episode_id, item.start_time)}
@@ -110,9 +118,12 @@ const ResultRow = React.memo(({ item, onPlay }) => (
             <Text style={styles.timestamp}>{formatTimestamp(item.start_time)}</Text>
         </View>
     </TouchableOpacity>
-));
+    );
+});
 
 const VocabularyScreen = ({ navigation }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const [words, setWords] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -129,7 +140,7 @@ const VocabularyScreen = ({ navigation }) => {
             headerShadowVisible: false,
             title: 'Vocabulary',
         });
-    }, [navigation]);
+    }, [navigation, colors]);
 
     const loadWords = useCallback(async () => {
         try {
@@ -295,7 +306,7 @@ const VocabularyScreen = ({ navigation }) => {
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
     loadingWrap: { alignItems: 'center', justifyContent: 'center' },
 

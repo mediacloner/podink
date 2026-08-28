@@ -14,22 +14,30 @@ import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
 import EmptyState from '../components/EmptyState';
+import LoadingBar from '../components/LoadingBar';
+import SettingsGearButton from '../components/SettingsGearButton';
 import {
-    getSubscribedEpisodes, saveEpisodesBatch, updateEpisodeLocalPath, savePodcast,
+    getSubscribedEpisodes, saveEpisodesBatch, savePodcast, updatePodcastImage,
     getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes,
 } from '../database/queries';
-import { downloadAudioFile } from '../services/downloadService';
+import {
+    downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
+} from '../services/episodeService';
+import { dequeueTranscription } from '../services/whisperService';
+import { useTranscriptionQueue } from '../hooks/useTranscriptionQueue';
 import { fetchPodcastFeed } from '../api/rssParser';
 import { resolveToRssUrl, detectService } from '../api/podcastResolver';
 import { isUrlLike, searchPodcasts } from '../api/podcastSearch';
 import { notifyLibraryChange, onLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
-import { colors, withAlpha, type } from '../theme';
+import { withAlpha, type, useStyles, useTheme } from '../theme';
 
 const PANEL_HEIGHT = 64; // inputRow height when open
 const MAX_EPISODES_PER_PODCAST = 50;
 
 const SubscribedTimeline = ({ navigation }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const [episodes, setEpisodes] = useState([]);
     const [rssUrl, setRssUrl] = useState('');
@@ -48,6 +56,9 @@ const SubscribedTimeline = ({ navigation }) => {
     const searchTimerRef = useRef(null);
     const searchAbortRef = useRef(null);
     const isFocused = useIsFocused();
+    // Which row is transcribing / waiting, so a download's automatic
+    // transcription shows its progress right here in the Feed.
+    const { activeId, queuedIds } = useTranscriptionQueue();
 
     const heightSV = useSharedValue(0);
     const opacitySV = useSharedValue(0);
@@ -92,27 +103,36 @@ const SubscribedTimeline = ({ navigation }) => {
         }
     }, [isFocused]);
 
-    // An episode can finish in the background (MiniPlayer) while this tab is
-    // already focused — refresh so its row picks up the Played badge.
+    // Rows change under a focused tab: an episode finishes in the MiniPlayer
+    // (Played badge), a download or its automatic transcription completes
+    // from any tab (Downloaded → Transcript pill), a download is deleted.
+    // Per-window transcript ticks and ~5 s position saves are skipped — the
+    // rows show neither.
     useEffect(() => onLibraryChange((payload) => {
-        if (payload?.type === 'playback-complete') loadData();
+        const t = payload?.type;
+        if (t === 'transcript-progress' || t === 'playback-progress') return;
+        loadData();
     }), []);
 
+    // setOptions replaces the tab-level headerRight (the Settings gear), so
+    // render both here: "+" for feeds, gear for Settings.
     useEffect(() => {
         navigation.setOptions({
             headerRight: () => (
-                <TouchableOpacity
-                    onPress={togglePanel}
-                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                    style={{ marginRight: 16 }}
-                    accessibilityRole="button"
-                    accessibilityLabel={panelOpen ? 'Close add-feed panel' : 'Add a podcast feed'}
-                >
-                    <Icon name={panelOpen ? 'x' : 'plus'} size={22} color={colors.accent} />
-                </TouchableOpacity>
+                <View style={styles.headerActions}>
+                    <TouchableOpacity
+                        onPress={togglePanel}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        accessibilityRole="button"
+                        accessibilityLabel={panelOpen ? 'Close add-feed panel' : 'Add a podcast feed'}
+                    >
+                        <Icon name={panelOpen ? 'x' : 'plus'} size={22} color={colors.accent} />
+                    </TouchableOpacity>
+                    <SettingsGearButton />
+                </View>
             ),
         });
-    }, [panelOpen]);
+    }, [panelOpen, colors, styles]);
 
     const loadData = async () => {
         try {
@@ -130,32 +150,42 @@ const SubscribedTimeline = ({ navigation }) => {
             return;
         }
         if (!episode.audio_url) return;
-        const safeId = episode.id.toString().replace(/[^a-zA-Z0-9]/g, '_');
-        const filename = `episode_${safeId}.mp3`;
         setDownloads(prev => ({ ...prev, [episode.id]: 0 }));
         try {
-            const localPath = await downloadAudioFile(
-                episode.audio_url,
-                filename,
-                (p) => setDownloads(prev => {
+            // The download queues its own transcription (episodeService), so
+            // the row goes Download → Downloaded → Queued / % → Transcript
+            // without another tap. The 'download-complete' event reloads.
+            await downloadEpisode(episode, {
+                onProgress: (p) => setDownloads(prev => {
                     // Quantize to whole percent: returning the same object
                     // reference for sub-percent ticks skips the re-render.
                     const pct = Math.round(p);
                     return prev[episode.id] === pct ? prev : { ...prev, [episode.id]: pct };
                 }),
-            );
-            log('UI', 'Download completed', { id: episode.id });
-            await updateEpisodeLocalPath(episode.id, localPath);
-            loadData();
-            notifyLibraryChange({ type: 'download-complete', episodeId: episode.id });
+            });
         } catch (e) {
-            log('UI', 'Download failed', { id: episode.id, error: e.message });
-            console.error('Download failed', e);
-            showAlert('Error', 'Failed to download episode.');
+            log('UI', 'Download failed', { id: episode.id, error: e?.message || String(e) });
+            reportDownloadError(e);
         } finally {
             setDownloads(prev => { const n = { ...prev }; delete n[episode.id]; return n; });
         }
     }, [isConnected]);
+
+    // The Transcribe pill only appears on a downloaded row whose automatic
+    // transcription failed or was cancelled — this is the retry.
+    const handleTranscribe = useCallback(async (episode) => {
+        log('UI', 'Transcribe tapped', { id: episode.id, title: episode.title });
+        try {
+            await transcribeEpisode(episode);
+        } catch (e) {
+            reportTranscriptionError(e);
+        }
+    }, []);
+
+    const handleCancel = useCallback((episode) => {
+        log('UI', 'Cancel transcription', { id: episode.id });
+        dequeueTranscription(episode.id);
+    }, []);
 
     const prevServiceRef = useRef('RSS');
     useEffect(() => {
@@ -185,7 +215,10 @@ const SubscribedTimeline = ({ navigation }) => {
         try {
             const podcasts = await getPodcasts();
             const results = await Promise.allSettled(podcasts.map(async (podcast) => {
-                const feedData = await fetchPodcastFeed(podcast.feed_url);
+                const feedData = await fetchPodcastFeed(podcast.feed_url, { maxItems: MAX_EPISODES_PER_PODCAST });
+                // Covers subscribed without one (itunes:image-only feeds
+                // before 2.3.0) fill in on the first refresh.
+                await updatePodcastImage(podcast.feed_url, feedData.image);
                 const latest = feedData.episodes
                     .slice(0, MAX_EPISODES_PER_PODCAST)
                     .map(ep => ({
@@ -231,7 +264,7 @@ const SubscribedTimeline = ({ navigation }) => {
         setIsFetching(true);
         try {
             const rss = await resolveToRssUrl(input);
-            const feedData = await fetchPodcastFeed(rss);
+            const feedData = await fetchPodcastFeed(rss, { maxItems: MAX_EPISODES_PER_PODCAST });
             await savePodcast({
                 title: feedData.title,
                 description: feedData.description,
@@ -363,15 +396,26 @@ const SubscribedTimeline = ({ navigation }) => {
             episode={item}
             onPress={handleOpenEpisode}
             onDownload={handleDownload}
+            onTranscribe={handleTranscribe}
+            onCancel={handleCancel}
             isDownloading={item.id in downloads}
             downloadProgress={downloads[item.id] ?? 0}
+            isTranscribing={activeId === item.id}
+            isQueued={queuedIds.includes(item.id)}
             showArtwork
             expandOnPress
         />
-    ), [handleOpenEpisode, handleDownload, downloads]);
+    ), [handleOpenEpisode, handleDownload, handleTranscribe, handleCancel, downloads, activeId, queuedIds]);
 
     return (
         <View style={styles.container}>
+            {/* Feed work in flight (refresh on open, pull-to-refresh, adding a
+                feed) shows as a thin line right under the header title. The
+                pull spinner itself is not held open (refreshing={false} below):
+                it would push the list down for the whole fetch, and this bar
+                never blocks the tabs, so you can keep browsing meanwhile. */}
+            <LoadingBar visible={isRefreshing || isFetching} />
+
             {/* Collapsible RSS input panel */}
             <Animated.View style={[styles.inputPanel, panelStyle]}>
                 <View style={styles.inputRow}>
@@ -418,7 +462,7 @@ const SubscribedTimeline = ({ navigation }) => {
                         accessibilityLabel={rssUrl.trim() && !isUrlLike(rssUrl) ? 'Search podcasts' : 'Add podcast feed'}
                     >
                         {isFetching
-                            ? <ActivityIndicator color={colors.textPrimary} size="small" />
+                            ? <ActivityIndicator color={colors.onAccent} size="small" />
                             : <Text style={styles.addBtnText}>{rssUrl.trim() && !isUrlLike(rssUrl) ? 'Search' : 'Add'}</Text>
                         }
                     </TouchableOpacity>
@@ -487,7 +531,7 @@ const SubscribedTimeline = ({ navigation }) => {
                 data={episodes}
                 keyExtractor={item => item.id.toString()}
                 onRefresh={() => handleRefresh(true)}
-                refreshing={isRefreshing}
+                refreshing={false}
                 renderItem={renderItem}
                 initialNumToRender={10}
                 maxToRenderPerBatch={10}
@@ -505,8 +549,10 @@ const SubscribedTimeline = ({ navigation }) => {
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.bg },
+    // marginTop matches the tab-level gear nudge (App.js) so "+" and gear stay level with the title.
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 20, marginRight: 16, marginTop: 3 },
 
     inputPanel: {
         borderBottomWidth: 0.5,
@@ -548,7 +594,7 @@ const styles = StyleSheet.create({
         minWidth: 64,
     },
     addBtnDisabled: { opacity: 0.4 },
-    addBtnText: { color: colors.textPrimary, fontWeight: '700', fontSize: 14 },
+    addBtnText: { color: colors.onAccent, fontWeight: '700', fontSize: 14 },
 
     serviceBadge: {
         backgroundColor: withAlpha(colors.accent, 0.12),

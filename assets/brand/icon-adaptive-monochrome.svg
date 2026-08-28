@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Podink app icon: "sticker p" with a short ink-drop counter (D01), letter centred +20px. Source of truth - regenerate PNGs with scripts/generate-icons.sh -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="1536" viewBox="0 0 1536 1536">
+<g transform="translate(256 256)"><g transform="translate(20 0)"><g transform="translate(512 512) scale(0.92) translate(-512 -525)"><mask id="m"><rect width="1024" height="1024" fill="white"/><path d="M 512.0 337.4 L 446.8 391.5 A 102 102 0 1 0 577.2 391.5 Z" fill="black"/></mask><g mask="url(#m)"><rect x="262.0" y="220.0" width="150.0" height="610.0" rx="75.0" fill="#FFFFFF" /><circle cx="512.0" cy="470.0" r="250.0" fill="#FFFFFF" /></g></g></g></g>
+</svg>

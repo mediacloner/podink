@@ -80,9 +80,31 @@ export const savePodcast = async (podcast) => {
   );
 };
 
+/** Refresh a subscription's cover from its feed. savePodcast is INSERT OR
+ *  IGNORE, so a cover missed at subscribe time (or changed since) would
+ *  otherwise stay wrong forever; feeds that send no artwork leave the stored
+ *  one alone. */
+export const updatePodcastImage = async (feedUrl, imageUrl) => {
+  if (!imageUrl) return;
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `UPDATE Podcasts SET image_url = ? WHERE feed_url = ? AND (image_url IS NULL OR image_url != ?)`,
+    [imageUrl, feedUrl, imageUrl]
+  );
+};
+
+/** Subscriptions, the one with the newest episode first (My Podcasts), so
+ *  a show that just published rises to the top. release_date is ISO-8601,
+ *  so string order is date order; a podcast with no episodes yet sorts last
+ *  (NULL is smallest in SQLite), then by subscription date. */
 export const getPodcasts = async () => {
   const db = await openDatabaseContext();
-  return db.getAllAsync('SELECT * FROM Podcasts ORDER BY subscribed_at DESC');
+  return db.getAllAsync(`
+    SELECT p.*,
+           (SELECT MAX(e.release_date) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS latest_episode_at
+    FROM Podcasts p
+    ORDER BY latest_episode_at DESC, p.subscribed_at DESC
+  `);
 };
 
 export const deletePodcast = async (feedUrl) => {
@@ -101,11 +123,14 @@ export const deletePodcast = async (feedUrl) => {
   });
 };
 
+/** The audio is on the device. downloaded_at (epoch ms) is the start of the
+ *  week the automatic cleanup gives a finished download (see
+ *  getStaleFinishedDownloads); re-stamped on every (re-)download. */
 export const updateEpisodeLocalPath = async (id, localPath) => {
   const db = await openDatabaseContext();
   await db.runAsync(
-    `UPDATE Episodes SET local_audio_path = ?, is_downloaded = 1 WHERE id = ?`,
-    [localPath, id]
+    `UPDATE Episodes SET local_audio_path = ?, is_downloaded = 1, downloaded_at = ? WHERE id = ?`,
+    [localPath, Date.now(), id]
   );
 };
 
@@ -180,7 +205,8 @@ export const deleteEpisodeLocalData = async (id) => {
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
     await db.runAsync(
-      `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0 WHERE id = ?`,
+      `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0, downloaded_at = NULL
+       WHERE id = ?`,
       [id]
     );
   });
@@ -188,9 +214,107 @@ export const deleteEpisodeLocalData = async (id) => {
 
 export const savePlayPosition = async (id, positionSeconds) => {
   const db = await openDatabaseContext();
+  // last_played_at orders the Listening tab; stamped on every write
+  // (including the reset to 0 on completion) so it always means "last heard".
+  // A real position also clears is_played: replaying a finished episode makes
+  // it "in progress" again (Played tag gone, back under In progress) and
+  // lets markEpisodePlayed's 0→1 transition fire once more when it re-ends.
+  // The completion path saves 0 and must NOT touch is_played, or every tick
+  // inside the final-stretch window would re-emit 'playback-complete'.
+  if (positionSeconds > 0) {
+    await db.runAsync(
+      `UPDATE Episodes SET play_position = ?, last_played_at = ?, is_played = 0 WHERE id = ?`,
+      [positionSeconds, Date.now(), id]
+    );
+  } else {
+    await db.runAsync(
+      `UPDATE Episodes SET play_position = ?, last_played_at = ? WHERE id = ?`,
+      [positionSeconds, Date.now(), id]
+    );
+  }
+};
+
+/** Back to a never-started row (Listening → Finished → "Unplayed"): not
+ *  played, no position, no listening timestamp — it reappears under New. */
+export const clearPlayProgress = async (id) => {
+  const db = await openDatabaseContext();
   await db.runAsync(
-    `UPDATE Episodes SET play_position = ? WHERE id = ?`,
-    [positionSeconds, id]
+    `UPDATE Episodes SET play_position = 0, is_played = 0, last_played_at = NULL WHERE id = ?`,
+    [id]
+  );
+};
+
+/** Episodes by listening state, for the Listening tab — a pipeline:
+ *    downloaded   on the device, not started      newest release first
+ *                 (is_downloaded 1, is_played 0, position 0)
+ *    in-progress  is_played 0, position > 0       most recently heard first
+ *    finished     is_played 1                     most recently finished first
+ *  Not-started episodes that are not downloaded belong to the Feed, not here.
+ *  Completion resets play_position to 0, so the segments are disjoint. Rows
+ *  last heard before last_played_at existed (NULL) sort after the stamped
+ *  ones, newest release first. */
+const LISTENING_STATE_SQL = {
+  'downloaded':
+    `WHERE e.is_downloaded = 1 AND e.is_played = 0 AND COALESCE(e.play_position, 0) = 0
+     ORDER BY e.release_date DESC`,
+  'in-progress':
+    `WHERE e.is_played = 0 AND e.play_position > 0
+     ORDER BY (e.last_played_at IS NULL), e.last_played_at DESC, e.release_date DESC`,
+  'finished':
+    `WHERE e.is_played = 1
+     ORDER BY (e.last_played_at IS NULL), e.last_played_at DESC, e.release_date DESC`,
+};
+
+export const getEpisodesByListeningState = async (state) => {
+  const clause = LISTENING_STATE_SQL[state];
+  if (!clause) throw new Error(`Unknown listening state: ${state}`);
+  const db = await openDatabaseContext();
+  return db.getAllAsync(`${EPISODE_WITH_IMAGE} ${clause}`);
+};
+
+/** Manual "mark as played" (Listening tab swipe). Same end state as a
+ *  natural finish — played, position back at the top, last_played_at = now
+ *  (the Finished segment is "most recently finished first", and the week
+ *  the automatic cleanup allows a finished download counts from here) —
+ *  regardless of the current is_played value, unlike markEpisodePlayed's
+ *  0→1 guard. */
+export const markEpisodeFinished = async (id) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `UPDATE Episodes SET is_played = 1, play_position = 0, last_played_at = ? WHERE id = ?`,
+    [Date.now(), id]
+  );
+};
+
+/** Finished episodes whose download has outlived its use: heard to the end
+ *  (or marked Done) before `cutoffMs`, not replayed since — a replay clears
+ *  is_played (savePlayPosition) and so drops the row out of here until it
+ *  ends again with a fresh stamp — and downloaded before `cutoffMs` too, so
+ *  a re-download for a read-along gets its own week. Finished rows from
+ *  before last_played_at existed (NULL) count as old; their downloaded_at
+ *  was stamped at the v6 upgrade, which is what gives them a week's grace.
+ *  A NULL downloaded_at (never expected on a downloaded row) is left alone. */
+export const getStaleFinishedDownloads = async (cutoffMs) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT * FROM Episodes
+     WHERE is_played = 1
+       AND is_downloaded = 1 AND local_audio_path IS NOT NULL
+       AND COALESCE(last_played_at, 0) < ?
+       AND downloaded_at IS NOT NULL AND downloaded_at < ?
+     ORDER BY last_played_at ASC`,
+    [cutoffMs, cutoffMs]
+  );
+};
+
+/** Feeds without <itunes:duration> leave duration at 0; once the player
+ *  knows the real length, keep it so lists can show a total time. Only
+ *  fills the gap — a feed-supplied duration is never overwritten. */
+export const setEpisodeDurationIfMissing = async (id, seconds) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `UPDATE Episodes SET duration = ? WHERE id = ? AND (duration IS NULL OR duration <= 0)`,
+    [seconds, id]
   );
 };
 
@@ -232,6 +356,13 @@ export const getLatestEpisodesForPodcast = async (feedUrl, limit = 5) => {
     ORDER BY e.release_date DESC
     LIMIT ?
   `, [feedUrl, limit]);
+};
+
+/** One episode drops out of the "new" count — the user acted on it
+ *  (downloaded it from the Feed), so it no longer needs the badge. */
+export const markEpisodeSeen = async (id) => {
+  const db = await openDatabaseContext();
+  await db.runAsync('UPDATE Episodes SET is_new = 0 WHERE id = ? AND is_new = 1', [id]);
 };
 
 export const markPodcastEpisodesAsSeen = async (feedUrl) => {

@@ -4,7 +4,7 @@ import TrackPlayer, { usePlaybackState, useProgress, State } from 'react-native-
 import Slider from '@react-native-community/slider';
 import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { colors, withAlpha } from '../theme';
+import { withAlpha, useStyles, useTheme } from '../theme';
 
 const RATES = [0.7, 0.85, 1, 1.15, 1.3, 1.5];
 const RATE_KEY = '@playback_rate';
@@ -22,7 +22,10 @@ const formatTime = (seconds) => {
 // while 0.7/1.15 stay intact.
 const formatRate = (rate) => `${String(Number(rate.toFixed(2)))}x`;
 
-const PlayerControls = ({ accent = colors.accent, onReplaySentence, onRateChange }) => {
+const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange }) => {
+    const { colors } = useTheme();
+    const styles = useStyles(makeStyles);
+    const accent = accentProp ?? colors.accent;
     const { state: playbackState } = usePlaybackState();
     const { position, duration } = useProgress();
 
@@ -247,7 +250,7 @@ const PlayerControls = ({ accent = colors.accent, onReplaySentence, onRateChange
     );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     container: {
         width: '100%',
         paddingHorizontal: 20,

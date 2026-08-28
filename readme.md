@@ -9,13 +9,18 @@ A React Native podcast app with on-device AI transcription, word-by-word transcr
 - Browse episodes from all subscribed feeds
 - Stream episodes or download for offline listening
 - Resume playback from where you left off (position saved every 5s)
+- Listening tab — every episode by state: New · In progress · Finished; swipe right to mark Done (or Unplayed on a finished row), swipe left to delete a download
+- Refreshing feeds shows a thin loading line under the Feed title and never blocks the tabs
+- When a downloaded episode plays to the end, a prompt offers to delete the download (audio + transcript) to free up space — switchable off in Settings → Storage
+- Finished episodes that go a week without a replay have their download and transcript removed automatically (the episode stays, marked as played; re-download it from Listening → Finished) — switchable off in Settings → Storage
+- Settings live behind a gear in the header, not a tab
 - Background audio with lock screen / notification controls
 
 ### Playback
 - Full-screen player with artwork, episode info, and transcript
 - Mini player floating above tab bar — quick controls without leaving the current screen
 - Skip ±10 seconds, seek slider, time display
-- Dynamic header color extracted from podcast artwork
+- Player header tinted from the podcast artwork — softened (capped saturation, theme-banded lightness) so loud covers stay calm
 
 ### On-Device Transcription (sherpa-onnx)
 - Fully offline — no audio ever leaves the device
@@ -60,6 +65,10 @@ src/
 │   └── podcastResolver.js        # Resolves Apple Podcasts URLs → RSS feed URLs
 ├── components/
 │   ├── EpisodeItem.js            # Episode list row with download/transcribe actions
+│   ├── FinishedEpisodePrompt.js  # "Delete the download?" alert when a downloaded episode ends
+│   ├── SettingsGearButton.js     # Header gear that opens Settings
+│   ├── SegmentedControl.js       # Filter switch used by the Listening tab
+│   ├── LoadingBar.js             # Thin indeterminate line under a header while feeds load
 │   ├── MiniPlayer.js             # Floating compact player above tab bar
 │   ├── PlayerControls.js         # Full-screen playback controls (slider, skip, play/pause)
 │   └── TranscriptHighlighter.js  # Word-synced transcript with auto-scroll & translation
@@ -69,12 +78,14 @@ src/
 ├── screens/
 │   ├── SubscribedTimeline.js     # "Discover" tab — browse & add podcast feeds
 │   ├── DownloadedTimeline.js     # "Library" tab — manage downloads & transcription queue
+│   ├── ListeningScreen.js        # "Listening" tab — episodes by state (New / In progress / Finished)
 │   ├── PodcastsScreen.js         # "My Podcasts" tab — subscriptions list
 │   ├── PlayerScreen.js           # Full-screen player modal
-│   └── SettingsScreen.js         # Transcription model management
+│   └── SettingsScreen.js         # Settings (stack screen behind the header gear)
 └── services/
     ├── trackPlayer.js            # react-native-track-player wrapper
     ├── playbackService.js        # Background playback event handler
+    ├── episodeService.js         # Episode actions shared by every tab: download ⇒ transcribe, remove download, Done / Unplayed, weekly cleanup of finished downloads
     ├── whisperService.js         # Transcription queue & model management
     ├── downloadService.js        # Audio & model downloads with progress
     └── colorExtractor.js         # Dominant color extraction from artwork
@@ -98,6 +109,9 @@ src/
 | is_downloaded | INTEGER | 0 or 1 |
 | has_transcript | INTEGER | 0 or 1 |
 | play_position | INTEGER | Seconds |
+| is_played | INTEGER | 0 or 1 — set when playback reaches the end |
+| last_played_at | INTEGER | Epoch ms of the last saved position or manual Done (orders the Listening tab; start of a finished download's cleanup week) |
+| downloaded_at | INTEGER | Epoch ms the audio landed on the device; NULL when not downloaded (a re-download gets a fresh cleanup week) |
 
 **Podcasts**
 | Column | Type | Notes |

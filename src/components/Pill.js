@@ -1,15 +1,15 @@
 import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
-import { colors, withAlpha, radii } from '../theme';
+import { useTheme, useStyles, withAlpha, radii } from '../theme';
 
-const VARIANT_COLORS = {
+const variantColors = (colors) => ({
     blue: colors.accent,
     green: colors.success,
     orange: colors.warning,
     danger: colors.danger,
     neutral: colors.textMuted,
-};
+});
 
 // Pill height is ~28px; hitSlop extends pressable pills to a >=44px target.
 const PRESS_SLOP = { top: 8, bottom: 8, left: 6, right: 6 };
@@ -27,8 +27,10 @@ const Pill = ({
     accessibilityLabel,
     style,
 }) => {
+    const { colors } = useTheme();
+    const VARIANT_COLORS = useStyles(variantColors);
     const tint = VARIANT_COLORS[variant] || VARIANT_COLORS.blue;
-    const fg = solid ? colors.textPrimary : tint;
+    const fg = solid ? colors.onAccent : tint;
 
     const containerStyle = [
         styles.pill,

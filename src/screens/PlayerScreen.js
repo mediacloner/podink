@@ -9,23 +9,26 @@ import TrackPlayer, { State } from 'react-native-track-player';
 import { Feather as Icon } from '@expo/vector-icons';
 import PlayerControls from '../components/PlayerControls';
 import TranscriptHighlighter from '../components/TranscriptHighlighter';
-import { showAlert } from '../components/AppAlert';
 import { loadEpisodeTrack, ensurePlayerAlive, onPlayerRecovered } from '../services/trackPlayer';
 import { isPlaybackComplete, persistProgress } from '../services/playbackService';
 import { onLibraryChange } from '../services/libraryEvents';
 import {
-    enqueueTranscription, getAbortingId, getActiveId,
-    getQueueIds, onQueueChange, onTranscriptProgress,
+    getAbortingId, getActiveId, getQueueIds, onQueueChange, onTranscriptProgress,
 } from '../services/whisperService';
+import {
+    downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
+} from '../services/episodeService';
 import { getEpisodeById, getTranscriptsForEpisode } from '../database/queries';
-import { extractColor } from '../services/colorExtractor';
-import { colors, radii, withAlpha } from '../theme';
+import { extractColor, softenForHeader } from '../services/colorExtractor';
+import { useTheme, useStyles, radii, withAlpha } from '../theme';
 
 // Minimum gap between transcript re-fetches while live transcription streams
 // 'transcript-progress' events — keeps chunk rebuilds >= 1.5s apart.
 const LIVE_REFETCH_MIN_MS = 1500;
 
 const PlayerScreen = ({ route, navigation }) => {
+    const { colors, isDark } = useTheme();
+    const styles = useStyles(makeStyles);
     useKeepAwake();
     const episodeParam = route.params.episode;
     const epId = episodeParam.id;
@@ -47,6 +50,12 @@ const PlayerScreen = ({ route, navigation }) => {
     const [transcribing, setTranscribing] = useState(false);
     const [isQueued, setIsQueued] = useState(false);
     const [transcribeProgress, setTranscribeProgress] = useState(0);
+    // "Download & transcribe" from the no-transcript card of a streamed
+    // episode. Keyed by id so a download started for one episode never shows
+    // as in flight on another after navigating.
+    const [downloadingId, setDownloadingId] = useState(null);
+    const [downloadProgress, setDownloadProgress] = useState(0);
+    const downloadingIdRef = useRef(null);
     const [playerReady, setPlayerReady] = useState(false);
     // Synchronous mirror of playerReady: when epId changes, the setup effect
     // flips this ref false in the same commit, so the seek-consuming effect
@@ -252,13 +261,18 @@ const PlayerScreen = ({ route, navigation }) => {
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
             } else if (payload.type === 'transcript-error') {
                 setTranscribing(false);
+            } else if (payload.type === 'episode-delete') {
+                // The finished-episode prompt (or the Library) removed this
+                // episode's download and transcript and reset the player —
+                // there is nothing left to show or play here.
+                if (navigation.canGoBack()) navigation.goBack();
             }
         });
         return () => {
             unsub();
             if (st.timer) clearTimeout(st.timer);
         };
-    }, [epId, refetchTranscript]);
+    }, [epId, refetchTranscript, navigation]);
 
     // ── Transcription queue state for this episode ────────────────────────────
     const syncQueue = useCallback(() => {
@@ -283,30 +297,44 @@ const PlayerScreen = ({ route, navigation }) => {
         setTranscribeProgress(0);
         setTranscribing(true);
         try {
-            await enqueueTranscription(
-                epId,
-                row.local_audio_path,
-                () => {},
-                () => setTranscribing(true),
-                row.duration || 0,
-            );
+            await transcribeEpisode(row, { onStart: () => setTranscribing(true) });
             refetchTranscript();
             getEpisodeById(epId).then(r => { if (r) setEp(r); }).catch(() => {});
         } catch (e) {
-            const msg = e?.message || String(e);
-            if (msg !== 'Cancelled' && msg !== 'Already queued' && msg !== 'Queue reset') {
-                const isAudioError = /audio file|unrecognized header/i.test(msg);
-                showAlert(
-                    isAudioError ? 'Invalid Audio File' : 'Transcription Failed',
-                    isAudioError
-                        ? 'This audio file appears to be corrupted or missing. Try deleting and re-downloading the episode.'
-                        : 'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
-                );
-            }
+            reportTranscriptionError(e);
         } finally {
             syncQueue();
         }
     }, [epId, refetchTranscript, syncQueue]);
+
+    // Streamed episode (no file on disk): download it from here and the
+    // transcription queues itself (episodeService), so the card goes
+    // Downloading → Queued → Transcribing → text without leaving the Player.
+    // Playback keeps streaming; the local file is used from the next load.
+    // The queue-change subscription above picks up the new job.
+    const handleDownload = useCallback(async () => {
+        const row = epRef.current;
+        if (!row?.audio_url || downloadingIdRef.current) return;
+        const id = row.id;
+        downloadingIdRef.current = id;
+        setDownloadProgress(0);
+        setDownloadingId(id);
+        try {
+            await downloadEpisode(row, {
+                onProgress: (p) => {
+                    const pct = Math.round(p);
+                    setDownloadProgress(prev => (prev === pct ? prev : pct));
+                },
+            });
+            const fresh = await getEpisodeById(id);
+            if (fresh && epRef.current?.id === id) setEp(fresh);
+        } catch (e) {
+            reportDownloadError(e);
+        } finally {
+            downloadingIdRef.current = null;
+            setDownloadingId(prev => (prev === id ? null : prev));
+        }
+    }, []);
 
     // ── Controls wiring ───────────────────────────────────────────────────────
     const handleReplaySentence = useCallback(() => {
@@ -315,9 +343,27 @@ const PlayerScreen = ({ route, navigation }) => {
 
     const hasTranscript = !!ep?.has_transcript || segments.length > 0;
     const canTranscribe = !!ep?.local_audio_path;
-    // Artwork-derived accent only when bright enough to read on the dark player.
-    const accent = colorInfo && !colorInfo.isDark ? colorInfo.bgColor : colors.accent;
-    const headerBg = colorInfo?.bgColor ?? colors.surfaceElevated;
+    // Artwork-derived accent only when it contrasts with the page: bright tints
+    // on the dark player, dark tints on the paper one.
+    const accent = colorInfo && colorInfo.isDark !== isDark ? colorInfo.bgColor : colors.accent;
+    // The header gets a softened version of the cover colour (hue kept,
+    // saturation capped, lightness pinned to a theme band) — the raw colour
+    // was fine as an accent but far too loud as a full-width surface.
+    const headerTint = colorInfo ? softenForHeader(colorInfo.bgColor, isDark) : null;
+    const headerBg = headerTint?.hex ?? colors.surfaceElevated;
+    // Header text must read against the artwork tint, not the theme. The dark
+    // theme keeps its always-white text; paper flips to cream on dark tints.
+    // The drop-shadow exists only to lift text off a dark tint, so it is
+    // *added* there rather than removed elsewhere: on Android a
+    // `textShadowColor: 'transparent'` override still drew the default dark
+    // shadow, which is what smudged the Paper header.
+    const headerIsDark = headerTint ? headerTint.isDark : isDark;
+    const headerFg = !isDark && headerIsDark ? colors.onAccent : colors.textPrimary;
+    const headerTextStyle = [
+        { color: headerFg },
+        headerIsDark && styles.headerTextShadow,
+    ];
+    const downloading = downloadingId === epId;
 
     return (
         <View style={styles.root}>
@@ -333,15 +379,15 @@ const PlayerScreen = ({ route, navigation }) => {
                     <Image source={{ uri: ep.image_url }} style={styles.artwork} />
                 ) : (
                     <View style={[styles.artwork, styles.artworkPlaceholder]}>
-                        <Icon name='headphones' size={20} color={withAlpha(colors.textPrimary, 0.25)} />
+                        <Icon name='headphones' size={20} color={withAlpha(headerFg, 0.25)} />
                     </View>
                 )}
 
                 <View style={styles.meta}>
-                    <Text style={styles.podcastName} numberOfLines={1}>
+                    <Text style={[styles.podcastName, headerTextStyle, { color: withAlpha(headerFg, 0.6) }]} numberOfLines={1}>
                         {ep.podcast_title}
                     </Text>
-                    <Text style={styles.episodeTitle} numberOfLines={2}>
+                    <Text style={[styles.episodeTitle, headerTextStyle]} numberOfLines={2}>
                         {ep.title}
                     </Text>
                 </View>
@@ -357,6 +403,9 @@ const PlayerScreen = ({ route, navigation }) => {
                     hasTranscript={hasTranscript}
                     canTranscribe={canTranscribe}
                     onTranscribe={handleTranscribe}
+                    onDownload={handleDownload}
+                    downloading={downloading}
+                    downloadProgress={downloadProgress}
                     transcribing={transcribing}
                     isQueued={isQueued}
                     transcribeProgress={transcribeProgress}
@@ -405,7 +454,7 @@ const PlayerScreen = ({ route, navigation }) => {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const makeStyles = (colors) => StyleSheet.create({
     root: {
         flex: 1,
         backgroundColor: colors.bgPlayer,
@@ -426,8 +475,8 @@ const styles = StyleSheet.create({
         elevation: 6,
     },
     artwork: {
-        width: 52,
-        height: 52,
+        width: 56,
+        height: 56,
         borderRadius: 10,
         backgroundColor: withAlpha(colors.textPrimary, 0.1),
     },
@@ -440,21 +489,21 @@ const styles = StyleSheet.create({
         gap: 3,
     },
     podcastName: {
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: '700',
         color: withAlpha(colors.textPrimary, 0.6),
         textTransform: 'uppercase',
         letterSpacing: 0.7,
-        textShadowColor: 'rgba(0,0,0,0.35)',
-        textShadowOffset: { width: 0, height: 1 },
-        textShadowRadius: 3,
     },
     episodeTitle: {
-        fontSize: 14,
+        fontSize: 16,
         fontWeight: '700',
         color: colors.textPrimary,
-        lineHeight: 19,
-        letterSpacing: -0.1,
+        lineHeight: 21,
+        letterSpacing: -0.2,
+    },
+    // Only on dark header tints (see headerTextStyle).
+    headerTextShadow: {
         textShadowColor: 'rgba(0,0,0,0.35)',
         textShadowOffset: { width: 0, height: 1 },
         textShadowRadius: 3,

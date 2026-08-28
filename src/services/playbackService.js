@@ -1,5 +1,6 @@
 import TrackPlayer, { Event, State } from 'react-native-track-player';
-import { savePlayPosition, markEpisodePlayed } from '../database/queries';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { savePlayPosition, markEpisodePlayed, setEpisodeDurationIfMissing } from '../database/queries';
 import { notifyLibraryChange } from './libraryEvents';
 
 // Centralized play-position persistence (contract 9): the 1s
@@ -8,6 +9,9 @@ import { notifyLibraryChange } from './libraryEvents';
 // immediately so the position survives the session ending.
 const SAVE_THROTTLE_MS = 5000;
 let lastSaveTs = 0;
+// Track ids whose duration has been backfilled this session: the UPDATE is
+// a no-op once a length is stored, so skip the round-trip on later ticks.
+const durationBackfilled = new Set();
 
 /** "Listened" once inside the final stretch of the episode: 5% of the
  *  duration, clamped to [10s, 2min] for normal episodes and to 25% of the
@@ -28,6 +32,13 @@ export const isPlaybackComplete = (position, duration) => {
 export const persistProgress = async (trackId, position, duration, { ended = false } = {}) => {
     if (!trackId) return;
     try {
+        // The player knows the real length as soon as the track loads; store
+        // it for feeds that shipped no <itunes:duration> so their rows can
+        // show a total time and "x left".
+        if (duration > 0 && !durationBackfilled.has(trackId)) {
+            durationBackfilled.add(trackId);
+            await setEpisodeDurationIfMissing(trackId, Math.round(duration));
+        }
         if (ended || isPlaybackComplete(position, duration)) {
             await savePlayPosition(trackId, 0);
             const justCompleted = await markEpisodePlayed(trackId);
@@ -36,8 +47,36 @@ export const persistProgress = async (trackId, position, duration, { ended = fal
             }
         } else if (position > 0) {
             await savePlayPosition(trackId, Math.floor(position));
+            notifyLibraryChange({ type: 'playback-progress', episodeId: trackId });
         }
     } catch (_) {}
+};
+
+// ─── "Episode ended" signal ──────────────────────────────────────────────────
+// Distinct from 'playback-complete' (which fires once, on the is_played 0→1
+// transition, and also inside the final-stretch window while audio is still
+// playing): this fires every time the player actually reaches the end of the
+// track — including re-listens of an already-played episode — and is what
+// the finished-episode prompt ("delete the download?") keys off. Prompting on
+// the window would interrupt the outro and offer to delete a file in use.
+//
+// The id is parked in AsyncStorage before listeners run: with
+// ContinuePlayback the foreground service keeps playing after the app is
+// swiped from recents, so the UI (and its listeners) may be gone when the
+// episode ends. FinishedEpisodePrompt reads the key on mount and clears it
+// once the user answers.
+export const FINISHED_PROMPT_KEY = '@finished_episode_prompt';
+// Settings → Storage toggle for that prompt: '1'/'0', absent = on (same shape
+// as '@pause_on_lookup'). The service parks the id regardless; the prompt
+// reads this at ask time, so flipping it takes effect on the next finish.
+export const ASK_DELETE_ON_FINISH_KEY = '@ask_delete_on_finish';
+const _endedListeners = new Set();
+export const onEpisodeEnded = (cb) => { _endedListeners.add(cb); return () => _endedListeners.delete(cb); };
+
+const announceEpisodeEnded = async (trackId) => {
+    if (!trackId) return;
+    try { await AsyncStorage.setItem(FINISHED_PROMPT_KEY, String(trackId)); } catch (_) {}
+    [..._endedListeners].forEach(cb => { try { cb(trackId); } catch (_) {} });
 };
 
 const saveCurrentPositionNow = async ({ ended = false } = {}) => {
@@ -50,6 +89,7 @@ const saveCurrentPositionNow = async ({ ended = false } = {}) => {
         // Player-reported duration (not Episodes.duration), so completion
         // works even for feeds without an <itunes:duration> tag.
         await persistProgress(track?.id, position, duration, { ended });
+        if (ended) await announceEpisodeEnded(track?.id);
     } catch (_) {}
 };
 
