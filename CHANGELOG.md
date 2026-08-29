@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.5.0] - 2026-08-29
+
+### Added
+- **Offline dictionaries in the word card.** Tapping a word now shows the entry from one of the twelve MDict dictionaries of the penReader set (Oxford EN–ES / ES–EN, New Oxford American, Oxford Advanced 8th, Collins COBUILD Advanced / Intermediate, Collins EN–ES, Merriam-Webster Advanced, MW EN–ES, VOX EN–ES, Roget's, Gran Diccionari) — the same files the scanning pen carries, read straight from the `.mdx` (`services/mdx.js`: header, key blocks and record blocks are inflated on demand; a small per-block index built once at install makes lookups a few milliseconds even in the 1.9 M-key New Oxford American). Entries are rendered natively, not in a WebView: the publisher's HTML is flattened to themed paragraphs (`services/dictionaryHtml.js`, `components/transcript/DictionaryEntry.js`) so every dictionary reads correctly on both the dark and the paper palette — bold, italic examples, small grammar labels, senses indented as in the source, Collins' grammar boxes as tinted cards, colours mapped to the accent. Cross-references (`entry://`) are tappable.
+- **Dictionary selector** in the word card's footer, where *Save to vocabulary* used to be (saving moved to a bookmark icon beside Copy / Share). The picker shows which installed dictionaries have the word, remembers the choice (`@dictionary_selected`), and links to Settings.
+- **Lookup works like the pen** (penReader scan-bridge): exact key first (case, accents and punctuation ignored, but "look up" is never the noun "look-up"), then inflections — `@@@LINK=` redirect records resolved one by one before any HTML is assembled, with the base spelling shown in a trail ("gave → give"); irregular forms and plurals stemmed for the dictionaries without redirects (Oxford Advanced). A key's real records win over its redirects; a stub such as "ran: past tense of run" offers the base as a *See also* chip.
+- **Phrasal verbs, like the pen.** The words around the tap are checked for a phrasal verb ("gave up", "gave it up", "look forward to", or tapping "up" after "gave"). If the dictionary indexes it as a headword (MW EN–ES, Collins) that entry is shown with the trail “gave up” → give up and a *Show ‘gave’ on its own* link; otherwise the base verb's entry opens **scrolled to the phrasal verb's own heading** — the bold run that is the phrase and nothing else, stress marks and object placeholders ignored (`▸ give up`, `• to give up`, `ˌgive ˈup`, `▪ give up`, `give (something) up`) — highlighted, with a chip to jump back to it. "give up on" and "look up to" are other verbs and never count.
+- **Settings → Dictionaries.** The dictionaries live in the private GitHub repository `mediacloner/penReader` (`dictionaries/`); a personal access token with read access to its contents, stored only on this device (`@github_token`), lists them and downloads each one (progress, then “Indexing…”), with *Download all* and per-dictionary delete. Nothing is bundled in the APK.
+- A third translation endpoint (`/translate_a/t`) for sentence translation, tried when both `/single` client keys are throttled — the "can't access translation" cases were often Google rate-limiting rather than the gesture.
+
+### Changed
+- The word card no longer waits for Google: the offline entry shows on its own and a translation failure stays inside the translation block. Online English definitions (dictionaryapi.dev) are only fetched while no dictionary is installed.
+- In the word-by-word region of the transcript the sentence wrapper is now a long-press target too, so a long-press that lands between words, at a line end or below the last line opens the translation instead of doing nothing (word taps and long-presses on words are unchanged).
+- Word card height raised to 88 % of the screen for long entries; entries beyond ~120 paragraphs render a first slice with a *Show the whole entry* button (the slice always reaches the phrasal-verb heading).
+
 ## [2.3.0] - 2026-08-28
 
 ### Added

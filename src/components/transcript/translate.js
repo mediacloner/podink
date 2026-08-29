@@ -95,13 +95,34 @@ const request = async (query, signal) => {
     throw lastError;
 };
 
+// A third door for plain text only: the `/translate_a/t` endpoint answers
+// `["hola mundo"]` or `[["hola mundo","en"]]` and is throttled separately
+// from `/single`, so a 429 on both client keys above still has a way out.
+const TEXT_FALLBACK = 'https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=en';
+
+const flattenTextResponse = (d) => {
+    if (typeof d === 'string') return d;
+    if (!Array.isArray(d)) return '';
+    return d.map(x => (typeof x === 'string' ? x : Array.isArray(x) ? (typeof x[0] === 'string' ? x[0] : '') : '')).join('');
+};
+
 // Plain text translation — resolves a single string.
 export const fetchTranslation = async (text, lang, signal) => {
-    const d = await request(
-        `tl=${encodeURIComponent(lang)}&dt=t&q=${encodeURIComponent(text)}`,
-        signal,
-    );
-    return (d?.[0] || []).map(c => c?.[0] ?? '').join('');
+    const query = `tl=${encodeURIComponent(lang)}&q=${encodeURIComponent(text)}`;
+    try {
+        const d = await request(`${query}&dt=t`, signal);
+        const out = (d?.[0] || []).map(c => c?.[0] ?? '').join('');
+        if (out.trim()) return out;
+    } catch (e) {
+        if (e?.name === 'AbortError' || e?.kind === 'offline') throw e;
+        // Throttled / server error: fall through to the other endpoint.
+        const d = await requestJson(TEXT_FALLBACK, query, signal);
+        const out = flattenTextResponse(d);
+        if (out.trim()) return out;
+        throw e;
+    }
+    const d = await requestJson(TEXT_FALLBACK, query, signal);
+    return flattenTextResponse(d);
 };
 
 // Translation + dictionary senses (dt=bd) for a single word.

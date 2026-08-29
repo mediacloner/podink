@@ -784,10 +784,19 @@ const TranscriptHighlighter = forwardRef(({
         const ch = chunksRef.current[chunkIndex];
         // Unicode-aware edge-trim so accented loanwords ('café', 'résumé') keep
         // their letters instead of being clipped to 'caf' / 'r' before lookup.
-        const cleaned = (word.text || '').trim().replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu, '');
+        const trim = (t) => (t || '').trim().replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu, '');
+        const cleaned = trim(word.text);
         if (!cleaned) return;
+        // The words around the tap let the dictionary spot a phrasal verb
+        // ("gave up", "gave it up", "look forward to") — see dictionaryLookup.
+        const words = ch ? ch.words : [];
+        const at = words.findIndex(w => w.globalIndex === word.globalIndex);
+        const prevWords = at > 0 ? words.slice(Math.max(0, at - 2), at).map(w => trim(w.text)) : [];
+        const nextWords = at >= 0 ? words.slice(at + 1, at + 4).map(w => trim(w.text)) : [];
         setWordPopover({
             word: cleaned,
+            prevWords,
+            nextWords,
             startMs: Math.round(word.startMs),
             contextText: ch ? ch.words.map(w => w.text).join('').trim() : '',
         });
@@ -1115,8 +1124,19 @@ const Chunk = React.memo(({
         // nothing / the parent seeked). So every handler lives on the words:
         // tap = define, long-press = translate the sentence. Seeking stays on
         // the other (non-word-level) sentences and the transport controls.
+        //
+        // The wrapper is a Pressable with ONLY a long-press: a View responder
+        // is asked after the word spans, so word taps and long-presses still
+        // reach the words, while a long-press that lands between words, at a
+        // line end or in the gap under the last line — where no span owns
+        // the touch — still opens the translation instead of doing nothing.
         return (
-            <View style={styles.sentenceWrap} onLayout={handleLayout}>
+            <Pressable
+                style={styles.sentenceWrap}
+                onLayout={handleLayout}
+                onLongPress={handleLongPress}
+                delayLongPress={400}
+            >
                 <Text
                     style={baseStyle}
                     suppressHighlighting
@@ -1135,7 +1155,7 @@ const Chunk = React.memo(({
                         />
                     ))}
                 </Text>
-            </View>
+            </Pressable>
         );
     }
 

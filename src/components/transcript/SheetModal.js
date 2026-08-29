@@ -39,7 +39,9 @@ const FOOTER_GAP = 20;
 //    normally; upward drags fail the pan at once so they never fight the
 //    scroll. This replaces a JS PanResponder that Android's ScrollView beat
 //    to the gesture whenever the content overflowed.
-const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '85%' }) => {
+// `scrollRef` (optional) receives the body ScrollView so a caller can scroll
+// its content into view (the word card jumps to a phrasal verb's definition).
+const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '85%', scrollRef }) => {
     const st = useStyles(makeStyles);
     const { bottom } = useSafeAreaInsets();
     const [mounted, setMounted] = useState(visible);
@@ -160,6 +162,7 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
                         {shown.header}
                         <GestureDetector gesture={nativeScroll}>
                             <ScrollView
+                                ref={scrollRef}
                                 style={st.scroll}
                                 contentContainerStyle={st.scrollContent}
                                 showsVerticalScrollIndicator={false}
