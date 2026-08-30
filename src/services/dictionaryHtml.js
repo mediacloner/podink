@@ -2,7 +2,7 @@
  * dictionaryHtml.js — turns a dictionary record's HTML into flat, themeable
  * paragraphs, and finds a phrasal verb's definition inside an entry.
  *
- * The twelve penReader dictionaries are Kindle conversions: presentational
+ * Most of the penReader dictionaries are Kindle conversions: presentational
  * HTML (`<b>`, `<i>`, `<font color>`, `<blockquote>`, `<div width="-50">`,
  * `<br/>`, `<table bgcolor>`), no CSS, no images. There is no WebView in
  * the card, so instead of styling that HTML we reduce it to a list of
@@ -12,6 +12,16 @@
  * the publisher are not kept: a flag says "this was coloured" and the
  * renderer paints it with the theme's accent, so the same entry reads
  * correctly on the dark and the paper palettes.
+ *
+ * LDOCE 6 and Vocabulary.com are prepared MDict sets instead, styled by
+ * publisher CSS classes; the 'ldoce' and 'vocab' style keys map those
+ * classes onto the same run flags (see CLASS_PROFILES), following the
+ * pen's WebView profiles in penReader's scan-bridge. LDOCE additionally
+ * gets its popup blocks stripped before parsing — 91% of a raw record is
+ * `<div nattr="at-link">` content (Word Origin, Collocations, Thesaurus)
+ * that only ever appears when the publisher's JavaScript runs; inline it
+ * buries the entry (the pen strips it at index-build time instead, in
+ * tools/mdx_index.py).
  *
  * `findPhrase` ports the pen's phrasal-verb locator: an entry mentions
  * "give up" in passing several times before defining it; the definition is
@@ -137,6 +147,116 @@ export const parseHtml = (html) => {
     return root;
 };
 
+// ── LDOCE 6 popup strip ──────────────────────────────────────────────────────
+
+const LDOCE_ATLINK_OPEN = /<div\s+nattr="at-link"[^>]*>/gi;
+const ANY_DIV = /<\/?div\b[^>]*>/gi;
+
+/** Removes every `<div nattr="at-link">…</div>` block (depth-matched). */
+const dropAtLinkDivs = (html) => {
+    LDOCE_ATLINK_OPEN.lastIndex = 0;
+    let m = LDOCE_ATLINK_OPEN.exec(html);
+    if (!m) return html;
+    const parts = [];
+    let keepFrom = 0;
+    while (m) {
+        parts.push(html.slice(keepFrom, m.index));
+        ANY_DIV.lastIndex = LDOCE_ATLINK_OPEN.lastIndex;
+        let depth = 1;
+        let end = html.length;
+        let t;
+        while ((t = ANY_DIV.exec(html))) {
+            depth += t[0][1] === '/' ? -1 : 1;
+            if (depth === 0) { end = ANY_DIV.lastIndex; break; }
+        }
+        keepFrom = end;
+        LDOCE_ATLINK_OPEN.lastIndex = end;
+        m = LDOCE_ATLINK_OPEN.exec(html);
+    }
+    parts.push(html.slice(keepFrom));
+    return parts.join('');
+};
+
+// ── Per-dictionary class profiles ────────────────────────────────────────────
+// A profile looks at an element's tag and class tokens and answers
+// { skip, block, indent, flags } — skip drops the element and its content,
+// block starts a new paragraph, flags extend the run style for its subtree.
+
+const classTokens = (attrs) => String(attrs.class || '').trim().split(/\s+/).filter(Boolean);
+
+// LDOCE marks everything semantically; a straight remap of the publisher's
+// classes, mirroring the pen's ldoce6 profile. `.hwd` stays hidden exactly as
+// their stylesheet hides it — `.hyphenation` is the visible headword. The
+// `buttons` span holds only the dead popup-button labels once the at-link
+// blocks are gone.
+const LDOCE_SKIP = new Set(['hwd', 'imgholder', 'buttons', 'popup-button']);
+const LDOCE_BLOCK = new Set(['chwd', 'entryhead', 'sense', 'subsense', 'newline', 'phrvbhwd',
+    'example', 'gramexa', 'colloexa', 'f2nbox', 'thesbox', 'collobox', 'grambox', 'usagebox', 'etymbox', 'errorbox']);
+const LDOCE_FLAGS = {
+    hyphenation: { b: true, big: true },
+    kw: { b: true }, hw: { b: true },
+    homnum: { sup: true, color: true },
+    proncodes: { color: true }, pron: { color: true }, neutral: { color: true }, amevarpron: { color: true },
+    level: { small: true }, freq: { small: true },
+    pos: { i: true, color: true }, gram: { i: true, color: true },
+    registerlab: { small: true }, geo: { small: true },
+    sensenum: { b: true, color: true },
+    signpost: { small: true, b: true },
+    example: { example: true }, gramexa: { example: true }, colloexa: { example: true },
+    collo: { b: true, color: true }, colloc: { b: true, color: true }, collocate: { b: true, color: true },
+    lexunit: { b: true, color: true }, propform: { b: true, color: true },
+    refhwd: { color: true }, crossref: { color: true }, linkword: { color: true },
+};
+
+const ldoceProfile = (tag, attrs) => {
+    const tokens = classTokens(attrs);
+    if (!tokens.length) return null;
+    let out = null;
+    for (const t of tokens) {
+        if (LDOCE_SKIP.has(t)) return { skip: true };
+        if (LDOCE_BLOCK.has(t)) (out = out || {}).block = true;
+        const flags = LDOCE_FLAGS[t];
+        if (flags) (out = out || {}).flags = { ...out.flags, ...flags };
+        if (t === 'subsense') (out = out || {}).indent = true;
+        if (t === 'chwd') (out = out || {}).flags = { ...out.flags, small: true };
+        // The publisher spaces sense numbers with min-width, not text.
+        if (t === 'sensenum') (out = out || {}).spaceAfter = true;
+    }
+    return out;
+};
+
+// Vocabulary.com minifies its classes; these are the ones v.css gives meaning
+// to (the pen's vocab profile): `.b.t` headword, `.a.g.d` frequency line,
+// div`.h` the sense-nav row, `.i.t.s` the short sense with `.s` the marked
+// word, `.a.i` the plain-English paragraph, `span.b.c` section headings,
+// `.n` a press example with `.g.r` its source. `.s_` is the dead "+"
+// expander and span`.h` its collapse glyph.
+const vocabProfile = (tag, attrs) => {
+    const tokens = classTokens(attrs);
+    if (!tokens.length) return null;
+    const set = new Set(tokens);
+    // Dead JavaScript controls: the "+" word-family expander with its "/"
+    // collapse glyph, and the Hypo|Hyper tab row of the relations tree.
+    if (set.has('s_') || set.has('y_')) return { skip: true };
+    if (tag === 'div' && tokens.length === 1 && set.has('y')) return { skip: true };
+    if (tag === 'span' && tokens.length === 1 && set.has('h')) return { skip: true };
+    if (set.has('b') && set.has('t')) return { block: true, flags: { b: true, big: true } };
+    if (set.has('a') && set.has('g') && set.has('d')) return { block: true, flags: { small: true } };
+    if (tag === 'div' && tokens.length === 1 && set.has('h')) return { block: true, flags: { small: true } };
+    if (set.has('i') && set.has('t') && set.has('s')) return { block: true };
+    if (set.has('b') && set.has('c')) return { block: true, flags: { small: true, b: true } };
+    if (set.has('b') && set.has('g')) return { flags: { b: true, color: true } };
+    if (set.has('g') && set.has('r')) return { flags: { small: true } };
+    if (tag === 'a' && set.has('p') && set.has('n')) return { flags: { i: true, color: true } };
+    if (tag === 'div' && tokens.length === 1 && set.has('n')) return { block: true, flags: { example: true } };
+    if (tokens.length === 1 && set.has('g')) return { flags: { small: true } };
+    if (tokens.length === 1 && set.has('s')) return { flags: { b: true, color: true } };
+    if (tokens.length === 1 && (set.has('m') || set.has('o'))) return { flags: { b: true } };
+    return null;
+};
+
+const CLASS_PROFILES = { ldoce: ldoceProfile, vocab: vocabProfile };
+
 // ── Flattening ───────────────────────────────────────────────────────────────
 
 const FONT_SIZE_SCALE = {
@@ -164,7 +284,9 @@ const emptyStyle = () => ({
  */
 export const flattenEntry = (html, opts = {}) => {
     const styleKey = opts.styleKey || '';
-    const root = parseHtml(html);
+    const source = styleKey === 'ldoce' ? dropAtLinkDivs(html) : html;
+    const profile = CLASS_PROFILES[styleKey] || null;
+    const root = parseHtml(source);
     const paragraphs = [];
     let current = null;      // paragraph being filled
     let curIndent = 0;
@@ -224,11 +346,14 @@ export const flattenEntry = (html, opts = {}) => {
         if (tag === 'hide' && styleKey === 'oald' && /^menu$/i.test(attrs.label || '')) return;
         if (tag === 'a' && /^sound:\/\//i.test(attrs.href || '')) return; // no media in these files
 
+        const prof = profile ? profile(tag, attrs) : null;
+        if (prof && prof.skip) return;
+
         let next = style;
-        const isBlock = BLOCK_TAGS.has(tag);
-        if (!isBlock) {
+        const isBlock = BLOCK_TAGS.has(tag) || Boolean(prof && prof.block);
+        if (!isBlock || (prof && prof.flags)) {
             next = { ...style };
-            switch (tag) {
+            if (!isBlock) switch (tag) {
                 case 'b': case 'strong': case 'dfn': next.b = true; break;
                 case 'i': case 'em': case 'cite': case 'var': next.i = true; break;
                 case 'u': next.u = true; break;
@@ -237,7 +362,11 @@ export const flattenEntry = (html, opts = {}) => {
                 case 'sup': next.sup = true; break;
                 case 'sub': next.sub = true; break;
                 case 'a':
-                    if (LINK_PREFIX.test(attrs.href || '')) next.link = decodeEntities(attrs.href.replace(LINK_PREFIX, '')).split('#')[0].trim();
+                    if (LINK_PREFIX.test(attrs.href || '')) {
+                        // An entry://#anchor link points inside this record; no target to offer.
+                        const target = decodeEntities(attrs.href.replace(LINK_PREFIX, '')).split('#')[0].trim();
+                        if (target) next.link = target;
+                    }
                     break;
                 case 'font':
                     if (attrs.color) next.color = true;
@@ -248,13 +377,14 @@ export const flattenEntry = (html, opts = {}) => {
                     break;
                 default: break;
             }
+            if (prof && prof.flags) Object.assign(next, prof.flags);
         }
 
         if (isBlock) {
             closeParagraph();
             const prevIndent = curIndent;
             const prevBox = curBox;
-            const indents = INDENT_TAGS.has(tag) || (tag === 'div' && attrs.width != null) || (tag === 'p' && attrs.indent != null && attrs.depth != null && attrs.depth !== '1');
+            const indents = INDENT_TAGS.has(tag) || (tag === 'div' && attrs.width != null) || (tag === 'p' && attrs.indent != null && attrs.depth != null && attrs.depth !== '1') || Boolean(prof && prof.indent);
             if (indents) curIndent = Math.min(MAX_INDENT, curIndent + 1);
             if (tag === 'table' && attrs.bgcolor) curBox++;
             for (const child of node.children) walk(child, next);
@@ -264,6 +394,7 @@ export const flattenEntry = (html, opts = {}) => {
             return;
         }
         for (const child of node.children) walk(child, next);
+        if (prof && prof.spaceAfter) pushText(' ', style);
     };
 
     walk(root, emptyStyle());

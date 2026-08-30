@@ -2,11 +2,13 @@
  * dictionaryService — the offline MDict dictionaries behind the word card.
  *
  * Source of truth is the `dictionaries/` folder of the user's private GitHub
- * repository (mediacloner/penReader — the same twelve `.mdx` files the
- * scanning pen carries). A personal access token with read access to that
- * repository, entered once in Settings, lets the app list and download
+ * repository (mediacloner/penReader — all seventeen `.mdx` sources, the
+ * pen carries fifteen of them). A personal access token with read access to
+ * that repository, entered once in Settings, lets the app list and download
  * them through the GitHub contents API; nothing is bundled in the APK and
- * no token is baked into the build.
+ * no token is baked into the build. The one LFS-tracked file (LDOCE 6,
+ * 192 MB) downloads through the pre-signed download_url its metadata names —
+ * the contents API itself only serves its 134-byte pointer.
  *
  * On disk: `<documents>/dictionaries/<id>.mdx` next to `<id>.json` — the
  * install record (title, size, style key, entry count) plus the per-block
@@ -53,6 +55,12 @@ const KNOWN = [
     { match: /VOX/i, short: 'VOX EN–ES', style: 'vox', order: 9 },
     { match: /Roget/i, short: "Roget's Thesaurus", style: 'plain', order: 10 },
     { match: /Catalana/i, short: 'Gran Diccionari (CA)', style: 'plain', order: 11 },
+    // The five later additions the pen carries (penReader revisions 2.9 / 2.20).
+    { match: /Merriam[\s-]*Webster.s Collegiate/i, short: 'MW Collegiate 12th', style: 'mw-collegiate', order: 12, title: "Merriam-Webster's Collegiate Dictionary, 12th Edition" },
+    { match: /Oxford Dictionary of English/i, short: 'Oxford English', style: 'oxford-english', order: 13 },
+    { match: /Collins English Dictionary and Thesaurus/i, short: 'Collins Essential', style: 'collins-essential', order: 14 },
+    { match: /longman|LDOCE/i, short: 'Longman LDOCE 6', style: 'ldoce', order: 15, title: 'Longman Dictionary of Contemporary English, 6th edition' },
+    { match: /Vocabulary\.com/i, short: 'Vocabulary.com', style: 'vocab', order: 16 },
 ];
 
 const knownFor = (name) => KNOWN.find(k => k.match.test(name)) || null;
@@ -75,7 +83,9 @@ export const describeDictionary = (fileName) => {
     const known = knownFor(fileName);
     return {
         id: dictionaryId(fileName),
-        name: titleFor(fileName),
+        // `title` overrides for files whose name doesn't read well as one
+        // (LDOCE's is snake_case, MW Collegiate's ends in "- Kindle Edition").
+        name: known?.title || titleFor(fileName),
         shortName: known?.short || titleFor(fileName).replace(/ Dictionary$/i, ''),
         style: known?.style || 'plain',
         order: known?.order ?? 99,
@@ -266,6 +276,13 @@ export const listRemoteDictionaries = async (token) => {
             if (item.type === 'file' && /\.mdx$/i.test(item.name)) files.push(item);
         }
     }
+    // A Git-LFS file (the 192 MB LDOCE 6) lists as its ~134-byte pointer;
+    // the file's own metadata carries the real size.
+    for (const f of files) {
+        if (f.size != null && f.size < 512) {
+            try { f.size = (await getJson(contentsUrl(f.path), token)).size ?? f.size; } catch (_) {}
+        }
+    }
     const list = files.map(f => ({
         ...describeDictionary(f.name),
         fileName: f.name,
@@ -312,18 +329,39 @@ const _install = async (remote, token, onProgress) => {
     const tmp = new File(dir(), `${remote.id}.mdx.part`);
     try { if (tmp.exists) tmp.delete(); } catch (_) {}
 
+    // Where the bytes actually are. The file's metadata carries a short-lived
+    // pre-signed download_url (media.githubusercontent.com for a Git-LFS file
+    // — the 192 MB LDOCE 6 — raw.githubusercontent.com otherwise) plus the
+    // real size, which the folder listing misreports for LFS files (pointer
+    // bytes). Asking the contents API for raw content instead would hand over
+    // the 134-byte LFS pointer.
+    let sourceUrl = contentsUrl(remote.path);
+    let sourceHeaders = githubHeaders(token, 'application/vnd.github.raw+json');
+    let expectedSize = remote.size || 0;
+    try {
+        const fileMeta = await getJson(contentsUrl(remote.path), token);
+        if (fileMeta?.download_url) {
+            sourceUrl = fileMeta.download_url; // pre-signed: no auth headers wanted
+            sourceHeaders = null;
+        }
+        if (fileMeta?.size) expectedSize = fileMeta.size;
+    } catch (e) {
+        if (e?.code === 'AUTH' || e?.code === 'OFFLINE') throw e;
+        // Anything else: fall back to the contents API download below.
+    }
+
     const free = await FileSystem.getFreeDiskStorageAsync().catch(() => null);
-    if (free != null && remote.size && free < remote.size * 1.2 + 50 * 1024 * 1024) {
+    if (free != null && expectedSize && free < expectedSize * 1.2 + 50 * 1024 * 1024) {
         throw Object.assign(new Error('Not enough free space for this dictionary.'), { code: 'NO_SPACE' });
     }
 
-    log('DICT', 'Downloading dictionary', { id: remote.id, size: remote.size });
+    log('DICT', 'Downloading dictionary', { id: remote.id, size: expectedSize });
     const download = FileSystem.createDownloadResumable(
-        contentsUrl(remote.path),
+        sourceUrl,
         tmp.uri,
-        { headers: githubHeaders(token, 'application/vnd.github.raw+json') },
+        sourceHeaders ? { headers: sourceHeaders } : {},
         ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
-            const total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : remote.size;
+            const total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expectedSize;
             if (onProgress && total > 0) onProgress({ phase: 'download', percent: Math.min(99, Math.round((totalBytesWritten / total) * 100)) });
         },
     );
@@ -338,7 +376,16 @@ const _install = async (remote, token, onProgress) => {
         try { if (tmp.exists) tmp.delete(); } catch (_) {}
         throw githubError(res?.status ?? 0);
     }
-    if (remote.size && tmp.exists && tmp.size != null && Math.abs(tmp.size - remote.size) > 16) {
+    if (tmp.exists && tmp.size != null && tmp.size < 512) {
+        // No MDX is this small — a Git-LFS pointer, a JSON error body, or nothing.
+        let text = '';
+        try { text = tmp.textSync(); } catch (_) {}
+        try { tmp.delete(); } catch (_) {}
+        throw Object.assign(new Error(text.startsWith('version https://git-lfs')
+            ? 'GitHub returned the Git-LFS pointer instead of the file.'
+            : 'GitHub returned something other than the dictionary file.'), { code: 'BAD_FILE' });
+    }
+    if (expectedSize && tmp.exists && tmp.size != null && Math.abs(tmp.size - expectedSize) > 16) {
         // A JSON error body or an HTML page instead of the file.
         try { tmp.delete(); } catch (_) {}
         throw Object.assign(new Error('GitHub returned something other than the dictionary file.'), { code: 'BAD_FILE' });
