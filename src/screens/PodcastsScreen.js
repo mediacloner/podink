@@ -18,6 +18,7 @@ import {
     pruneOldEpisodesForPodcast, getDownloadedEpisodesForPodcast,
 } from '../database/queries';
 import { deleteAudioFile } from '../services/downloadService';
+import { artworkSource } from '../api/userAgent';
 import { dequeueTranscription } from '../services/whisperService';
 import {
     downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
@@ -65,7 +66,7 @@ const PodcastRow = React.memo(({
                 accessibilityLabel={`${podcast.title}${newCount > 0 ? `, ${newCount} new episodes` : ''}, ${isExpanded ? 'collapse' : 'expand'}`}
             >
                 {podcast.image_url ? (
-                    <Image source={{ uri: podcast.image_url }} style={styles.artwork} />
+                    <Image source={artworkSource(podcast.image_url)} style={styles.artwork} />
                 ) : (
                     <View style={[styles.artwork, styles.artworkPlaceholder]}>
                         <Icon name="headphones" size={22} color={colors.textFaint} />

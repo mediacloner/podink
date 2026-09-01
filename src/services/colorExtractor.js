@@ -8,6 +8,7 @@
  * Then rebuild the dev client.
  */
 import ImageColors from 'react-native-image-colors';
+import { USER_AGENT } from '../api/userAgent';
 
 // ─── sRGB luminance ───────────────────────────────────────────────────────────
 const lin = (c) => {
@@ -94,6 +95,9 @@ export const extractColor = async (imageUrl) => {
             cache: true,
             quality: 'low',       // faster; low is sufficient for background colour
             pixelSpacing: 5,      // Android: sample every 5th pixel
+            // Same Buzzsprout/Cloudflare 403 on the default okhttp UA as the
+            // feed fetch — without this the header falls back to the theme tint.
+            headers: { 'User-Agent': USER_AGENT },
         });
 
         // Pick the most representative colour per platform.

@@ -26,6 +26,7 @@ import {
 import { dequeueTranscription } from '../services/whisperService';
 import { useTranscriptionQueue } from '../hooks/useTranscriptionQueue';
 import { fetchPodcastFeed } from '../api/rssParser';
+import { artworkSource } from '../api/userAgent';
 import { resolveToRssUrl, detectService } from '../api/podcastResolver';
 import { isUrlLike, searchPodcasts } from '../api/podcastSearch';
 import { notifyLibraryChange, onLibraryChange } from '../services/libraryEvents';
@@ -505,7 +506,7 @@ const SubscribedTimeline = ({ navigation }) => {
                                 accessibilityLabel={`Subscribe to ${item.title}`}
                             >
                                 {item.artwork ? (
-                                    <Image source={{ uri: item.artwork }} style={styles.searchArtwork} />
+                                    <Image source={artworkSource(item.artwork)} style={styles.searchArtwork} />
                                 ) : (
                                     <View style={[styles.searchArtwork, styles.searchArtworkPlaceholder]}>
                                         <Icon name="headphones" size={18} color={colors.textFaint} />

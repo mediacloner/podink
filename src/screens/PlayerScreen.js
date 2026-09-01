@@ -19,6 +19,7 @@ import {
     downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
 } from '../services/episodeService';
 import { getEpisodeById, getTranscriptsForEpisode } from '../database/queries';
+import { artworkSource } from '../api/userAgent';
 import { extractColor, softenForHeader } from '../services/colorExtractor';
 import { useTheme, useStyles, radii, withAlpha } from '../theme';
 
@@ -376,7 +377,7 @@ const PlayerScreen = ({ route, navigation }) => {
                 ]}
             >
                 {ep.image_url ? (
-                    <Image source={{ uri: ep.image_url }} style={styles.artwork} />
+                    <Image source={artworkSource(ep.image_url)} style={styles.artwork} />
                 ) : (
                     <View style={[styles.artwork, styles.artworkPlaceholder]}>
                         <Icon name='headphones' size={20} color={withAlpha(headerFg, 0.25)} />
