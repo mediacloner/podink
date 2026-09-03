@@ -90,7 +90,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const [pickerOpen, setPickerOpen] = useState(false);
     const [probe, setProbe] = useState(null);   // { [id]: boolean } for the current word
     // A different headword to show: a cross-reference tap, or "the word
-    // itself" after the sentence resolved to a phrasal verb.
+    // itself" after the sentence resolved to a phrasal verb or an idiom.
     const [override, setOverride] = useState(null);
 
     const scrollRef = useRef(null);
@@ -259,8 +259,9 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         setOverride({ word: t, from: shownWord });
     }, [shownWord]);
 
-    // Where the phrasal-verb heading sits in the body; the card scrolls there
-    // once it is measured, and again when the chip under the trail is tapped.
+    // Where the phrase's heading (phrasal verb, idiom) sits in the body; the
+    // card scrolls there once it is measured, and again when the chip under
+    // the trail is tapped.
     const highlightYRef = useRef(null);
     const scrollToHighlight = useCallback(() => {
         const y = highlightYRef.current;
@@ -555,10 +556,10 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                     style={st.phraseChip}
                     onPress={scrollToHighlight}
                     activeOpacity={0.7}
-                    accessibilityLabel={`Phrasal verb ${dict.phraseFound}, shown below`}
+                    accessibilityLabel={`${dict.phraseKind || 'phrase'} ${dict.phraseFound}, shown below`}
                 >
                     <Icon name='corner-right-down' size={13} color={colors.accent} />
-                    <Text style={st.phraseChipText}>phrasal verb · {dict.phraseFound}</Text>
+                    <Text style={st.phraseChipText}>{dict.phraseKind || 'phrase'} · {dict.phraseFound}</Text>
                 </TouchableOpacity>
             )}
 

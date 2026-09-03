@@ -14,9 +14,12 @@
  * correctly on the dark and the paper palettes.
  *
  * LDOCE 6 and Vocabulary.com are prepared MDict sets instead, styled by
- * publisher CSS classes; the 'ldoce' and 'vocab' style keys map those
- * classes onto the same run flags (see CLASS_PROFILES), following the
- * pen's WebView profiles in penReader's scan-bridge. LDOCE additionally
+ * publisher CSS classes, and the two Oxford Quick Reference books (Word
+ * Origins and Idioms, penReader revision 2.21) keep OUP's paragraph
+ * classes from their EPUB conversion; the 'ldoce', 'vocab',
+ * 'oxford-origins' and 'oxford-idioms' style keys map those classes onto
+ * the same run flags (see CLASS_PROFILES), following the pen's WebView
+ * profiles in penReader's scan-bridge. LDOCE additionally
  * gets its popup blocks stripped before parsing — 91% of a raw record is
  * `<div nattr="at-link">` content (Word Origin, Collocations, Thesaurus)
  * that only ever appears when the publisher's JavaScript runs; inline it
@@ -27,7 +30,9 @@
  * "give up" in passing several times before defining it; the definition is
  * where the phrase is set bold and the bold run is the phrase itself
  * (Collins: `<b>give up</b>` beside PHRASAL VERB; Oxford: `<b>give up
- * something</b>`). Pure module — no React, no native imports.
+ * something</b>`). `findHeadingInContext` goes the other way for idioms
+ * filed under a keyword: which bold heading of the entry occurs in the
+ * words around the tap. Pure module — no React, no native imports.
  */
 
 // ── Entities ─────────────────────────────────────────────────────────────────
@@ -81,6 +86,9 @@ const parseAttrs = (s) => {
     }
     return attrs;
 };
+
+/** The text content of a parsed node, tags dropped. */
+const nodeText = (n) => (n.type === 'text' ? n.text : n.children.map(nodeText).join(''));
 
 /**
  * Parses HTML into { type:'el', tag, attrs, children } / { type:'text', text }
@@ -178,9 +186,13 @@ const dropAtLinkDivs = (html) => {
 };
 
 // ── Per-dictionary class profiles ────────────────────────────────────────────
-// A profile looks at an element's tag and class tokens and answers
-// { skip, block, indent, flags } — skip drops the element and its content,
-// block starts a new paragraph, flags extend the run style for its subtree.
+// A profile looks at an element's tag and class tokens (and at its parent
+// element, for the few rules that need it) and answers { skip, block,
+// indent, box, flags, linkText, spaceAfter } — skip drops the element and
+// its content, block starts a new paragraph, indent nests it, box renders
+// its paragraphs as a tinted card, flags extend the run style for its
+// subtree, linkText makes the element a tappable cross-reference to its own
+// text, spaceAfter adds the space the publisher left to CSS.
 
 const classTokens = (attrs) => String(attrs.class || '').trim().split(/\s+/).filter(Boolean);
 
@@ -194,6 +206,7 @@ const LDOCE_BLOCK = new Set(['chwd', 'entryhead', 'sense', 'subsense', 'newline'
     'example', 'gramexa', 'colloexa', 'f2nbox', 'thesbox', 'collobox', 'grambox', 'usagebox', 'etymbox', 'errorbox']);
 const LDOCE_FLAGS = {
     hyphenation: { b: true, big: true },
+    phrvbhwd: { b: true, color: true },   // "run out somebody/something" — the pen's .phrvbhwd rule
     kw: { b: true }, hw: { b: true },
     homnum: { sup: true, color: true },
     proncodes: { color: true }, pron: { color: true }, neutral: { color: true }, amevarpron: { color: true },
@@ -255,7 +268,62 @@ const vocabProfile = (tag, attrs) => {
     return null;
 };
 
-const CLASS_PROFILES = { ldoce: ldoceProfile, vocab: vocabProfile };
+// The two Oxford Quick Reference books (penReader revision 2.21) were read
+// from the publisher's EPUB by tools/epub2mdx.py: every record opens with
+// the `<div class="hw">` the converter adds, then keeps OUP's classes. The
+// rules mirror the pen's oxford-origins / oxford-idioms profiles.
+const hasClass = (node, cls) => !!node && classTokens(node.attrs).includes(cls);
+const OXFORD_HEADWORD = { block: true, flags: { b: true, big: true } };
+const OXFORD_PARAGRAPHS = new Set(['parafl', 'para', 'parax1', 'paraf1']);
+
+// Word Origins: one running paragraph per entry, the date of first record in
+// brackets (`.span`: [E19th]), the words explained in passing in bold, and
+// cross-references in small caps (`.sc`) or marked by the converter
+// (`.xref`) — followable here, unlike on the pen. Topic panels ("Acronyms")
+// carry a `.panel` badge in their headword line.
+const oxfordOriginsProfile = (tag, attrs) => {
+    const tokens = classTokens(attrs);
+    if (!tokens.length) return null;
+    const set = new Set(tokens);
+    if (set.has('hw')) return OXFORD_HEADWORD;
+    if (set.has('panel')) return { flags: { b: false, big: false, small: true } };
+    if (tokens.some(t => OXFORD_PARAGRAPHS.has(t))) return { block: true };
+    if (set.has('span')) return { flags: { small: true } };
+    if (set.has('sc') || set.has('xref')) return { flags: { color: true }, linkText: true };
+    return null;
+};
+
+// Idioms: under a keyword, one `.para` per idiom — the idiom itself is the
+// bold run opening the paragraph, its senses numbered by `.label` badges
+// (the book's ❶ ❷ GIFs, rewritten as text by the converter), register in
+// `.span` — then a `.paral` origin note and a `.prosequote` dated quotation.
+// "see" lines name the keyword an idiom is filed under (`.sc`).
+const oxfordIdiomsProfile = (tag, attrs, parent) => {
+    if (tag === 'b') {
+        if (hasClass(parent, 'para')) return { flags: { color: true } };   // the idiom heading
+        if (hasClass(parent, 'name')) return { flags: { b: false } };      // quotation byline: not bold on the pen
+        return null;
+    }
+    const tokens = classTokens(attrs);
+    if (!tokens.length) return null;
+    const set = new Set(tokens);
+    if (set.has('hw')) return OXFORD_HEADWORD;
+    if (set.has('para')) return { block: true };
+    if (set.has('label')) return { flags: { b: true, color: true }, spaceAfter: true };
+    if (set.has('paral')) return { block: true, box: true };
+    if (set.has('prosequote')) return { block: true, indent: true, flags: { example: true } };
+    // A register label beside the definition; inside a note `.span` wraps the whole text.
+    if (set.has('span')) return hasClass(parent, 'para') ? { flags: { small: true } } : null;
+    if (set.has('sc')) return { flags: { color: true }, linkText: true };
+    return null;
+};
+
+const CLASS_PROFILES = {
+    ldoce: ldoceProfile,
+    vocab: vocabProfile,
+    'oxford-origins': oxfordOriginsProfile,
+    'oxford-idioms': oxfordIdiomsProfile,
+};
 
 // ── Flattening ───────────────────────────────────────────────────────────────
 
@@ -337,7 +405,7 @@ export const flattenEntry = (html, opts = {}) => {
         para.runs.push({ ...style, text });
     };
 
-    const walk = (node, style) => {
+    const walk = (node, style, parent = null) => {
         if (node.type === 'text') { pushText(node.text, style); return; }
         const tag = node.tag;
         const attrs = node.attrs;
@@ -346,12 +414,12 @@ export const flattenEntry = (html, opts = {}) => {
         if (tag === 'hide' && styleKey === 'oald' && /^menu$/i.test(attrs.label || '')) return;
         if (tag === 'a' && /^sound:\/\//i.test(attrs.href || '')) return; // no media in these files
 
-        const prof = profile ? profile(tag, attrs) : null;
+        const prof = profile ? profile(tag, attrs, parent) : null;
         if (prof && prof.skip) return;
 
         let next = style;
         const isBlock = BLOCK_TAGS.has(tag) || Boolean(prof && prof.block);
-        if (!isBlock || (prof && prof.flags)) {
+        if (!isBlock || (prof && (prof.flags || prof.linkText))) {
             next = { ...style };
             if (!isBlock) switch (tag) {
                 case 'b': case 'strong': case 'dfn': next.b = true; break;
@@ -378,6 +446,11 @@ export const flattenEntry = (html, opts = {}) => {
                 default: break;
             }
             if (prof && prof.flags) Object.assign(next, prof.flags);
+            if (prof && prof.linkText && !next.link) {
+                // A cross-reference whose target is its own text ("see holding").
+                const target = decodeEntities(nodeText(node)).replace(/\s+/g, ' ').trim();
+                if (target) next.link = target;
+            }
         }
 
         if (isBlock) {
@@ -386,14 +459,14 @@ export const flattenEntry = (html, opts = {}) => {
             const prevBox = curBox;
             const indents = INDENT_TAGS.has(tag) || (tag === 'div' && attrs.width != null) || (tag === 'p' && attrs.indent != null && attrs.depth != null && attrs.depth !== '1') || Boolean(prof && prof.indent);
             if (indents) curIndent = Math.min(MAX_INDENT, curIndent + 1);
-            if (tag === 'table' && attrs.bgcolor) curBox++;
-            for (const child of node.children) walk(child, next);
+            if ((tag === 'table' && attrs.bgcolor) || Boolean(prof && prof.box)) curBox++;
+            for (const child of node.children) walk(child, next, node);
             closeParagraph();
             curIndent = prevIndent;
             curBox = prevBox;
             return;
         }
-        for (const child of node.children) walk(child, next);
+        for (const child of node.children) walk(child, next, node);
         if (prof && prof.spaceAfter) pushText(' ', style);
     };
 
@@ -455,8 +528,21 @@ const isWordChar = (ch) => !!ch && /[\p{L}\p{N}]/u.test(ch);
 // deliberately absent — "give up on" and "look up to" are other verbs.
 const PLACEHOLDERS = new Set([
     'sb', 'sth', 'somebody', 'something', 'someone', 'sb/sth', 'somebody/something', 'someone/something',
+    "someone's", "somebody's", "sb's", "sth's", "something's",
     'yourself', 'oneself', 'himself', 'herself', 'itself', 'themselves', 'somewhere', 'doing',
     'one', "one's", 'your', 'his', 'her', 'their', 'its', 'a', 'an', 'the', 'or',
+]);
+
+// Function words: never reduced to a base form, and not what identifies an
+// idiom (the pen's STOP list).
+export const FUNCTION_WORDS = new Set([
+    'a', 'an', 'the', 'and', 'or', 'but', 'nor', 'so', 'yet', 'if', 'as', 'than', 'that', 'this', 'these', 'those',
+    'i', 'me', 'my', 'mine', 'you', 'your', 'yours', 'he', 'him', 'his', 'she', 'her', 'hers', 'it', 'its',
+    'we', 'us', 'our', 'ours', 'they', 'them', 'their', 'theirs', 'who', 'whom', 'whose', 'which', 'what',
+    'be', 'am', 'is', 'are', 'was', 'were', 'been', 'being', 'do', 'does', 'did', 'have', 'has', 'had',
+    'will', 'would', 'shall', 'should', 'can', 'could', 'may', 'might', 'must',
+    'not', 'no', 'to', 'of', 'in', 'on', 'at', 'by', 'for', 'with', 'from', 'up', 'down', 'out', 'off',
+    'over', 'into', 'about', 'there', 'here', 'then', 'when', 'where', 'how', 'why', 'all', 'any', 'some', 'very', 'just',
 ]);
 
 const normalizeSpace = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -466,9 +552,10 @@ const normalizeSpace = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
 const TRANSPARENT = /[\u02c8\u02cc\u00b7\u2027\u30fb\u00ad\u200b\u200c\u200d\ufeff]/;
 
 /**
- * Lower-cases `text` for searching with the transparent characters removed,
- * and a map from every index of the normalized string back to the original
- * so a hit can be highlighted where it really is.
+ * Lower-cases `text` for searching with the transparent characters removed
+ * and curly apostrophes straightened ("someone’s" is "someone's"), and a
+ * map from every index of the normalized string back to the original so a
+ * hit can be highlighted where it really is.
  */
 export const normalizeForSearch = (text) => {
     let norm = '';
@@ -476,7 +563,7 @@ export const normalizeForSearch = (text) => {
     for (let i = 0; i < text.length; i++) {
         const ch = text[i];
         if (TRANSPARENT.test(ch)) continue;
-        const low = ch.toLowerCase();
+        const low = ch === '’' || ch === '‘' ? "'" : ch.toLowerCase();
         norm += low.length === 1 ? low : ch;
         map.push(i);
     }
@@ -490,14 +577,28 @@ const headingWords = (boldText) => normalizeForSearch(boldText).norm
     .replace(/^[\s•▪▸►▶·◆■□●○◇*→➤➔-]+/, '')
     .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')   // optional complements: "(from sth)", "[on sb]"
     .replace(/[~:;,.!?]/g, ' ')
+    .replace(/(^|\s)\d+(?=\s|$)/g, ' ')        // sense numbers set in bold beside the heading
     .replace(/^\s*to\s+/, '')
     .replace(/\s+/g, ' ').trim();
 
-// Does a bold run read as a heading for `phrase`? Equal, or the phrase plus
-// object placeholders only ("give up something", "turn someone out",
+// The readings of a heading: with its brackets dropped, and each bracketed
+// alternative on its own — "cross your fingers (or keep your fingers
+// crossed)" is the heading of both.
+const headingVariants = (boldText) => {
+    const out = [headingWords(boldText)];
+    const alt = /[([]\s*or\s+([^)\]]+)[)\]]/gi;
+    let m;
+    while ((m = alt.exec(boldText))) {
+        const v = headingWords(m[1]);
+        if (v && !out.includes(v)) out.push(v);
+    }
+    return out.filter(Boolean);
+};
+
+// Does a heading (as words) read as one for `phrase`? Equal, or the phrase
+// plus object placeholders only ("give up something", "turn someone out",
 // "look (something) up"), never plus another particle.
-const headingMatches = (boldText, phrase) => {
-    const b = headingWords(boldText);
+const wordsMatch = (b, phrase) => {
     if (b === phrase) return true;
     const pw = phrase.split(' ');
     const bw = b.split(' ');
@@ -511,38 +612,77 @@ const headingMatches = (boldText, phrase) => {
     return i === pw.length;
 };
 
+// Does a bold run read as a heading for `phrase`, in any of its readings?
+const headingMatches = (boldText, phrase) => headingVariants(boldText).some(b => wordsMatch(b, phrase));
+
+// Text that may sit between two bold pieces of one heading: whitespace, or
+// the brackets of an alternative — "make (both) ends meet", "keep (or have)
+// your fingers crossed", "with your back to (or up against) the wall" — so
+// the heading is read whole and headingWords can drop the bracket.
+const HEADING_GAP = /^\s*$|^\s*[([]\s*(?:or\s*)?$|^\s*[)\]]\s*$/i;
+// What a gap may still grow into (text arrives run by run: " (", "or", " ").
+const HEADING_GAP_PREFIX = /^\s*(?:[([]\s*(?:o|or\s*)?|[)\]]\s*)?$/i;
+const CLOSING = /^\s*[)\]]/;
+
+// Character ranges of the maximal bold runs in a paragraph: [{ start, end, text }].
+const boldRuns = (p) => {
+    const bolds = [];
+    let pos = 0;
+    let openBold = null;
+    let gap = '';       // non-bold text since the open run's last bold piece
+    const finish = () => {
+        // A bracket closing right after the last bold piece belongs to the heading.
+        const close = CLOSING.exec(gap);
+        if (close) { openBold.text += close[0]; openBold.end += close[0].length; }
+        bolds.push(openBold);
+        openBold = null;
+        gap = '';
+    };
+    for (const r of p.runs) {
+        if (r.b) {
+            if (openBold && HEADING_GAP.test(gap)) { openBold.end = pos + r.text.length; openBold.text += gap + r.text; }
+            else {
+                if (openBold) finish();
+                openBold = { start: pos, end: pos + r.text.length, text: r.text };
+            }
+            gap = '';
+        } else if (openBold) {
+            gap += r.text;
+            if (!HEADING_GAP_PREFIX.test(gap)) finish();
+        }
+        pos += r.text.length;
+    }
+    if (openBold) finish();
+    return bolds;
+};
+
 /**
- * Finds where `phrase` ("give up") is defined inside a flattened entry:
- * the occurrence set in a bold run that is the phrase itself (optionally
- * with an object placeholder). Returns { paraIndex, start, end, heading:true }
- * for a heading, or — when `allowLoose` — the first bold, then the first
- * plain occurrence with heading:false. Null when the phrase is absent.
+ * Finds where `phrase` ("give up") is defined inside a flattened entry: the
+ * bold run that reads as its heading — the phrase itself, with an object
+ * placeholder, a bracketed option or alternative, stress marks ("give sth
+ * up", "have (got) it made", "ˌgive ˈup") — compared word by word, so the
+ * phrase need not occur verbatim. Returns { paraIndex, start, end,
+ * heading:true } for a heading, or — when `allowLoose` — the first bold,
+ * then the first plain occurrence with heading:false. Null when absent.
  */
 export const findPhrase = (flat, phrase, { allowLoose = false } = {}) => {
     const needle = normalizeSpace(normalizeForSearch(phrase).norm);
     if (!needle) return null;
-    let firstBold = null;
-    let firstAny = null;
     const paragraphs = flat.paragraphs;
     for (let pi = 0; pi < paragraphs.length; pi++) {
         const p = paragraphs[pi];
         if (p.kind === 'hr') continue;
-        // Character ranges of maximal bold runs in this paragraph.
-        const bolds = [];
-        let pos = 0;
-        let openBold = null;
-        for (const r of p.runs) {
-            if (r.b) {
-                if (!openBold) openBold = { start: pos, end: pos + r.text.length, text: r.text };
-                else { openBold.end = pos + r.text.length; openBold.text += r.text; }
-            } else if (openBold) {
-                // Whitespace-only gaps between bold pieces keep the run going.
-                if (/^\s*$/.test(r.text)) { openBold.end = pos + r.text.length; openBold.text += r.text; }
-                else { bolds.push(openBold); openBold = null; }
-            }
-            pos += r.text.length;
+        for (const bold of boldRuns(p)) {
+            if (headingMatches(bold.text, needle)) return { paraIndex: pi, start: bold.start, end: bold.end, heading: true };
         }
-        if (openBold) bolds.push(openBold);
+    }
+    if (!allowLoose) return null;
+    let firstBold = null;
+    let firstAny = null;
+    for (let pi = 0; pi < paragraphs.length; pi++) {
+        const p = paragraphs[pi];
+        if (p.kind === 'hr') continue;
+        const bolds = boldRuns(p);
         const text = paragraphText(p);
         const { norm, map } = normalizeForSearch(text);
         let at = norm.indexOf(needle);
@@ -552,16 +692,76 @@ export const findPhrase = (flat, phrase, { allowLoose = false } = {}) => {
                 const start = map[at];
                 const end = map[endN];
                 const hit = { paraIndex: pi, start, end, heading: false };
-                const bold = bolds.find(b => b.start <= start && end <= b.end);
-                if (bold) {
-                    if (headingMatches(bold.text, needle)) return { ...hit, heading: true };
-                    if (!firstBold) firstBold = hit;
-                }
+                if (!firstBold && bolds.some(b => b.start <= start && end <= b.end)) firstBold = hit;
                 if (!firstAny) firstAny = hit;
             }
             at = norm.indexOf(needle, at + 1);
         }
     }
-    if (!allowLoose) return null;
     return firstBold || firstAny;
+};
+
+// Does a heading, as words, occur across the context? Each heading word must
+// match a context word in one of its forms (`formsOf`: the word and its
+// inflections, either side), in order; a placeholder in the heading ("sth",
+// "your") is free; in a heading of three words or more one context word may
+// sit between two heading words ("make ends meet" in "made both ends meet");
+// the tapped word must be among the matched ones — a heading elsewhere in
+// the sentence is not what was tapped — and so must two content words:
+// "the house" is no heading of house, nor "the run of something" of "ran
+// out of".
+const headingInContext = (words, forms, tappedIndex, formsOf) => {
+    const n = forms.length;
+    const matches = (hw, j) => j < n && formsOf(hw).some(f => forms[j].has(f));
+    const gapAllowed = words.length >= 3;
+    for (let start = 0; start < n; start++) {
+        let i = start;
+        let tapped = false;
+        let content = 0;
+        let ok = true;
+        for (let h = 0; h < words.length && ok; h++) {
+            const hw = words[h];
+            let at = -1;
+            if (matches(hw, i)) at = i;
+            else if (PLACEHOLDERS.has(hw)) continue;
+            else if (gapAllowed && h > 0 && matches(hw, i + 1)) at = i + 1;
+            if (at < 0) { ok = false; break; }
+            tapped = tapped || at === tappedIndex;
+            if (!PLACEHOLDERS.has(hw) && !FUNCTION_WORDS.has(hw)) content++;
+            i = at + 1;
+        }
+        if (ok && tapped && content >= 2) return true;
+    }
+    return false;
+};
+
+/**
+ * The pen (revision 2.21) reaches an idiom by matching the scanned phrase
+ * against the keys; a tap has a word and its sentence instead, so this goes
+ * the other way: which bold heading of the entry — an idiom under its
+ * keyword, a phrasal verb under its verb — occurs in the words around the
+ * tap? The longest matching heading wins. `formsOf(word)` lists the forms a
+ * word may take (itself and its base forms). Returns
+ * { paraIndex, start, end, heading:true, phrase } or null.
+ */
+export const findHeadingInContext = (flat, contextWords, tappedIndex, formsOf) => {
+    if (!contextWords || contextWords.length < 2) return null;
+    const forms = contextWords.map(w => new Set(formsOf(w)));
+    let best = null;
+    const paragraphs = flat.paragraphs;
+    for (let pi = 0; pi < paragraphs.length; pi++) {
+        const p = paragraphs[pi];
+        if (p.kind === 'hr') continue;
+        for (const bold of boldRuns(p)) {
+            for (const reading of headingVariants(bold.text)) {
+                const words = reading.split(' ').filter(Boolean);
+                if (words.length < 2 || (best && words.length <= best.words.length)) continue;
+                if (!headingInContext(words, forms, tappedIndex, formsOf)) continue;
+                best = { paraIndex: pi, start: bold.start, end: bold.end, words };
+            }
+        }
+    }
+    if (!best) return null;
+    const { words, ...hit } = best;
+    return { ...hit, heading: true, phrase: words.join(' ') };
 };

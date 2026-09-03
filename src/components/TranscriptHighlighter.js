@@ -787,12 +787,24 @@ const TranscriptHighlighter = forwardRef(({
         const trim = (t) => (t || '').trim().replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu, '');
         const cleaned = trim(word.text);
         if (!cleaned) return;
-        // The words around the tap let the dictionary spot a phrasal verb
-        // ("gave up", "gave it up", "look forward to") — see dictionaryLookup.
+        // The words around the tap let the dictionary spot a phrasal verb or
+        // an idiom ("gave up", "gave it up", "kicked the bucket", "throw the
+        // baby out with the bathwater") — see dictionaryLookup. Up to six
+        // words each way, within the clause: a phrase doesn't cross a comma.
+        const CONTEXT_WORDS = 6;
+        const endsClause = (t) => /[.,;:!?…]["”’)]*\s*$/.test(t || '');
         const words = ch ? ch.words : [];
         const at = words.findIndex(w => w.globalIndex === word.globalIndex);
-        const prevWords = at > 0 ? words.slice(Math.max(0, at - 2), at).map(w => trim(w.text)) : [];
-        const nextWords = at >= 0 ? words.slice(at + 1, at + 4).map(w => trim(w.text)) : [];
+        const prevWords = [];
+        for (let i = at - 1; i >= 0 && prevWords.length < CONTEXT_WORDS; i--) {
+            if (endsClause(words[i].text)) break;
+            prevWords.unshift(trim(words[i].text));
+        }
+        const nextWords = [];
+        for (let i = at + 1; at >= 0 && i < words.length && nextWords.length < CONTEXT_WORDS; i++) {
+            if (endsClause(words[i - 1].text)) break;
+            nextWords.push(trim(words[i].text));
+        }
         setWordPopover({
             word: cleaned,
             prevWords,

@@ -2,8 +2,9 @@
  * dictionaryService — the offline MDict dictionaries behind the word card.
  *
  * Source of truth is the `dictionaries/` folder of the user's private GitHub
- * repository (mediacloner/penReader — all seventeen `.mdx` sources, the
- * pen carries fifteen of them). A personal access token with read access to
+ * repository (mediacloner/penReader — all nineteen `.mdx` sources; the pen
+ * carries fifteen of them, without Català, Roget's and, since penReader
+ * revision 2.21, Vocabulary.com and VOX). A personal access token with read access to
  * that repository, entered once in Settings, lets the app list and download
  * them through the GitHub contents API; nothing is bundled in the APK and
  * no token is baked into the build. The one LFS-tracked file (LDOCE 6,
@@ -52,7 +53,7 @@ const KNOWN = [
     { match: /Merriam[\s-]*Webster.s Advanced/i, short: 'MW Advanced', style: 'mw-advanced', order: 6 },
     { match: /Merriam[\s-]*Webster.s English-Spanish/i, short: 'MW EN–ES', style: 'mw-bilingual', order: 7 },
     { match: /Oxford Advanced Learner/i, short: 'Oxford Advanced', style: 'oald', order: 8 },
-    { match: /VOX/i, short: 'VOX EN–ES', style: 'vox', order: 9 },
+    { match: /VOX/i, short: 'VOX EN–ES', style: 'vox', order: 18 },
     { match: /Roget/i, short: "Roget's Thesaurus", style: 'plain', order: 10 },
     { match: /Catalana/i, short: 'Gran Diccionari (CA)', style: 'plain', order: 11 },
     // The five later additions the pen carries (penReader revisions 2.9 / 2.20).
@@ -60,7 +61,12 @@ const KNOWN = [
     { match: /Oxford Dictionary of English/i, short: 'Oxford English', style: 'oxford-english', order: 13 },
     { match: /Collins English Dictionary and Thesaurus/i, short: 'Collins Essential', style: 'collins-essential', order: 14 },
     { match: /longman|LDOCE/i, short: 'Longman LDOCE 6', style: 'ldoce', order: 15, title: 'Longman Dictionary of Contemporary English, 6th edition' },
-    { match: /Vocabulary\.com/i, short: 'Vocabulary.com', style: 'vocab', order: 16 },
+    // The two Oxford Quick Reference books (penReader revision 2.21), which
+    // took the pen's slots of Vocabulary.com and VOX. Those two stay in the
+    // repository, so they are still offered here — last.
+    { match: /Oxford Dictionary of Word Origins/i, short: 'Oxford Word Origins', style: 'oxford-origins', order: 16 },
+    { match: /Oxford Dictionary of Idioms/i, short: 'Oxford Idioms', style: 'oxford-idioms', order: 17 },
+    { match: /Vocabulary\.com/i, short: 'Vocabulary.com', style: 'vocab', order: 19 },
 ];
 
 const knownFor = (name) => KNOWN.find(k => k.match.test(name)) || null;

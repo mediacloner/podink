@@ -8,10 +8,16 @@
  *  1. Candidates. The pen tries the whole scan, then shorter windows, then
  *     single words. A tap has one word — but it also has the sentence, so
  *     the candidates are the phrasal verbs the word could be part of in
- *     place ("gave up", "gave it up", "look forward to") followed by the
- *     word itself. A phrase is only ever *offered*; whether it is real is
- *     decided by the dictionary (it is a headword, or the base verb's entry
- *     defines it under a bold heading — see analyzeEntry).
+ *     place ("gave up", "gave it up", "look forward to") and every run of
+ *     up to seven neighbouring words that includes it ("kicked the bucket",
+ *     "throw the baby out with the bathwater" — the idioms of penReader
+ *     revision 2.21 are keys redirecting to their keyword), longest first,
+ *     then the word itself. When no run is a key as written, the pen's
+ *     base-form pass tries them again with each word in the base form the
+ *     dictionary knows ("kick the bucket"). A phrase is only ever
+ *     *offered*; whether it is real is decided by the dictionary (it is a
+ *     headword, or the base verb's entry defines it under a bold heading —
+ *     see analyzeEntry).
  *  2. Exact keys, then inflections. Keys match on their folded form (case,
  *     accents and punctuation ignored) but must have the same number of
  *     words and the same affix hyphens ("look up" is not the noun "look-up",
@@ -31,8 +37,12 @@
  *     "gave up" → "give up") and the card jumps there. An irregular form
  *     whose own entry is only a grammar stub ("gave: past tense of give")
  *     hands over to the base entry when that is where the phrase lives.
+ *     An idiom key that redirected into its keyword's entry ("kick the
+ *     bucket" → kick) is located the same way; and when no candidate heads
+ *     a paragraph, the entry's own headings are matched against the
+ *     sentence instead ("make ends meet" in "made both ends meet").
  */
-import { findPhrase, flattenEntry } from './dictionaryHtml';
+import { FUNCTION_WORDS, findHeadingInContext, findPhrase, flattenEntry } from './dictionaryHtml';
 
 const LINK_RE = /^\s*@@@LINK=([^\r\n]+)/i;
 const REDIRECT_LIMIT = 4;
@@ -57,8 +67,37 @@ export const OBJECTS = new Set([
     'myself', 'yourself', 'himself', 'herself', 'itself', 'ourselves', 'themselves', 'one',
 ]);
 
+// The longest run of neighbouring words offered as one candidate:
+// "throw the baby out with the bathwater".
+const MAX_WINDOW = 7;
+
+// The books write an idiom with generic pronouns — "keep your fingers
+// crossed", "be someone's baby", "take something on board" — where speech
+// has real ones: "kept their fingers crossed". Each phrase with a pronoun is
+// also offered in the generic spellings.
+const POSSESSIVES = new Set(['my', 'his', 'her', 'their', 'our', 'its']);
+const OBJECT_PRONOUNS = new Set(['me', 'him', 'her', 'them', 'us', 'it']);
+const placeholderForms = (phrase) => {
+    const parts = phrase.split(' ');
+    const out = [];
+    const swap = (set, to) => parts.map(w => (set.has(lower(w)) ? to(lower(w)) : w)).join(' ');
+    if (parts.some(w => POSSESSIVES.has(lower(w)))) {
+        out.push(swap(POSSESSIVES, () => 'your'));
+        out.push(swap(POSSESSIVES, () => "someone's"));
+    }
+    if (parts.some(w => OBJECT_PRONOUNS.has(lower(w)))) {
+        out.push(swap(OBJECT_PRONOUNS, w => (w === 'it' ? 'something' : 'someone')));
+    }
+    return out;
+};
+const withPlaceholders = (phrases) => uniqueFold([...phrases, ...phrases.flatMap(placeholderForms)]);
+
 const lower = (s) => String(s || '').toLowerCase();
 const wordCount = (s) => String(s).trim().split(/\s+/).length;
+const uniqueFold = (list) => {
+    const seen = new Set();
+    return list.filter(x => { const f = lower(x); if (seen.has(f)) return false; seen.add(f); return true; });
+};
 const affixShape = (s) => (s.startsWith('-') ? 'L' : '') + (s.endsWith('-') ? 'R' : '');
 
 /**
@@ -98,6 +137,33 @@ export const contextPhrases = ({ word, prevWords = [], nextWords = [] }) => {
     }
     const out = tappedParticle ? [...behind, ...ahead] : [...ahead, ...behind];
     return out.filter((x, i) => out.indexOf(x) === i);
+};
+
+/**
+ * Every run of two to MAX_WINDOW neighbouring words that includes the tapped
+ * one, longest first — the pen's phrase candidates ("the whole scan, then
+ * every run of two or more of its words") applied to the sentence around a
+ * tap. Whether a run means anything is for the dictionary to say.
+ */
+export const contextWindows = ({ word, prevWords = [], nextWords = [] }) => {
+    const w = cleanToken(word);
+    if (!w) return [];
+    const p = prevWords.map(cleanToken).filter(Boolean);
+    const n = nextWords.map(cleanToken).filter(Boolean);
+    const words = [...p, w, ...n];
+    const at = p.length;
+    const out = [];
+    for (let span = Math.min(MAX_WINDOW, words.length); span >= 2; span--) {
+        for (let start = Math.max(0, at - span + 1); start <= at && start + span <= words.length; start++) {
+            // Not the two words ending in the tap: a tap on "house" in "a big
+            // house" means house, not the compound big house (a tap on "ice"
+            // in "ice cream" does mean the compound — "ice" alone would not).
+            // A verb + particle behind the tap comes from contextPhrases.
+            if (span === 2 && start < at) continue;
+            out.push(words.slice(start, start + span).join(' '));
+        }
+    }
+    return out;
 };
 
 // ── Inflections ──────────────────────────────────────────────────────────────
@@ -183,6 +249,46 @@ export const phraseVariants = (phrase) => {
 export const redirectTarget = (record) => {
     const m = LINK_RE.exec(record || '');
     return m ? m[1].trim() : null;
+};
+
+/**
+ * The pen's base-form pass (revision 2.21), on the MDX itself: a word the
+ * dictionary knows only as a redirect is replaced by the base form it points
+ * at ("kicked" → kick in Collins); one it doesn't know at all by the first
+ * of its plausible base forms that is a key — the pen's borrowed inflections
+ * live in its own index, not in these files. A word with a record of its
+ * own, a function word and a word with no plausible base stay as written.
+ */
+const baseFormOf = (dict, word, memo) => {
+    const w = cleanToken(word);
+    const fold = lower(w);
+    if (memo.has(fold)) return memo.get(fold);
+    let out = w;
+    const variants = stemVariants(w).slice(1);
+    if (w.length > 1 && variants.length && !FUNCTION_WORDS.has(fold)) {
+        const keys = dict.findKeys(w).filter(k => wordCount(k.key) === 1);
+        if (keys.length) {
+            let target = null;
+            for (const { off } of keys) {
+                const t = redirectTarget(dict.readRecord(off));
+                if (t == null) { target = null; break; }   // a record of its own: already a base form
+                if (!target && !/\s/.test(t)) target = t;
+            }
+            if (target) out = target;
+        } else {
+            const base = variants.find(v => dict.findKeys(v).some(k => wordCount(k.key) === 1));
+            if (base) out = base;
+        }
+    }
+    memo.set(fold, out);
+    return out;
+};
+
+/** The tap's surroundings with every word in its base form (see baseFormOf). */
+const baseForms = (dict, { word, prevWords, nextWords }) => {
+    const memo = new Map();
+    const based = (list) => list.map(w => baseFormOf(dict, w, memo));
+    return { word: baseFormOf(dict, word, memo), prevWords: based(prevWords), nextWords: based(nextWords) };
 };
 
 /**
@@ -312,33 +418,68 @@ const phraseSpellings = (phrases, word, bases) => {
 /**
  * @param dict    opened dictionary (findKeys / readRecord)
  * @param query   { word, prevWords, nextWords, forceWord }
- *                forceWord: skip the phrasal candidates (user asked for the word itself)
+ *                forceWord: skip the phrase candidates (user asked for the word itself)
  * @returns null when nothing matched, else
- *   { tapped, phrases, candidate, entry, bodies, targets, alternates,
- *     phraseIsEntry, phraseTries, trail }
+ *   { tapped, context, phrases, phrasal, headingPhrases, candidate, entry,
+ *     bodies, targets, alternates, phraseIsEntry, phraseTries, trail }
  */
 export const lookupEntry = (dict, query) => {
     const word = cleanToken(query.word);
     if (!word) return null;
-    const phrases = query.forceWord ? [] : contextPhrases({ word, prevWords: query.prevWords, nextWords: query.nextWords });
-    const candidates = [...phrases, word];
+    const prevWords = (query.prevWords || []).map(cleanToken).filter(Boolean);
+    const nextWords = (query.nextWords || []).map(cleanToken).filter(Boolean);
+    const around = { word, prevWords, nextWords };
+    const context = { words: [...prevWords, word, ...nextWords], tappedIndex: prevWords.length };
+    const phrasal = query.forceWord ? [] : contextPhrases(around);
+    // Every multi-word candidate, longest first; the phrasal shapes lead their
+    // length, and a spelling as heard precedes its generic-pronoun forms.
+    const phrases = query.forceWord ? [] : withPlaceholders([...phrasal, ...contextWindows(around)])
+        .sort((a, b) => wordCount(b) - wordCount(a));
+
+    const tried = new Set();
     let hit = null;
     let candidate = null;
-    for (const c of candidates) {
-        hit = resolveEntry(dict, c);
-        if (hit) { candidate = c; break; }
-    }
-    if (!hit) return null;
+    const attempt = (list) => {
+        for (const c of list) {
+            const fold = lower(c);
+            if (tried.has(fold)) continue;
+            tried.add(fold);
+            const found = resolveEntry(dict, c);
+            if (found) { hit = found; candidate = c; return true; }
+        }
+        return false;
+    };
+    // The pen's three passes: the phrases as written (resolveEntry also
+    // de-inflects a phrase's first word), the same runs with every word in
+    // the base form the dictionary knows ("kicked the bucket" → "kick the
+    // bucket"), then the word itself.
+    const found = attempt(phrases)
+        || (phrases.length > 0 && attempt(withPlaceholders(contextWindows(baseForms(dict, around)))))
+        || attempt([word]);
+    if (!found) return null;
 
     const entryHasSpace = /\s/.test(hit.entry.trim());
     const phraseIsEntry = candidate !== word && entryHasSpace;
-    const phraseTries = phrases.length && !entryHasSpace
-        ? phraseSpellings(phrases, word, [hit.entry, ...hit.targets, ...hit.alternates])
+    // Phrases worth looking for inside a one-word entry: the phrasal-verb
+    // shapes, and — when a phrase was the key that redirected here ("kick the
+    // bucket" → kick) — the spelling that answered ("keep your fingers
+    // crossed" for "kept your fingers crossed") and the candidate itself.
+    // Other runs are matched the other way round, from the entry's headings
+    // (analyzeEntry).
+    const headingPhrases = uniqueFold([
+        ...(candidate !== word ? [hit.attempt, candidate] : []),
+        ...phrasal,
+    ]);
+    const phraseTries = headingPhrases.length && !entryHasSpace
+        ? phraseSpellings(headingPhrases, word, [hit.entry, ...hit.targets, ...hit.alternates])
         : [];
 
     return {
         tapped: word,
+        context,
         phrases,
+        phrasal,
+        headingPhrases,
         candidate,
         entry: hit.entry,
         bodies: hit.bodies,
@@ -360,9 +501,39 @@ const locateIn = (flats, tries) => {
     return null;
 };
 
+// The entry's own headings against the sentence (findHeadingInContext), for
+// the phrases no candidate spelled: an idiom with an optional word ("make
+// (both) ends meet"), a possessive placeholder ("keep your fingers crossed"
+// heard as "kept his fingers crossed"), a tap on a word inside one.
+const locateHeading = (flats, context) => {
+    if (!context || context.words.length < 2) return null;
+    const memo = new Map();
+    const formsOf = (w) => {
+        const k = lower(w);
+        let v = memo.get(k);
+        if (!v) { v = stemVariants(w); memo.set(k, v); }
+        return v;
+    };
+    for (let b = 0; b < flats.length; b++) {
+        const at = findHeadingInContext(flats[b], context.words, context.tappedIndex, formsOf);
+        if (at) {
+            const { phrase, ...range } = at;
+            return { highlight: { bodyIndex: b, ...range }, phraseFound: phrase };
+        }
+    }
+    return null;
+};
+
+// What the chip under the trail calls the phrase it found.
+const phraseKind = (styleKey, phrase) => {
+    if (styleKey === 'oxford-idioms') return 'idiom';
+    const parts = lower(phrase).split(' ');
+    return parts.length <= 3 && PARTICLES.has(parts[parts.length - 1]) ? 'phrasal verb' : 'phrase';
+};
+
 /**
- * Flattens the entry's records for rendering and finds the phrasal-verb
- * heading to jump to, if the tap was inside one.
+ * Flattens the entry's records for rendering and finds the heading to jump
+ * to — a phrasal verb's, an idiom's — if the tap was inside one.
  *
  * When the phrase isn't defined in the entry that answered, the base forms
  * the dictionary itself pointed at (alternates, redirect targets) and the
@@ -371,38 +542,51 @@ const locateIn = (flats, tries) => {
  * defined under the base. If one of them has the heading, that entry is
  * shown instead and the trail says so.
  *
- * @returns { result, flats, highlight, phraseFound }
+ * @returns { result, flats, highlight, phraseFound, phraseKind }
  *          highlight = { bodyIndex, paraIndex, start, end, heading } | null
+ *          phraseKind = 'phrasal verb' | 'idiom' | 'phrase' | ''
  */
 export const analyzeEntry = (dict, result, styleKey) => {
     let flats = result.bodies.map(html => flattenEntry(html, { styleKey }));
-    if (!result.phrases?.length || result.phraseIsEntry) {
-        return { result, flats, highlight: null, phraseFound: '' };
-    }
-    let found = locateIn(flats, result.phraseTries);
-    if (found) return { result, flats, ...found };
+    const plain = { result, flats, highlight: null, phraseFound: '', phraseKind: '' };
+    if (!result.phrases?.length || result.phraseIsEntry) return plain;
+    const done = (res, fl, found) => ({ result: res, flats: fl, ...found, phraseKind: phraseKind(styleKey, found.phraseFound) });
+
+    let found = locateIn(flats, result.phraseTries) || locateHeading(flats, result.context);
+    if (found) return done(result, flats, found);
 
     const word = result.tapped;
-    const seen = new Set([result.entry.toLowerCase(), word.toLowerCase()]);
-    const fallbacks = [...result.alternates, ...result.targets, ...stemVariants(word)]
-        .filter(b => b && !/\s/.test(b) && !seen.has(b.toLowerCase()) && seen.add(b.toLowerCase()));
-    for (const base of fallbacks) {
+    const seen = new Set([lower(result.entry), lower(word)]);
+    const fallbacks = [];   // { base, replace }: entry to try, and the word of the phrase it stands for
+    const offer = (base, replace) => {
+        const fold = lower(base);
+        if (base && !/\s/.test(base) && !seen.has(fold)) { seen.add(fold); fallbacks.push({ base, replace }); }
+    };
+    for (const b of [...result.alternates, ...result.targets, ...stemVariants(word)]) offer(b, word);
+    // A tapped particle: the verb in front of it and its base forms — "up" in
+    // "gave up" is defined under give, not under up.
+    for (const phrase of result.phrasal) {
+        const verb = phrase.split(' ')[0];
+        if (lower(verb) !== lower(word)) for (const v of stemVariants(verb)) offer(v, verb);
+    }
+    for (const { base, replace } of fallbacks) {
         const hit = resolveEntry(dict, base);
         if (!hit || /\s/.test(hit.entry.trim())) continue;
         const altFlats = hit.bodies.map(html => flattenEntry(html, { styleKey }));
-        const tries = phraseSpellings(result.phrases, word, [hit.entry, base, ...hit.targets]);
-        found = locateIn(altFlats, tries);
+        const tries = phraseSpellings(result.headingPhrases, replace, [hit.entry, base, ...hit.targets]);
+        found = locateIn(altFlats, tries) || locateHeading(altFlats, result.context);
         if (found) {
+            const via = replace === word ? word : (found.phraseFound || word);
             const switched = {
                 ...result,
                 entry: hit.entry,
                 bodies: hit.bodies,
                 targets: hit.targets,
                 alternates: hit.alternates,
-                trail: buildTrail(word, word, hit.entry, hit.targets),
+                trail: buildTrail(via, word, hit.entry, hit.targets),
             };
-            return { result: switched, flats: altFlats, ...found };
+            return done(switched, altFlats, found);
         }
     }
-    return { result, flats, highlight: null, phraseFound: '' };
+    return plain;
 };
