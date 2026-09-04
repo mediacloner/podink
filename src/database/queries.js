@@ -13,11 +13,20 @@ const runInTxn = (db, task) => {
   return p;
 };
 
+/** Podcasts.kind for an imported collection (audiobook / local audio files,
+ *  3.5.0). Every other row is an RSS subscription ('rss'). */
+export const LOCAL_KIND = 'local';
+export const isLocalFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feedUrl.startsWith('local://');
+
+// Every episode row carries its collection's kind and author, so screens can
+// tell a chapter of an imported book (no feed, no re-download, its file *is*
+// the episode) from a podcast episode without a second query.
 const EPISODE_WITH_IMAGE = `
-  SELECT e.*, p.image_url
+  SELECT e.*, p.image_url, p.kind AS podcast_kind, p.author AS podcast_author
   FROM Episodes e
   LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
 `;
+const NOT_LOCAL = `COALESCE(p.kind, 'rss') != '${LOCAL_KIND}'`;
 
 export const getDownloadedEpisodes = async () => {
   const db = await openDatabaseContext();
@@ -26,9 +35,12 @@ export const getDownloadedEpisodes = async () => {
   );
 };
 
+/** The Feed: every subscription's episodes. Chapters of imported collections
+ *  stay out — a 60-chapter audiobook would bury the podcasts; they live in
+ *  My Podcasts → the collection, and in Listening once started. */
 export const getSubscribedEpisodes = async () => {
   const db = await openDatabaseContext();
-  return db.getAllAsync(`${EPISODE_WITH_IMAGE} ORDER BY e.release_date DESC`);
+  return db.getAllAsync(`${EPISODE_WITH_IMAGE} WHERE ${NOT_LOCAL} ORDER BY e.release_date DESC`);
 };
 
 // INSERT OR IGNORE preserves is_new, is_downloaded, local_audio_path, etc. for existing episodes
@@ -101,10 +113,113 @@ export const getPodcasts = async () => {
   const db = await openDatabaseContext();
   return db.getAllAsync(`
     SELECT p.*,
-           (SELECT MAX(e.release_date) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS latest_episode_at
+           (SELECT MAX(e.release_date) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS latest_episode_at,
+           (SELECT COUNT(*) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS episode_count
     FROM Podcasts p
     ORDER BY latest_episode_at DESC, p.subscribed_at DESC
   `);
+};
+
+export const getPodcastByFeedUrl = async (feedUrl) => {
+  const db = await openDatabaseContext();
+  return db.getFirstAsync(
+    `SELECT p.*,
+            (SELECT COUNT(*) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS episode_count
+     FROM Podcasts p WHERE p.feed_url = ? LIMIT 1`,
+    [feedUrl]
+  );
+};
+
+// ─── Local collections (imported audiobooks / audio files) ───────────────────
+
+/** A new imported collection. feed_url is a synthetic `local://<id>` key so
+ *  every per-podcast query works unchanged; nothing ever fetches it. */
+export const saveLocalCollection = async ({ feed_url, title, author, description, image_url }) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `INSERT INTO Podcasts (title, description, feed_url, image_url, subscribed_at, kind, author)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [title, description || '', feed_url, image_url || '', new Date().toISOString(), LOCAL_KIND, author || '']
+  );
+};
+
+/** Edit a collection's metadata. Only the keys present in `fields` change;
+ *  a new title is copied onto its episodes' podcast_title (the Player header,
+ *  the track's artist and the Library folder all read that). */
+export const updateCollection = async (feedUrl, fields) => {
+  const allowed = ['title', 'author', 'description', 'image_url'];
+  const keys = allowed.filter(k => fields[k] !== undefined);
+  if (!keys.length) return;
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync(
+      `UPDATE Podcasts SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE feed_url = ?`,
+      [...keys.map(k => fields[k] ?? ''), feedUrl]
+    );
+    if (fields.title !== undefined) {
+      await db.runAsync(
+        `UPDATE Episodes SET podcast_title = ? WHERE podcast_feed_url = ?`,
+        [fields.title, feedUrl]
+      );
+    }
+  });
+};
+
+/** Chapters of an imported collection, in one transaction. They are born
+ *  downloaded (the file is the episode), never "new" (no badge for a book
+ *  you just chose yourself) and keep their book order in track_number. */
+export const insertLocalEpisodes = async (rows) => {
+  if (!rows?.length) return;
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    for (const r of rows) {
+      await db.runAsync(
+        `INSERT OR IGNORE INTO Episodes
+           (id, title, description, podcast_title, podcast_feed_url, release_date, audio_url,
+            local_audio_path, is_downloaded, downloaded_at, is_new, duration, track_number)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?)`,
+        [
+          r.id, r.title, r.description || '', r.podcast_title, r.podcast_feed_url, r.release_date,
+          r.local_audio_path, r.local_audio_path, Date.now(), r.duration || 0, r.track_number || 0,
+        ]
+      );
+    }
+  });
+};
+
+/** Every chapter of a collection in reading order. */
+export const getEpisodesForCollection = async (feedUrl) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `${EPISODE_WITH_IMAGE} WHERE e.podcast_feed_url = ?
+     ORDER BY COALESCE(e.track_number, 0) ASC, e.release_date DESC, e.title ASC`,
+    [feedUrl]
+  );
+};
+
+export const getMaxTrackNumber = async (feedUrl) => {
+  const db = await openDatabaseContext();
+  const row = await db.getFirstAsync(
+    'SELECT MAX(track_number) AS max_track FROM Episodes WHERE podcast_feed_url = ?',
+    [feedUrl]
+  );
+  return row?.max_track ?? 0;
+};
+
+export const updateEpisodeTitle = async (id, title) => {
+  const db = await openDatabaseContext();
+  await db.runAsync('UPDATE Episodes SET title = ? WHERE id = ?', [title, id]);
+};
+
+/** Remove one episode row outright (a chapter of an imported collection —
+ *  there is no feed to re-list it from). Transcripts first, for the FTS
+ *  triggers. The caller deletes the audio file. */
+export const deleteEpisodeRow = async (id) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync('DELETE FROM Transcripts WHERE episode_id = ?', [id]);
+    await db.runAsync('DELETE FROM Episodes WHERE id = ?', [id]);
+  });
 };
 
 export const deletePodcast = async (feedUrl) => {
@@ -254,8 +369,12 @@ export const clearPlayProgress = async (id) => {
  *  last heard before last_played_at existed (NULL) sort after the stamped
  *  ones, newest release first. */
 const LISTENING_STATE_SQL = {
+  // Chapters of imported collections are "downloaded" by construction; they
+  // would swamp this segment, so only podcast downloads are listed. Started
+  // and finished chapters do appear in the two segments below.
   'downloaded':
     `WHERE e.is_downloaded = 1 AND e.is_played = 0 AND COALESCE(e.play_position, 0) = 0
+       AND ${NOT_LOCAL}
      ORDER BY e.release_date DESC`,
   'in-progress':
     `WHERE e.is_played = 0 AND e.play_position > 0
@@ -296,13 +415,16 @@ export const markEpisodeFinished = async (id) => {
  *  A NULL downloaded_at (never expected on a downloaded row) is left alone. */
 export const getStaleFinishedDownloads = async (cutoffMs) => {
   const db = await openDatabaseContext();
+  // Imported collections are excluded: their file is the episode, with no
+  // feed to stream it from again — the sweep would destroy the book.
   return db.getAllAsync(
-    `SELECT * FROM Episodes
-     WHERE is_played = 1
-       AND is_downloaded = 1 AND local_audio_path IS NOT NULL
-       AND COALESCE(last_played_at, 0) < ?
-       AND downloaded_at IS NOT NULL AND downloaded_at < ?
-     ORDER BY last_played_at ASC`,
+    `${EPISODE_WITH_IMAGE}
+     WHERE e.is_played = 1
+       AND e.is_downloaded = 1 AND e.local_audio_path IS NOT NULL
+       AND COALESCE(e.last_played_at, 0) < ?
+       AND e.downloaded_at IS NOT NULL AND e.downloaded_at < ?
+       AND ${NOT_LOCAL}
+     ORDER BY e.last_played_at ASC`,
     [cutoffMs, cutoffMs]
   );
 };
@@ -349,9 +471,7 @@ export const getNewEpisodesCountForPodcast = async (feedUrl) => {
 export const getLatestEpisodesForPodcast = async (feedUrl, limit = 5) => {
   const db = await openDatabaseContext();
   return db.getAllAsync(`
-    SELECT e.*, p.image_url
-    FROM Episodes e
-    LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
+    ${EPISODE_WITH_IMAGE}
     WHERE e.podcast_feed_url = ?
     ORDER BY e.release_date DESC
     LIMIT ?

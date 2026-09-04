@@ -39,6 +39,9 @@ const EpisodeItem = ({
     // Listening-tab variant: no download/transcribe column — the row
     // exists to be resumed, so a single play glyph stands in for the pills.
     hideActions = false,
+    // Imported collections: every chapter is on the device by definition,
+    // so the green "Downloaded" pill says nothing — keep only the actions.
+    showDownloadedPill = true,
 }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -215,12 +218,14 @@ const EpisodeItem = ({
                         />
                     ) : (
                         <View style={styles.downloadedCol}>
-                            <Pill
-                                variant="green"
-                                icon="check"
-                                label="Downloaded"
-                                accessibilityLabel="Episode downloaded"
-                            />
+                            {showDownloadedPill && (
+                                <Pill
+                                    variant="green"
+                                    icon="check"
+                                    label="Downloaded"
+                                    accessibilityLabel="Episode downloaded"
+                                />
+                            )}
 
                             <View style={styles.actionRow}>
                                 {isTranscribing ? (
