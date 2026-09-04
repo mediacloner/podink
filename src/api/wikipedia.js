@@ -39,7 +39,8 @@ const getJson = async (url, signal) => {
  * `kind: 'offline' | 'server'` on network trouble, `AbortError` untouched.
  *
  * @returns {Promise<null | { title, description, extract, extractHtml,
- *   thumbnail: null | { uri, width, height }, url, disambiguation, lang }>}
+ *   thumbnail: null | { uri, width, height }, original: null | { uri, width, height },
+ *   url, disambiguation, lang }>}
  */
 export const fetchWikipediaSummary = async (title, lang = 'en', signal) => {
     const d = await getJson(summaryUrl(lang, title), signal);
@@ -55,6 +56,9 @@ export const fetchWikipediaSummary = async (title, lang = 'en', signal) => {
         thumbnail: d.thumbnail?.source
             ? { uri: d.thumbnail.source, width: d.thumbnail.width, height: d.thumbnail.height }
             : null,
+        original: d.originalimage?.source
+            ? { uri: d.originalimage.source, width: d.originalimage.width, height: d.originalimage.height }
+            : null,
         url: d.content_urls?.mobile?.page || d.content_urls?.desktop?.page || `https://${lang}.wikipedia.org/wiki/${slugOf(d.title)}`,
         disambiguation: d.type === 'disambiguation',
         lang,
@@ -62,6 +66,35 @@ export const fetchWikipediaSummary = async (title, lang = 'en', signal) => {
 };
 
 const titleCase = (s) => s.split(' ').map(w => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ');
+
+// Wikimedia thumbnails are sized by the URL: `…/thumb/a/ab/Name.jpg/320px-Name.jpg`
+// (the summary API appends a `?utm_…` tracking query, dropped here).
+const THUMB_SIZE = /\/(\d+)px-([^/?]+)(?:\?.*)?$/;
+
+/**
+ * The picture at a size worth zooming into: the thumbnail's own URL asked
+ * for at `maxWidth`, so a 20 MB original is never downloaded; the original
+ * itself when it is no wider than that (Wikimedia does not scale up), or
+ * when the URL is not a sized thumbnail. Null when the page has no picture.
+ * 1280 px is the width Wikipedia's own media viewer asks for, so it is the
+ * size most likely to be already rendered — Wikimedia refuses to render a
+ * fresh size for a client it is throttling.
+ *
+ * @returns {null | { uri, width, height }}
+ */
+export const largeImage = (page, maxWidth = 1280) => {
+    const t = page?.thumbnail;
+    const o = page?.original;
+    if (!t && !o) return null;
+    const fullW = o?.width || 0;
+    const fullH = o?.height || 0;
+    if (o && (fullW <= maxWidth || !t || !THUMB_SIZE.test(t.uri))) return { uri: o.uri, width: o.width, height: o.height };
+    if (!t) return null;
+    if (!THUMB_SIZE.test(t.uri)) return { uri: t.uri, width: t.width, height: t.height };
+    const width = fullW ? Math.min(maxWidth, fullW) : maxWidth;
+    const height = fullW && fullH ? Math.round(fullH * (width / fullW)) : Math.round((t.height || width) * (width / (t.width || width)));
+    return { uri: t.uri.replace(THUMB_SIZE, `/${width}px-$2`), width, height };
+};
 
 /**
  * Tries the candidates in order — the longest name run first — and resolves
