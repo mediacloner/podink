@@ -9,10 +9,30 @@ import { USER_AGENT } from './userAgent';
 // Wikimedia asks every client for an identifying User-Agent.
 export const WIKIPEDIA_HEADERS = { 'User-Agent': USER_AGENT, Accept: 'application/json' };
 
-const summaryUrl = (lang, title) =>
-    `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.trim().replace(/ /g, '_'))}`;
+const slugOf = (title) => encodeURIComponent(title.trim().replace(/ /g, '_'));
+const summaryUrl = (lang, title) => `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${slugOf(title)}`;
+const wikitextUrl = (lang, title) =>
+    `https://${lang}.wikipedia.org/w/api.php?action=parse&prop=wikitext&format=json&formatversion=2&redirects=1&page=${slugOf(title)}`;
 
 const tagged = (kind, message) => Object.assign(new Error(message), { kind });
+
+const getJson = async (url, signal) => {
+    let res;
+    try {
+        res = await fetch(url, { headers: WIKIPEDIA_HEADERS, signal });
+    } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+        throw tagged('offline', e?.message || 'Network request failed');
+    }
+    if (res.status === 404) return null;
+    if (!res.ok) throw tagged('server', 'HTTP ' + res.status);
+    try {
+        return await res.json();
+    } catch (e) {
+        if (e?.name === 'AbortError') throw e;
+        throw tagged('server', 'Malformed response');
+    }
+};
 
 /**
  * One article summary, or null when no page has that title. Rejects with
@@ -22,27 +42,11 @@ const tagged = (kind, message) => Object.assign(new Error(message), { kind });
  *   thumbnail: null | { uri, width, height }, url, disambiguation, lang }>}
  */
 export const fetchWikipediaSummary = async (title, lang = 'en', signal) => {
-    let res;
-    try {
-        res = await fetch(summaryUrl(lang, title), { headers: WIKIPEDIA_HEADERS, signal });
-    } catch (e) {
-        if (e?.name === 'AbortError') throw e;
-        throw tagged('offline', e?.message || 'Network request failed');
-    }
-    if (res.status === 404) return null;
-    if (!res.ok) throw tagged('server', 'HTTP ' + res.status);
-    let d;
-    try {
-        d = await res.json();
-    } catch (e) {
-        if (e?.name === 'AbortError') throw e;
-        throw tagged('server', 'Malformed response');
-    }
+    const d = await getJson(summaryUrl(lang, title), signal);
     if (!d || !d.title) return null;
     // 'standard' is an article; 'disambiguation' lists the articles sharing
     // the name. Anything else (no-extract, mainpage) has nothing to show.
     if (d.type !== 'standard' && d.type !== 'disambiguation') return null;
-    const slug = encodeURIComponent(d.title.replace(/ /g, '_'));
     return {
         title: d.title,
         description: d.description || '',
@@ -51,7 +55,7 @@ export const fetchWikipediaSummary = async (title, lang = 'en', signal) => {
         thumbnail: d.thumbnail?.source
             ? { uri: d.thumbnail.source, width: d.thumbnail.width, height: d.thumbnail.height }
             : null,
-        url: d.content_urls?.mobile?.page || d.content_urls?.desktop?.page || `https://${lang}.wikipedia.org/wiki/${slug}`,
+        url: d.content_urls?.mobile?.page || d.content_urls?.desktop?.page || `https://${lang}.wikipedia.org/wiki/${slugOf(d.title)}`,
         disambiguation: d.type === 'disambiguation',
         lang,
     };
@@ -61,13 +65,14 @@ const titleCase = (s) => s.split(' ').map(w => (w ? w[0].toUpperCase() + w.slice
 
 /**
  * Tries the candidates in order — the longest name run first — and resolves
- * the first real article. A disambiguation page is remembered and returned
- * only when no candidate is an article; null when nothing matched at all.
- * Titles are case-sensitive past the first letter, so each candidate is
- * retried in Title Case when the transcript spelt it otherwise.
+ * the first page any of them names, article or disambiguation: "World Trade
+ * Center" (a disambiguation) must win over the article "World", so the
+ * reader picks the building from the list rather than reading about the
+ * planet. Null when nothing matched. Titles are case-sensitive past the
+ * first letter, so each candidate is retried in Title Case when the
+ * transcript spelt it otherwise.
  */
 export const lookupWikipedia = async (candidates, { lang = 'en', signal } = {}) => {
-    let disambiguation = null;
     const tried = new Set();
     for (const raw of candidates) {
         const cand = (raw || '').trim();
@@ -76,12 +81,10 @@ export const lookupWikipedia = async (candidates, { lang = 'en', signal } = {}) 
             if (tried.has(title)) continue;
             tried.add(title);
             const page = await fetchWikipediaSummary(title, lang, signal);
-            if (!page) continue;
-            if (!page.disambiguation) return page;
-            if (!disambiguation) disambiguation = page;
+            if (page) return page;
         }
     }
-    return disambiguation;
+    return null;
 };
 
 // ── Name runs around the tapped word ─────────────────────────────────────────
@@ -141,22 +144,110 @@ export const nameCandidates = ({ word, prevWords = [], nextWords = [] }) => {
     return out;
 };
 
-// How many entries of a list page the card shows.
-const LIST_ITEMS = 6;
+// ── List pages: disambiguations and surname lists ────────────────────────────
+
+// A page whose intro is mostly entries — a disambiguation ("World Trade
+// Center may refer to…"), a surname list ("Grigg is a surname. Notable
+// people…") — is shown as a list of tappable entries rather than prose.
+const LIST_THRESHOLD = 6;
+export const isListPage = (page) =>
+    !!page && (page.disambiguation || (page.extractHtml.match(/<li\b/gi) || []).length > LIST_THRESHOLD);
+
+// Sections of a disambiguation page that list no articles of their own.
+const SKIPPED_SECTIONS = /^(see also|references|external links|notes)$/i;
+// Link targets outside the article namespace.
+const NON_ARTICLE = /^(?:wikt|wiktionary|file|image|category|wikipedia|wp|help|template|portal|special|talk|user|s|q|commons|c|d|m|mw|b|n|v):/i;
+
+// Wiki markup → plain text: links keep their label, bold/italic quotes go,
+// templates, refs and comments vanish.
+const stripMarkup = (s) => s
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<ref\b[^>]*\/>/gi, '')
+    .replace(/<ref\b[^>]*>[\s\S]*?<\/ref>/gi, '')
+    .replace(/\{\{[^{}]*(?:\{\{[^{}]*\}\}[^{}]*)*\}\}/g, '')
+    .replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, '$1')
+    .replace(/\[https?:[^\s\]]+(?:\s+([^\]]*))?\]/g, '$1')
+    .replace(/'{2,}/g, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 /**
- * The HTML the card flattens like a dictionary record: the article's intro
- * paragraphs as Wikipedia serves them (`<b>` name, `<i>` terms). A list page
- * — a disambiguation ("Cassius may refer to…"), a surname list ("Grigg is a
- * surname. Notable people…"), any intro that is mostly entries — is cut to
- * its lead line and the first few entries; the rest is one tap away.
+ * The entries of a list page, in page order, read from its wikitext:
+ * `* [[World Trade Center (1973–2001)]], a building complex…` becomes
+ * { title, label, rest, section, depth }. Pure — exported for tests.
  */
-export const wikipediaEntryHtml = (page) => {
+export const parseListEntries = (wikitext) => {
+    const out = [];
+    let section = '';
+    let skipping = false;
+    for (const rawLine of (wikitext || '').split('\n')) {
+        const line = rawLine.trim();
+        const heading = /^(={2,})\s*(.*?)\s*\1$/.exec(line);
+        if (heading) {
+            const text = stripMarkup(heading[2]);
+            // Only a top-level heading can end a skipped section.
+            if (heading[1].length === 2 || !skipping) skipping = SKIPPED_SECTIONS.test(text);
+            if (!skipping && heading[1].length === 2) section = text;
+            continue;
+        }
+        if (skipping) continue;
+        const item = /^(\*+|#+)\s*(.*)$/.exec(line);
+        if (!item) continue;
+        const link = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/.exec(item[2]);
+        if (!link) continue;
+        const title = link[1].trim();
+        if (!title || NON_ARTICLE.test(title)) continue;
+        const label = (link[2] ?? title).trim() || title;
+        const rest = stripMarkup(item[2].slice(link.index + link[0].length));
+        out.push({ title, label, rest, section, depth: item[1].length - 1 });
+    }
+    return out;
+};
+
+/** Entries of a list page, or [] when its wikitext cannot be read. */
+export const fetchListEntries = async (title, lang = 'en', signal) => {
+    const d = await getJson(wikitextUrl(lang, title), signal);
+    const text = d?.parse?.wikitext;
+    return typeof text === 'string' ? parseListEntries(text) : [];
+};
+
+const escapeHtml = (s) => String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/**
+ * The HTML the card flattens like a dictionary record.
+ *
+ * An article: its intro paragraphs as Wikipedia serves them (`<b>` name,
+ * `<i>` terms). A list page with `entries`: the lead line, then the entries
+ * grouped under their section labels, each entry an `entry://` link to its
+ * own article — the same cross-reference the dictionaries use, so a tap on
+ * it opens that article in the card. Without entries (wikitext unreadable)
+ * the page's own list is shown cut to its first few items.
+ */
+export const wikipediaEntryHtml = (page, entries = null) => {
     if (!page) return '';
-    const html = page.extractHtml || (page.extract ? `<p>${page.extract}</p>` : '');
-    const items = html.match(/<li\b[^>]*>[\s\S]*?<\/li>/gi) || [];
-    if (items.length <= LIST_ITEMS) return html;
+    const html = page.extractHtml || (page.extract ? `<p>${escapeHtml(page.extract)}</p>` : '');
+    if (!isListPage(page)) return html;
     const lead = (html.match(/<p\b[^>]*>[\s\S]*?<\/p>/i) || [''])[0];
-    const shown = items.slice(0, LIST_ITEMS).join('');
-    return `${lead}<ul>${shown}</ul><p><i>…and ${items.length - LIST_ITEMS} more on Wikipedia</i></p>`;
+    if (entries && entries.length) {
+        let out = lead;
+        let section = null;
+        let open = false;
+        for (const e of entries) {
+            if (e.section !== section) {
+                if (open) { out += '</ul>'; open = false; }
+                section = e.section;
+                if (section) out += `<p><small>${escapeHtml(section)}</small></p>`;
+            }
+            if (!open) { out += '<ul>'; open = true; }
+            const rest = e.rest ? ` ${escapeHtml(e.rest)}`.replace(/^ ([,;:.])/, '$1') : '';
+            out += `<li><a href="entry://${escapeHtml(e.title)}">${escapeHtml(e.label)}</a>${rest}</li>`;
+        }
+        if (open) out += '</ul>';
+        return out;
+    }
+    const items = html.match(/<li\b[^>]*>[\s\S]*?<\/li>/gi) || [];
+    if (items.length <= LIST_THRESHOLD) return html;
+    return `${lead}<ul>${items.slice(0, LIST_THRESHOLD).join('')}</ul><p><i>…and ${items.length - LIST_THRESHOLD} more on Wikipedia</i></p>`;
 };

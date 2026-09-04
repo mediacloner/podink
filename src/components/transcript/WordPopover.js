@@ -16,7 +16,10 @@ import {
     lookupWord, probeDictionaries,
 } from '../../services/dictionaryService';
 import { FUNCTION_WORDS, firstDefinitionText, flattenEntry } from '../../services/dictionaryHtml';
-import { WIKIPEDIA_HEADERS, lookupWikipedia, nameCandidates, wikipediaEntryHtml } from '../../api/wikipedia';
+import {
+    WIKIPEDIA_HEADERS, fetchListEntries, fetchWikipediaSummary, isListPage, lookupWikipedia,
+    nameCandidates, wikipediaEntryHtml,
+} from '../../api/wikipedia';
 import { fetchTranslation, fetchWordInfo, langLabel, translateErrorMessage } from './translate';
 import { fetchDefinitions } from './dictionary';
 import { askAssistantAboutWord, copyText, shareText } from './share';
@@ -28,16 +31,38 @@ const _cache = new Map();
 // The sentence translation is cached separately: the same word turns up in
 // different sentences, and each one needs its own contextual rendering.
 const _ctxCache = new Map();
-// Wikipedia answers, keyed by the candidate titles; a miss is cached as null.
+// Wikipedia answers, keyed by the candidate titles (or, for an entry picked
+// from a list, by its title); a miss is cached as null.
 const _wikiCache = new Map();
 
-// The article's intro flattened like a dictionary record. The card draws the
-// title line itself (with the thumbnail), so no paragraph gets the headword
-// treatment that the first paragraph of a dictionary entry receives.
-const wikiFlat = (page) => {
-    const flat = flattenEntry(wikipediaEntryHtml(page));
+// How many entries of a list page show before "Show all".
+const WIKI_LIST_PREVIEW = 8;
+
+// Second phase for a disambiguation or surname list: its entries with their
+// real article titles (read from the wikitext), fetched after the page is
+// already on screen so a slow read never delays the card. The upgraded
+// value is cached under `key` and handed to `apply`; a failure just leaves
+// the page's own list (not tappable) in place.
+const loadListEntries = (page, key, signal, apply) =>
+    fetchListEntries(page.title, page.lang, signal)
+        .then(entries => {
+            if (!entries.length) return;
+            const value = { page, entries };
+            _wikiCache.set(key, value);
+            apply(value);
+        })
+        .catch(e => {
+            if (e?.name === 'AbortError') return;
+            log('DICT', 'Wikipedia entries failed', { title: page.title, error: String(e?.message || e) });
+        });
+
+// The article's intro (or a list page's entries) flattened like a dictionary
+// record. The card draws the title line itself (with the thumbnail), so no
+// paragraph gets the headword treatment a dictionary entry's first one has.
+const wikiFlats = (page, entries) => {
+    const flat = flattenEntry(wikipediaEntryHtml(page, entries));
     flat.paragraphs.forEach(p => { p.headword = false; });
-    return flat;
+    return [flat];
 };
 
 const IS_CAPITALISED = /^\p{Lu}/u;
@@ -109,8 +134,12 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     // A different headword to show: a cross-reference tap, or "the word
     // itself" after the sentence resolved to a phrasal verb or an idiom.
     const [override, setOverride] = useState(null);
-    // Wikipedia: idle | loading | ready { page, flats } | none | error { kind }
+    // Wikipedia: idle | loading | ready { page, entries } | none | error { kind }
     const [wiki, setWiki] = useState({ status: 'idle' });
+    // An entry tapped in a disambiguation / surname list: { title, from }.
+    const [wikiPick, setWikiPick] = useState(null);
+    const [wikiPicked, setWikiPicked] = useState({ status: 'idle' });
+    const [wikiExpanded, setWikiExpanded] = useState(false);
 
     const scrollRef = useRef(null);
     const bodyRef = useRef(null);
@@ -212,6 +241,8 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         setOverride(null);
         setPickerOpen(false);
         setProbe(null);
+        setWikiPick(null);
+        setWikiExpanded(false);
     }, [visible, word, data]);
 
     // ── Offline lookup ───────────────────────────────────────────────────────
@@ -313,22 +344,26 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const wikiKey = wikiWanted && wikiCandidates.length ? `en:${wikiCandidates.join('|')}` : '';
     useEffect(() => {
         if (!wikiKey) { setWiki({ status: 'idle' }); return; }
-        const cached = _wikiCache.get(wikiKey);
-        if (cached !== undefined) {
-            setWiki(cached ? { status: 'ready', ...cached } : { status: 'none' });
-            return;
-        }
         let stale = false;
         const ctrl = new AbortController();
+        const show = (value) => { if (!stale) setWiki(value ? { status: 'ready', ...value } : { status: 'none' }); };
+        const cached = _wikiCache.get(wikiKey);
+        if (cached !== undefined) {
+            show(cached);
+            // A list whose entries never arrived (offline, throttled): try again.
+            if (cached && !cached.entries && isListPage(cached.page)) loadListEntries(cached.page, wikiKey, ctrl.signal, show);
+            return () => { stale = true; ctrl.abort(); };
+        }
         setWiki({ status: 'loading' });
         const t0 = Date.now();
         lookupWikipedia(wikiCandidates, { lang: 'en', signal: ctrl.signal })
             .then(page => {
                 if (stale) return;
-                log('DICT', 'Wikipedia', { tried: wikiCandidates, found: page?.title || null, disambiguation: page?.disambiguation || undefined, ms: Date.now() - t0 });
-                const value = page ? { page, flats: [wikiFlat(page)] } : null;
+                log('DICT', 'Wikipedia', { tried: wikiCandidates, found: page?.title || null, list: page ? isListPage(page) : undefined, ms: Date.now() - t0 });
+                const value = page ? { page, entries: null } : null;
                 _wikiCache.set(wikiKey, value);
-                setWiki(value ? { status: 'ready', ...value } : { status: 'none' });
+                show(value);
+                if (page && isListPage(page)) return loadListEntries(page, wikiKey, ctrl.signal, show);
             })
             .catch(e => {
                 if (stale || e?.name === 'AbortError') return;
@@ -337,6 +372,38 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
             });
         return () => { stale = true; ctrl.abort(); };
     }, [wikiKey, wikiCandidates]);
+
+    // An entry picked from the list: its own article, shown in place of the
+    // list with a way back. Cached by title like the lookups above.
+    useEffect(() => {
+        if (!wikiPick) { setWikiPicked({ status: 'idle' }); return; }
+        const key = `en:pick:${wikiPick.title}`;
+        let stale = false;
+        const ctrl = new AbortController();
+        const show = (value) => { if (!stale) setWikiPicked(value ? { status: 'ready', ...value } : { status: 'none' }); };
+        const cached = _wikiCache.get(key);
+        if (cached !== undefined) {
+            show(cached);
+            if (cached && !cached.entries && isListPage(cached.page)) loadListEntries(cached.page, key, ctrl.signal, show);
+            return () => { stale = true; ctrl.abort(); };
+        }
+        setWikiPicked({ status: 'loading' });
+        fetchWikipediaSummary(wikiPick.title, 'en', ctrl.signal)
+            .then(page => {
+                if (stale) return;
+                const value = page ? { page, entries: null } : null;
+                _wikiCache.set(key, value);
+                show(value);
+                if (page && isListPage(page)) return loadListEntries(page, key, ctrl.signal, show);
+            })
+            .catch(e => {
+                if (stale || e?.name === 'AbortError') return;
+                log('DICT', 'Wikipedia entry failed', { title: wikiPick.title, error: String(e?.message || e) });
+                setWikiPicked({ status: 'error', kind: e?.kind });
+            });
+        return () => { stale = true; ctrl.abort(); };
+    }, [wikiPick]);
+    useEffect(() => { setWikiExpanded(false); }, [wikiPick]);
 
     // ── Online lookup (translation) ──────────────────────────────────────────
     useEffect(() => {
@@ -472,8 +539,9 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                         : (firstSense ? `${firstSense.pos}: ${firstSense.terms.join(', ')}` : '');
                 }
                 // A name the dictionaries lack: Wikipedia's one-line description.
-                if (!definition && wiki.status === 'ready' && !wiki.page.disambiguation) {
-                    definition = wiki.page.description ? `${wiki.page.title}: ${wiki.page.description}` : wiki.page.title;
+                const article = (wikiPick ? wikiPicked : wiki);
+                if (!definition && article.status === 'ready' && !article.page.disambiguation) {
+                    definition = article.page.description ? `${article.page.title}: ${article.page.description}` : article.page.title;
                 }
                 const id = await addVocabWord({
                     word,
@@ -491,15 +559,43 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
             }
         } catch (_) {}
         setSaving(false);
-    }, [data, saving, saved, savedId, normalized, word, lookup, dict, wiki, lang, episodeId, episodeTitle]);
+    }, [data, saving, saved, savedId, normalized, word, lookup, dict, wiki, wikiPick, wikiPicked, lang, episodeId, episodeTitle]);
 
     const handleReplay = useCallback(() => {
         onReplay(Math.max(0, (data?.startMs ?? 0) - 1000));
     }, [onReplay, data]);
 
-    const wikiPage = wiki.status === 'ready' ? wiki.page : null;
+    // What the Wikipedia section shows: the picked entry when there is one,
+    // else the page the lookup found.
+    const wikiShown = wikiPick ? wikiPicked : wiki;
+    const wikiPage = wikiShown.status === 'ready' ? wikiShown.page : null;
+    const wikiEntries = wikiShown.status === 'ready' ? wikiShown.entries : null;
+    const wikiTotal = wikiEntries ? wikiEntries.length : 0;
+    const wikiFlatList = useMemo(() => {
+        if (!wikiPage) return null;
+        const shown = wikiEntries && !wikiExpanded ? wikiEntries.slice(0, WIKI_LIST_PREVIEW) : wikiEntries;
+        return wikiFlats(wikiPage, shown);
+    }, [wikiPage, wikiEntries, wikiExpanded]);
     const openWikipedia = useCallback(() => {
         if (wikiPage?.url) Linking.openURL(wikiPage.url).catch(() => {});
+    }, [wikiPage]);
+    // Where the section sits in the card body, so picking an entry scrolls
+    // the card back up to the article that replaces the list.
+    const wikiViewRef = useRef(null);
+    const wikiYRef = useRef(null);
+    const onWikiLayout = useCallback(() => {
+        const node = wikiViewRef.current;
+        const host = bodyRef.current;
+        if (!node || !host) return;
+        try { node.measureLayout(host, (_x, y) => { wikiYRef.current = y; }, () => {}); } catch (_) {}
+    }, []);
+    // An entry of the list, or a cross-reference inside a picked article.
+    const onWikiLink = useCallback((target) => {
+        const t = String(target || '').trim();
+        if (!t || !wikiPage) return;
+        setWikiPick({ title: t, from: wikiPage.title });
+        const y = wikiYRef.current;
+        if (y != null) scrollRef.current?.scrollTo({ y: Math.max(0, y - 8), animated: true });
     }, [wikiPage]);
 
     // ── Render ───────────────────────────────────────────────────────────────
@@ -703,39 +799,62 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     // Shown under the dictionary entry when there is one, in its place when
     // there is not. A disambiguation page ("Cassius may refer to…") only
     // stands in for a missing entry; next to a real one it would be noise.
-    const wikiVisible = wiki.status === 'loading'
+    // The tapped word's own disambiguation next to a real dictionary entry
+    // ("English", "Roman" → "may refer to…") would be noise, so that one
+    // only stands in for a missing entry. A longer name's disambiguation
+    // ("World Trade Center" from a tap on "Trade") is the answer and always
+    // shows, as does anything the reader has picked from a list.
+    const basePage = wiki.status === 'ready' ? wiki.page : null;
+    const ownDisambiguation = !!basePage && basePage.disambiguation && basePage.title.toLowerCase() === normalized;
+    const wikiVisible = !!wikiPick
+        || wiki.status === 'loading'
         || (wiki.status === 'error' && dict.status === 'missing')
-        || (!!wikiPage && (!wikiPage.disambiguation || dict.status !== 'ready'));
+        || (!!basePage && (!ownDisambiguation || dict.status !== 'ready'));
+    const wikiHiddenEntries = wikiEntries && !wikiExpanded ? Math.max(0, wikiTotal - WIKI_LIST_PREVIEW) : 0;
     const wikiSection = wikiVisible ? (
-        <>
+        <View ref={wikiViewRef} onLayout={onWikiLayout} collapsable={false}>
             <View style={st.sectionDivider} />
             <View style={st.dictHead}>
                 <Text style={st.sectionLabel}>Wikipedia</Text>
                 <Text style={st.dictName} numberOfLines={1}>English Wikipedia</Text>
             </View>
 
-            {wiki.status === 'loading' && <ActivityIndicator color={colors.accent} style={{ marginVertical: 14 }} />}
+            {(wikiPick || (wikiPage && wikiPage.title.toLowerCase() !== word.toLowerCase())) && (
+                <View style={st.trailRow}>
+                    {!!wikiPick && (
+                        <TouchableOpacity style={st.trailBack} onPress={() => setWikiPick(null)} activeOpacity={0.7} accessibilityRole='button'>
+                            <Icon name='arrow-left' size={13} color={colors.accent} />
+                            <Text style={st.trailBackText} numberOfLines={1}>{wikiPick.from}</Text>
+                        </TouchableOpacity>
+                    )}
+                    {!!wikiPage && wikiPage.title.toLowerCase() !== word.toLowerCase() && (
+                        <Text style={st.trailText} numberOfLines={2}>
+                            {word}  →  <Text style={st.trailBold}>{wikiPage.title}</Text>
+                        </Text>
+                    )}
+                </View>
+            )}
 
-            {wiki.status === 'error' && (
+            {wikiShown.status === 'loading' && <ActivityIndicator color={colors.accent} style={{ marginVertical: 14 }} />}
+
+            {wikiShown.status === 'error' && (
                 <Text style={st.softError}>
-                    {wiki.kind === 'offline' ? "Can't reach Wikipedia. Check your connection." : 'Wikipedia is not answering right now.'}
+                    {wikiShown.kind === 'offline' ? "Can't reach Wikipedia. Check your connection." : 'Wikipedia is not answering right now.'}
                 </Text>
+            )}
+            {wikiShown.status === 'none' && !!wikiPick && (
+                <Text style={st.softError}>No Wikipedia article for ‘{wikiPick.title}’.</Text>
             )}
 
             {!!wikiPage && (
                 <>
-                    {wikiPage.title.toLowerCase() !== word.toLowerCase() && (
-                        <View style={st.trailRow}>
-                            <Text style={st.trailText} numberOfLines={2}>
-                                {word}  →  <Text style={st.trailBold}>{wikiPage.title}</Text>
-                            </Text>
-                        </View>
-                    )}
                     <View style={st.wikiHead}>
                         <View style={{ flex: 1 }}>
                             <Text style={st.wikiTitle}>{wikiPage.title}</Text>
                             <Text style={st.wikiDesc}>
-                                {wikiPage.disambiguation ? 'Several Wikipedia articles share this name' : wikiPage.description}
+                                {wikiPage.disambiguation
+                                    ? (wikiEntries ? 'Several articles share this name — tap one' : 'Several Wikipedia articles share this name')
+                                    : wikiPage.description}
                             </Text>
                         </View>
                         {!!wikiPage.thumbnail && (
@@ -746,14 +865,19 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                             />
                         )}
                     </View>
-                    <DictionaryEntry flats={wiki.flats} />
+                    <DictionaryEntry flats={wikiFlatList} onLink={onWikiLink} />
+                    {wikiHiddenEntries > 0 && (
+                        <TouchableOpacity style={st.inlineLink} onPress={() => setWikiExpanded(true)} activeOpacity={0.7} accessibilityRole='button'>
+                            <Text style={st.inlineLinkText}>Show all {wikiTotal} entries</Text>
+                        </TouchableOpacity>
+                    )}
                     <TouchableOpacity style={st.wikiLink} onPress={openWikipedia} activeOpacity={0.7} accessibilityRole='link'>
                         <Icon name='external-link' size={13} color={colors.accent} />
                         <Text style={st.inlineLinkText}>Read on Wikipedia</Text>
                     </TouchableOpacity>
                 </>
             )}
-        </>
+        </View>
     ) : null;
 
     return (
