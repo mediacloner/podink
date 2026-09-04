@@ -18,7 +18,7 @@ import LoadingBar from '../components/LoadingBar';
 import SettingsGearButton from '../components/SettingsGearButton';
 import {
     getSubscribedEpisodes, saveEpisodesBatch, savePodcast, updatePodcastImage,
-    getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes,
+    getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes, LOCAL_KIND,
 } from '../database/queries';
 import {
     downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
@@ -214,7 +214,8 @@ const SubscribedTimeline = ({ navigation }) => {
         }
         setIsRefreshing(true);
         try {
-            const podcasts = await getPodcasts();
+            // Imported collections have no feed — nothing to fetch.
+            const podcasts = (await getPodcasts()).filter(p => p.kind !== LOCAL_KIND);
             const results = await Promise.allSettled(podcasts.map(async (podcast) => {
                 const feedData = await fetchPodcastFeed(podcast.feed_url, { maxItems: MAX_EPISODES_PER_PODCAST });
                 // Covers subscribed without one (itunes:image-only feeds

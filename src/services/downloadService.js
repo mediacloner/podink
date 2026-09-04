@@ -122,8 +122,13 @@ export const downloadAudioFile = async (url, filename, onProgress) => {
 export const deleteAudioFile = async (localUri) => {
     if (!localUri) return;
     try {
-        const filename = localUri.split('/').pop();
-        const file = new File(Paths.document, filename);
+        // Anything the app wrote under its documents directory — a download
+        // at the root, an imported chapter under imports/<id>/ — is deleted
+        // at its exact path. Other URIs keep the historical basename lookup.
+        const root = Paths.document.uri;
+        const file = String(localUri).startsWith(root)
+            ? new File(localUri)
+            : new File(Paths.document, localUri.split('/').pop());
         if (file.exists) {
             file.delete();
         }

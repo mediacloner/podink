@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -219,6 +219,31 @@ const migrateToV6 = async (txn) => {
     );
 };
 
+const migrateToV7 = async (txn) => {
+    // Local collections (imported audiobooks / audio files, 3.5.0). A Podcasts
+    // row is either an RSS subscription (kind 'rss', the default so every
+    // existing row keeps meaning what it meant) or a local collection (kind
+    // 'local'): no feed to refresh, its episodes are files copied into the
+    // app's storage, and it carries an author (the book's writer) that RSS
+    // shows never had a column for. Episodes gain track_number so chapters
+    // keep their book order independently of release_date, which the shared
+    // lists still sort by.
+    const pcols = await txn.getAllAsync(`PRAGMA table_info(Podcasts)`);
+    if (!pcols.some(c => c.name === 'kind')) {
+        await txn.execAsync(`ALTER TABLE Podcasts ADD COLUMN kind TEXT NOT NULL DEFAULT 'rss'`);
+    }
+    if (!pcols.some(c => c.name === 'author')) {
+        await txn.execAsync(`ALTER TABLE Podcasts ADD COLUMN author TEXT`);
+    }
+    const ecols = await txn.getAllAsync(`PRAGMA table_info(Episodes)`);
+    if (!ecols.some(c => c.name === 'track_number')) {
+        await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN track_number INTEGER DEFAULT 0`);
+    }
+    // Every per-podcast query filters on podcast_feed_url and there was no
+    // index; a 60-chapter audiobook makes the scans noticeable.
+    await txn.execAsync(`CREATE INDEX IF NOT EXISTS idx_episodes_feed ON Episodes(podcast_feed_url)`);
+};
+
 export const initDB = async () => {
     const db = await openDatabaseContext();
 
@@ -240,6 +265,7 @@ export const initDB = async () => {
         if (cur < 4) await migrateToV4(db);
         if (cur < 5) await migrateToV5(db);
         if (cur < 6) await migrateToV6(db);
+        if (cur < 7) await migrateToV7(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

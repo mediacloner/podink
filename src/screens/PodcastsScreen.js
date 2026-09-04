@@ -11,12 +11,14 @@ import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
 import SwipeableRow, { closeOpenRow } from '../components/SwipeableRow';
 import EmptyState from '../components/EmptyState';
+import SettingsGearButton from '../components/SettingsGearButton';
 import {
     getPodcasts, deletePodcast,
     getNewEpisodesCountForPodcast, getLatestEpisodesForPodcast,
     markPodcastEpisodesAsSeen, capNewEpisodes,
-    pruneOldEpisodesForPodcast, getDownloadedEpisodesForPodcast,
+    pruneOldEpisodesForPodcast, getDownloadedEpisodesForPodcast, LOCAL_KIND,
 } from '../database/queries';
+import { deleteCollection, isImportSupported, pickAudioFiles, pickFolder } from '../services/importService';
 import { deleteAudioFile } from '../services/downloadService';
 import { artworkSource } from '../api/userAgent';
 import { dequeueTranscription } from '../services/whisperService';
@@ -41,12 +43,21 @@ const PodcastRow = React.memo(({
     onToggleExpand,
     onUnsubscribe,
     onOpenEpisode,
+    onOpenCollection,
     onDownload,
     onTranscribe,
     onCancel,
 }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
+    // An imported collection (audiobook / local files) has its own screen —
+    // a 60-chapter book does not fit the 5-episode accordion — and no feed
+    // to unsubscribe from: the swipe deletes it, files included.
+    const isLocal = podcast.kind === LOCAL_KIND;
+    const count = podcast.episode_count ?? 0;
+    const subtitle = isLocal
+        ? [podcast.author, `${count} ${count === 1 ? 'file' : 'files'}`].filter(Boolean).join(' · ')
+        : (podcast.description?.replace(/<[^>]+>/g, '') || '');
     return (
     <View>
         <SwipeableRow
@@ -55,15 +66,17 @@ const PodcastRow = React.memo(({
                 color: colors.danger,
                 dismiss: 'close',
                 onPress: () => onUnsubscribe(podcast),
-                accessibilityLabel: `Unsubscribe from ${podcast.title}`,
+                accessibilityLabel: isLocal ? `Delete ${podcast.title}` : `Unsubscribe from ${podcast.title}`,
             }}
         >
             <TouchableOpacity
-                onPress={() => onToggleExpand(podcast)}
-                activeOpacity={1}
+                onPress={() => (isLocal ? onOpenCollection(podcast) : onToggleExpand(podcast))}
+                activeOpacity={isLocal ? 0.7 : 1}
                 style={styles.row}
                 accessibilityRole="button"
-                accessibilityLabel={`${podcast.title}${newCount > 0 ? `, ${newCount} new episodes` : ''}, ${isExpanded ? 'collapse' : 'expand'}`}
+                accessibilityLabel={isLocal
+                    ? `${podcast.title}, imported audio, open`
+                    : `${podcast.title}${newCount > 0 ? `, ${newCount} new episodes` : ''}, ${isExpanded ? 'collapse' : 'expand'}`}
             >
                 {podcast.image_url ? (
                     <Image source={artworkSource(podcast.image_url)} style={styles.artwork} />
@@ -75,9 +88,10 @@ const PodcastRow = React.memo(({
 
                 <View style={styles.info}>
                     <Text style={styles.podcastTitle} numberOfLines={1}>{podcast.title}</Text>
-                    <Text style={styles.podcastDesc} numberOfLines={1}>
-                        {podcast.description?.replace(/<[^>]+>/g, '') || ''}
-                    </Text>
+                    <View style={styles.subtitleRow}>
+                        {isLocal && <Icon name="book-open" size={11} color={colors.textMuted} />}
+                        <Text style={styles.podcastDesc} numberOfLines={1}>{subtitle}</Text>
+                    </View>
                 </View>
 
                 {newCount > 0 && (
@@ -87,7 +101,7 @@ const PodcastRow = React.memo(({
                 )}
 
                 <Icon
-                    name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                    name={isLocal ? 'chevron-right' : isExpanded ? 'chevron-up' : 'chevron-down'}
                     size={16}
                     color={colors.textMuted}
                     style={{ marginLeft: 6 }}
@@ -95,7 +109,7 @@ const PodcastRow = React.memo(({
             </TouchableOpacity>
         </SwipeableRow>
 
-        {isExpanded && (
+        {isExpanded && !isLocal && (
             <ReAnimated.View
                 entering={FadeInDown.duration(220).springify()}
                 exiting={FadeOut.duration(160)}
@@ -154,6 +168,69 @@ const PodcastsScreen = ({ navigation }) => {
     const podcastsRef = useRef([]);
     const listRef = useRef(null);
 
+    // ── Import audio (3.5.0) ────────────────────────────────────────────────
+    // Audiobooks or any audio files, without a feed: the system picker (which
+    // lists Google Drive and every other document provider on the device) or
+    // a whole folder. The editor screen reads the tags and shows the form.
+    const handleImport = useCallback(() => {
+        const open = (entries, folderName) =>
+            navigation.navigate('CollectionEditor', { mode: 'import', entries, folderName });
+        showAlert(
+            'Import audio',
+            'Audiobooks or any audio files, kept apart from your podcast feeds. Google Drive appears in the file picker; for a Drive folder, open it there and select all its files.',
+            [
+                {
+                    text: 'Choose files…',
+                    onPress: async () => {
+                        try {
+                            const entries = await pickAudioFiles();
+                            if (entries) open(entries, '');
+                        } catch (e) {
+                            showAlert('Could not open the picker', e?.message || 'Please try again.');
+                        }
+                    },
+                },
+                {
+                    text: 'Choose a folder…',
+                    onPress: async () => {
+                        try {
+                            const folder = await pickFolder();
+                            if (folder) open(folder.entries, folder.name);
+                        } catch (e) {
+                            showAlert('Could not open the picker', e?.message || 'Please try again.');
+                        }
+                    },
+                },
+                { text: 'Cancel', style: 'cancel' },
+            ],
+        );
+    }, [navigation]);
+
+    // setOptions replaces the tab-level headerRight (the Settings gear), so
+    // render both: import for local audio, gear for Settings.
+    useEffect(() => {
+        if (!isImportSupported()) return;
+        navigation.setOptions({
+            headerRight: () => (
+                <View style={styles.headerActions}>
+                    <TouchableOpacity
+                        onPress={handleImport}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Import audio files"
+                    >
+                        <Icon name="folder-plus" size={21} color={colors.accent} />
+                    </TouchableOpacity>
+                    <SettingsGearButton />
+                </View>
+            ),
+        });
+    }, [navigation, handleImport, colors, styles]);
+
+    const handleOpenCollection = useCallback((podcast) => {
+        navigation.navigate('Collection', { feedUrl: podcast.feed_url });
+    }, [navigation]);
+
     const loadPodcasts = useCallback(async () => {
         try {
             const data = await getPodcasts();
@@ -161,6 +238,8 @@ const PodcastsScreen = ({ navigation }) => {
             setPodcasts(data);
             const counts = {};
             await Promise.all(data.map(async p => {
+                // Imported collections keep every chapter and are never "new".
+                if (p.kind === LOCAL_KIND) { counts[p.feed_url] = 0; return; }
                 await capNewEpisodes(p.feed_url, MAX_NEW);
                 await pruneOldEpisodesForPodcast(p.feed_url, 50);
                 counts[p.feed_url] = await getNewEpisodesCountForPodcast(p.feed_url);
@@ -252,6 +331,29 @@ const PodcastsScreen = ({ navigation }) => {
     }, [setExpanded]);
 
     const handleUnsubscribe = useCallback((podcast) => {
+        if (podcast.kind === LOCAL_KIND) {
+            const n = podcast.episode_count ?? 0;
+            showAlert(
+                'Delete collection',
+                `Remove "${podcast.title}" and its ${n} imported ${n === 1 ? 'file' : 'files'} from this device? The files you imported from are not touched.`,
+                [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: async () => {
+                            try {
+                                await deleteCollection(podcast.feed_url);
+                            } catch (e) {
+                                showAlert('Delete failed', e?.message || 'Please try again.');
+                            }
+                            loadPodcasts();
+                        },
+                    },
+                ],
+            );
+            return;
+        }
         showAlert(
             'Unsubscribe',
             `Remove "${podcast.title}" and its episode list from your podcasts?`,
@@ -347,13 +449,15 @@ const PodcastsScreen = ({ navigation }) => {
             onToggleExpand={handleToggleExpand}
             onUnsubscribe={handleUnsubscribe}
             onOpenEpisode={handleOpenEpisode}
+            onOpenCollection={handleOpenCollection}
             onDownload={handleDownload}
             onTranscribe={handleTranscribe}
             onCancel={handleCancel}
         />
     ), [
         newCountMap, expandedFeedUrl, episodesMap, downloads, activeId, queuedIds,
-        handleToggleExpand, handleUnsubscribe, handleOpenEpisode, handleDownload, handleTranscribe, handleCancel,
+        handleToggleExpand, handleUnsubscribe, handleOpenEpisode, handleOpenCollection, handleDownload,
+        handleTranscribe, handleCancel,
     ]);
 
     if (isLoading) {
@@ -382,7 +486,9 @@ const PodcastsScreen = ({ navigation }) => {
                     <EmptyState
                         icon="headphones"
                         title="No podcasts yet"
-                        subtitle="Add an RSS feed from the Feed tab to subscribe"
+                        subtitle={isImportSupported()
+                            ? 'Add an RSS feed from the Feed tab, or import audiobooks and audio files with the folder button above'
+                            : 'Add an RSS feed from the Feed tab to subscribe'}
                     />
                 }
             />
@@ -413,6 +519,8 @@ const makeStyles = (colors) => StyleSheet.create({
         justifyContent: 'center',
     },
     info: { flex: 1, gap: 4 },
+    subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 20, marginRight: 16, marginTop: 3 },
     podcastTitle: {
         fontSize: 16,
         fontWeight: '600',
@@ -422,6 +530,7 @@ const makeStyles = (colors) => StyleSheet.create({
         ...type.body,
         color: colors.textMuted,
         lineHeight: 18,
+        flexShrink: 1,
     },
 
     badge: {

@@ -2,8 +2,8 @@ import TrackPlayer from 'react-native-track-player';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-    clearPlayProgress, deleteEpisodeLocalData, getStaleFinishedDownloads, markEpisodeFinished, markEpisodeSeen,
-    updateEpisodeLocalPath,
+    clearPlayProgress, deleteEpisodeLocalData, deleteEpisodeRow, getStaleFinishedDownloads, isLocalFeedUrl,
+    LOCAL_KIND, markEpisodeFinished, markEpisodeSeen, updateEpisodeLocalPath,
 } from '../database/queries';
 import { deleteAudioFile, downloadAudioFile } from './downloadService';
 import { dequeueTranscription, enqueueTranscription } from './whisperService';
@@ -58,7 +58,18 @@ import { log } from './logService';
  *   Finished; re-downloading it — from the Player's "Download & transcribe",
  *   a Listening swipe, or the Feed — brings the transcript back without
  *   touching played / position, and gives the download a fresh week.
+ *
+ * Imported collections (3.5.0, podcast_kind 'local' — an audiobook's chapters
+ * or any local audio files) sit outside the download axis: their file *is*
+ * the episode, there is no feed to stream it from again. isLocalEpisode()
+ * tells them apart. "Delete download" on one deletes the chapter itself
+ * (deleteLocalEpisode); the weekly sweep and the end-of-episode prompt leave
+ * them alone.
  */
+
+/** A chapter of an imported collection rather than a podcast episode. */
+export const isLocalEpisode = (episode) =>
+    episode?.podcast_kind === LOCAL_KIND || isLocalFeedUrl(episode?.podcast_feed_url);
 
 // ─── Download ⇒ transcript ────────────────────────────────────────────────────
 
@@ -156,6 +167,7 @@ export const downloadEpisode = async (episode, { onProgress } = {}) => {
  * Throws on failure so callers can show an error and restore their row.
  */
 export const removeEpisodeDownload = async (episode) => {
+    if (isLocalEpisode(episode)) return deleteLocalEpisode(episode);
     const id = episode.id;
     log('UI', 'Remove download', { id, title: episode.title });
     dequeueTranscription(id);
@@ -170,6 +182,27 @@ export const removeEpisodeDownload = async (episode) => {
     } catch (_) {}
     if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
     await deleteEpisodeLocalData(id);
+    notifyLibraryChange({ type: 'episode-delete', episodeId: id });
+};
+
+/**
+ * Remove a chapter of an imported collection for good — the file, its
+ * transcript and the row (nothing could re-list it). Stops the player first
+ * when it is the loaded track. Throws on failure.
+ */
+export const deleteLocalEpisode = async (episode) => {
+    const id = episode.id;
+    log('UI', 'Delete imported chapter', { id, title: episode.title });
+    dequeueTranscription(id);
+    try {
+        const track = await TrackPlayer.getActiveTrack();
+        if (track?.id === id) {
+            await TrackPlayer.reset();
+            notifyUserStop();
+        }
+    } catch (_) {}
+    if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
+    await deleteEpisodeRow(id);
     notifyLibraryChange({ type: 'episode-delete', episodeId: id });
 };
 

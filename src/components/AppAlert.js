@@ -25,6 +25,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Animated,
     Dimensions,
+    Alert,
     Modal,
     Pressable,
     StyleSheet,
@@ -40,9 +41,14 @@ import { radii, useStyles } from '../theme';
 let _show = null;
 
 export const showAlert = (title, message, buttons) => {
+    const btns = buttons?.length ? buttons : [{ text: 'OK' }];
     if (_show) {
-        _show(title ?? '', message ?? '', buttons?.length ? buttons : [{ text: 'OK' }]);
+        _show(title ?? '', message ?? '', btns);
+        return;
     }
+    // The themed card is not mounted (should not happen once the app has
+    // booted) — the system dialog is better than a silently dropped alert.
+    Alert.alert(title ?? '', message ?? '', btns.map(b => ({ text: b.text, style: b.style, onPress: b.onPress })));
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -93,9 +99,13 @@ const AppAlert = () => {
         });
     }, [backdropAnim, scaleAnim, opacityAnim]);
 
-    // Self-register when mounted so showAlert() works from anywhere
+    // Self-register when mounted so showAlert() works from anywhere. The
+    // cleanup only clears its *own* registration: when Android briefly runs
+    // two MainActivity instances (seen when an install-triggered relaunch and
+    // an explicit launch race), two App trees mount and the dying one's
+    // cleanup must not unregister the survivor.
     useEffect(() => {
-        _show = (t, m, btns) => {
+        const show = (t, m, btns) => {
             const alert = { title: t, message: m, buttons: btns };
             if (visibleRef.current) {
                 const cur = currentRef.current;
@@ -108,7 +118,8 @@ const AppAlert = () => {
             }
             present(alert);
         };
-        return () => { _show = null; };
+        _show = show;
+        return () => { if (_show === show) _show = null; };
     }, [present]);
 
     // (Entrance animation now lives in present() — see comment there. It must

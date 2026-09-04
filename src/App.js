@@ -29,6 +29,8 @@ import VocabularyScreen from './screens/VocabularyScreen';
 import MiniPlayer from './components/MiniPlayer';
 import FinishedEpisodePrompt from './components/FinishedEpisodePrompt';
 import SettingsGearButton from './components/SettingsGearButton';
+import CollectionScreen from './screens/CollectionScreen';
+import CollectionEditorScreen from './screens/CollectionEditorScreen';
 
 LogBox.ignoreLogs(['Attempted to import the module']);
 
@@ -248,6 +250,18 @@ const AppRoot = () => {
                         name="Vocabulary"
                         component={VocabularyScreen}
                         options={{ headerShown: true }}
+                    />
+                    {/* Imported audio (3.5.0): a collection's chapter list, and
+                        the import / edit form it and My Podcasts open. */}
+                    <Stack.Screen
+                        name="Collection"
+                        component={CollectionScreen}
+                        options={{ headerShown: true, title: '' }}
+                    />
+                    <Stack.Screen
+                        name="CollectionEditor"
+                        component={CollectionEditorScreen}
+                        options={{ headerShown: true, title: 'Import audio' }}
                     />
                     <Stack.Screen
                         name="DebugLog"
