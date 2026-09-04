@@ -20,6 +20,7 @@ import {
 import { removeEpisodeDownload, reportTranscriptionError, transcribeEpisode } from '../services/episodeService';
 import { onLibraryChange, notifyLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
+import { artworkSource } from '../api/userAgent';
 import { withAlpha, type, useStyles, useTheme } from '../theme';
 
 // One folder per podcast, like the My Podcasts tab. Tapping the folder
@@ -43,7 +44,7 @@ const FolderHeader = React.memo(({ group, isExpanded, showSeparator, onToggleExp
                 accessibilityLabel={`${group.title}, ${count} downloaded episode${count === 1 ? '' : 's'}, ${isExpanded ? 'collapse' : 'expand'}`}
             >
                 {group.image_url ? (
-                    <Image source={{ uri: group.image_url }} style={styles.artwork} />
+                    <Image source={artworkSource(group.image_url)} style={styles.artwork} />
                 ) : (
                     <View style={[styles.artwork, styles.artworkPlaceholder]}>
                         <Icon name="headphones" size={22} color={colors.textFaint} />

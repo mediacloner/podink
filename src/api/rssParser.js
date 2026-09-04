@@ -1,5 +1,6 @@
 import * as rssParser from 'react-native-rss-parser';
 import { log } from '../services/logService';
+import { USER_AGENT } from './userAgent';
 
 // The app never keeps more than this many episodes per podcast
 // (SubscribedTimeline.MAX_EPISODES_PER_PODCAST), so it never needs to parse
@@ -73,7 +74,9 @@ export const truncateFeedItems = (xml, maxItems = DEFAULT_MAX_ITEMS) => {
 
 export const fetchPodcastFeed = async (url, { maxItems = DEFAULT_MAX_ITEMS } = {}) => {
   try {
-    const response = await fetch(url);
+    // Without an explicit UA, Android sends "okhttp/…" and hosts like
+    // Buzzsprout (Cloudflare) reject the fetch with a 403 bot challenge.
+    const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
     if (!response.ok) {
         throw new Error(`Failed to fetch RSS: ${response.status}`);
     }

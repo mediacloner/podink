@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
-    View, Text, TouchableOpacity,
-    StyleSheet, ScrollView, Switch,
+    View, Text, TouchableOpacity, TextInput,
+    StyleSheet, ScrollView, Switch, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -11,6 +11,11 @@ import { SHERPA_MODELS, ensureSherpaModel, isSherpaModelDownloaded, deleteSherpa
 import { resetService } from '../services/whisperService';
 import { ASK_DELETE_ON_FINISH_KEY } from '../services/playbackService';
 import { AUTO_DELETE_FINISHED_KEY } from '../services/episodeService';
+import {
+    DICTIONARY_SOURCE, deleteDictionary, getCachedRemoteDictionaries, getGithubToken, getStoredGithubToken,
+    getInstalledDictionaries, hasBuiltInToken, installDictionary, isInstalling, listRemoteDictionaries, setGithubToken,
+} from '../services/dictionaryService';
+import { onLibraryChange } from '../services/libraryEvents';
 import { showAlert } from '../components/AppAlert';
 import { useTheme, useStyles, withAlpha, type, THEMES, THEME_OPTIONS } from '../theme';
 
@@ -50,6 +55,10 @@ const RATES = ['0.7', '0.85', '1', '1.15', '1.3', '1.5'];
 const FONT_SIZE_MIN = 18;
 const FONT_SIZE_MAX = 30;
 
+const formatMB = (bytes) => (bytes > 0 ? `${(bytes / 1e6).toFixed(bytes >= 10e6 ? 0 : 1)} MB` : '');
+// "ghp_abcdefgh…wxyz" — enough to recognise a token, never the whole thing.
+const maskToken = (t) => (t.length <= 10 ? '••••' : `${t.slice(0, 7)}…${t.slice(-4)}`);
+
 const SettingsScreen = () => {
     const { colors, themeName, setTheme } = useTheme();
     const styles = useStyles(makeStyles);
@@ -70,6 +79,15 @@ const SettingsScreen = () => {
     const [askDeleteOnFinish, setAskDeleteOnFinish] = useState(true);
     // Same shape; episodeService's sweep reads it on launch / resume.
     const [autoDeleteFinished, setAutoDeleteFinished] = useState(true);
+
+    // Offline dictionaries (private GitHub repository, see dictionaryService)
+    const [ghToken, setGhToken] = useState('');
+    const [tokenDraft, setTokenDraft] = useState('');
+    const [tokenEditing, setTokenEditing] = useState(false);
+    const [remoteDicts, setRemoteDicts] = useState([]);
+    const [installedDicts, setInstalledDicts] = useState([]);
+    const [dictBusy, setDictBusy] = useState({});          // id → { phase, percent }
+    const [dictListLoading, setDictListLoading] = useState(false);
 
     useEffect(() => { loadPreference(); loadLearningPrefs(); }, []);
     useEffect(() => { checkModelStatus(selectedModel); }, [selectedModel]);
@@ -195,6 +213,103 @@ const SettingsScreen = () => {
                 },
             ],
         );
+    };
+
+    // ── Dictionaries ─────────────────────────────────────────────────────────
+    const refreshInstalledDicts = () => {
+        try { setInstalledDicts(getInstalledDictionaries()); } catch (_) { setInstalledDicts([]); }
+    };
+
+    // ghToken is the token in use (typed here, else built into the app);
+    // storedToken is only what was typed here, so the row can say which.
+    const [storedToken, setStoredToken] = useState('');
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const [effective, stored, cached] = await Promise.all([
+                getGithubToken(), getStoredGithubToken(), getCachedRemoteDictionaries(),
+            ]);
+            if (cancelled) return;
+            setGhToken(effective);
+            setStoredToken(stored);
+            setRemoteDicts(cached);
+            refreshInstalledDicts();
+            // A build with the token baked in lists the repository on its own
+            // the first time, so the section is ready to use without a tap.
+            if (effective && !cached.length) refreshDictList(effective);
+        })();
+        const off = onLibraryChange((p) => { if (p?.type === 'dictionaries-changed') refreshInstalledDicts(); });
+        return () => { cancelled = true; off(); };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const describeDictError = (e) => {
+        if (e?.code === 'AUTH') return e.message;
+        if (e?.code === 'OFFLINE') return "Can't reach GitHub. Check your connection.";
+        if (e?.code === 'NO_SPACE') return e.message;
+        return e?.message || 'Something went wrong.';
+    };
+
+    const refreshDictList = async (token = ghToken) => {
+        if (!token) { setTokenEditing(true); return; }
+        setDictListLoading(true);
+        try {
+            setRemoteDicts(await listRemoteDictionaries(token));
+        } catch (e) {
+            showAlert('Dictionaries', describeDictError(e));
+        } finally {
+            setDictListLoading(false);
+        }
+    };
+
+    const saveToken = async () => {
+        const t = tokenDraft.trim();
+        await setGithubToken(t);
+        setStoredToken(t);
+        const effective = await getGithubToken();
+        setGhToken(effective);
+        setTokenDraft('');
+        setTokenEditing(false);
+        if (effective) refreshDictList(effective);
+    };
+
+    const removeToken = () => {
+        const revert = hasBuiltInToken() ? ' The token built into this app applies again.' : ' Installed dictionaries stay.';
+        showAlert('Remove token', `Forget the GitHub token typed on this device?${revert}`, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+                text: 'Remove', style: 'destructive', onPress: async () => {
+                    await setGithubToken('');
+                    setStoredToken('');
+                    setGhToken(await getGithubToken());
+                },
+            },
+        ]);
+    };
+
+    const downloadDict = async (remote) => {
+        if (!ghToken) { setTokenEditing(true); return; }
+        if (isInstalling(remote.id)) return;
+        setDictBusy(b => ({ ...b, [remote.id]: { phase: 'download', percent: 0 } }));
+        try {
+            await installDictionary(remote, ghToken, (p) => setDictBusy(b => ({ ...b, [remote.id]: p })));
+        } catch (e) {
+            showAlert('Download failed', `${remote.shortName}: ${describeDictError(e)}`);
+        } finally {
+            setDictBusy(b => { const { [remote.id]: _gone, ...rest } = b; return rest; });
+            refreshInstalledDicts();
+        }
+    };
+
+    const downloadAllDicts = async () => {
+        const missing = remoteDicts.filter(r => !installedDicts.some(d => d.id === r.id));
+        for (const r of missing) await downloadDict(r); // one at a time: indexing is CPU-bound
+    };
+
+    const removeDict = (d) => {
+        showAlert('Remove dictionary', `Delete ${d.shortName} from this device (${formatMB(d.size)})? It can be downloaded again.`, [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Delete', style: 'destructive', onPress: async () => { await deleteDictionary(d.id); refreshInstalledDicts(); } },
+        ]);
     };
 
     const handleDelete = () => {
@@ -372,6 +487,165 @@ const SettingsScreen = () => {
                         })}
                     </View>
                 </View>
+            </View>
+
+            {/* Section: Dictionaries */}
+            <Text style={styles.sectionLabel}>DICTIONARIES</Text>
+
+            <View style={styles.card}>
+                <View style={[styles.settingBlock, styles.rowBorder]}>
+                    <View style={styles.settingHead}>
+                        <Icon name="key" size={15} color={colors.accent} />
+                        <Text style={styles.settingTitle}>GitHub token</Text>
+                    </View>
+                    <Text style={[styles.settingHint, styles.indent]}>
+                        The dictionaries are the MDict files in your private repository {DICTIONARY_SOURCE.owner}/{DICTIONARY_SOURCE.repo}. A personal access token with read access to its contents is needed to list and download them
+                        {hasBuiltInToken()
+                            ? ' — one is built into this app (.env.local at build time); a token typed here takes precedence.'
+                            : '; it is stored only on this device. To skip this step on a fresh install, put it in .env.local before building (see .env.example).'}
+                    </Text>
+                    {tokenEditing || !ghToken ? (
+                        <View style={[styles.tokenRow, styles.indent]}>
+                            <TextInput
+                                style={styles.tokenInput}
+                                value={tokenDraft}
+                                onChangeText={setTokenDraft}
+                                placeholder="github_pat_… or ghp_…"
+                                placeholderTextColor={colors.textFaint}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                secureTextEntry
+                                accessibilityLabel="GitHub personal access token"
+                            />
+                            <TouchableOpacity
+                                style={[styles.smallBtn, !tokenDraft.trim() && styles.smallBtnDisabled]}
+                                onPress={saveToken}
+                                disabled={!tokenDraft.trim()}
+                                accessibilityRole="button"
+                                accessibilityLabel="Save token"
+                            >
+                                <Text style={styles.smallBtnText}>Save</Text>
+                            </TouchableOpacity>
+                            {!!ghToken && (
+                                <TouchableOpacity style={styles.smallBtnGhost} onPress={() => { setTokenEditing(false); setTokenDraft(''); }} accessibilityRole="button">
+                                    <Text style={styles.smallBtnGhostText}>Cancel</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    ) : (
+                        <View style={[styles.tokenRow, styles.indent]}>
+                            <Icon name="check-circle" size={14} color={colors.success} />
+                            <Text style={styles.tokenSaved}>
+                                {maskToken(ghToken)}{!storedToken && hasBuiltInToken() ? ' · built in' : ''}
+                            </Text>
+                            <TouchableOpacity style={styles.smallBtnGhost} onPress={() => setTokenEditing(true)} accessibilityRole="button">
+                                <Text style={styles.smallBtnGhostText}>Change</Text>
+                            </TouchableOpacity>
+                            {!!storedToken && (
+                                <TouchableOpacity style={styles.smallBtnGhost} onPress={removeToken} accessibilityRole="button">
+                                    <Text style={[styles.smallBtnGhostText, { color: colors.danger }]}>Remove</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    )}
+                </View>
+
+                {(() => {
+                    // Remote list merged with what is on disk, in picker order.
+                    const byId = new Map();
+                    remoteDicts.forEach(r => byId.set(r.id, { ...r }));
+                    installedDicts.forEach(d => byId.set(d.id, { ...(byId.get(d.id) || {}), ...d, installed: true }));
+                    const rows = [...byId.values()].sort((a, b) => ((a.order ?? 99) - (b.order ?? 99)) || String(a.name).localeCompare(String(b.name)));
+                    if (!rows.length) {
+                        return (
+                            <View style={styles.settingBlock}>
+                                <Text style={[styles.settingHint, styles.indent]}>
+                                    {ghToken ? 'Tap “Check for dictionaries” to list the files in the repository.' : 'Save a token, then the list of dictionaries appears here.'}
+                                </Text>
+                            </View>
+                        );
+                    }
+                    return rows.map((d, idx) => {
+                        const busy = dictBusy[d.id];
+                        return (
+                            <View key={d.id} style={[styles.dictRow, idx < rows.length - 1 && styles.rowBorder]}>
+                                <Icon name="book-open" size={15} color={d.installed ? colors.accent : colors.textFaint} />
+                                <View style={styles.dictInfo}>
+                                    <Text style={[styles.dictName, d.installed && styles.dictNameOn]}>{d.shortName}</Text>
+                                    <Text style={styles.dictSub} numberOfLines={1}>
+                                        {d.name}{d.size ? ` · ${formatMB(d.size)}` : ''}{d.installed && d.entries ? ` · ${d.entries.toLocaleString()} entries` : ''}
+                                    </Text>
+                                    {!!busy && (
+                                        <View style={styles.miniProgressRow}>
+                                            <View style={styles.progressTrack}>
+                                                <View style={[styles.progressFill, { width: `${busy.percent ?? 0}%` }]} />
+                                            </View>
+                                            <Text style={styles.miniProgressLabel}>
+                                                {busy.phase === 'index' ? 'Indexing' : 'Downloading'} {busy.percent ?? 0}%
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
+                                {busy ? (
+                                    <ActivityIndicator size="small" color={colors.accent} />
+                                ) : d.installed ? (
+                                    <TouchableOpacity
+                                        style={styles.dictIconBtn}
+                                        onPress={() => removeDict(d)}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`Delete ${d.shortName}`}
+                                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    >
+                                        <Icon name="trash-2" size={16} color={colors.danger} />
+                                    </TouchableOpacity>
+                                ) : (
+                                    <TouchableOpacity
+                                        style={[styles.dictIconBtn, styles.dictIconBtnAccent]}
+                                        onPress={() => downloadDict(d)}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`Download ${d.shortName}`}
+                                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    >
+                                        <Icon name="arrow-down-circle" size={18} color={colors.accent} />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        );
+                    });
+                })()}
+            </View>
+
+            <View style={styles.dictActions}>
+                <TouchableOpacity
+                    style={[styles.dictActionBtn, (!ghToken || dictListLoading) && styles.dictActionBtnDisabled]}
+                    onPress={() => refreshDictList()}
+                    disabled={dictListLoading}
+                    accessibilityRole="button"
+                    accessibilityLabel="Check the repository for dictionaries"
+                >
+                    {dictListLoading
+                        ? <ActivityIndicator size="small" color={colors.accent} />
+                        : <Icon name="refresh-cw" size={14} color={colors.accent} />}
+                    <Text style={styles.dictActionText}>Check for dictionaries</Text>
+                </TouchableOpacity>
+                {(() => {
+                    const missing = remoteDicts.filter(r => !installedDicts.some(d => d.id === r.id));
+                    if (!missing.length || !ghToken) return null;
+                    const total = missing.reduce((s, r) => s + (r.size || 0), 0);
+                    const anyBusy = Object.keys(dictBusy).length > 0;
+                    return (
+                        <TouchableOpacity
+                            style={[styles.dictActionBtn, anyBusy && styles.dictActionBtnDisabled]}
+                            onPress={downloadAllDicts}
+                            disabled={anyBusy}
+                            accessibilityRole="button"
+                            accessibilityLabel="Download all missing dictionaries"
+                        >
+                            <Icon name="download-cloud" size={14} color={colors.accent} />
+                            <Text style={styles.dictActionText}>Download all · {missing.length} · {formatMB(total)}</Text>
+                        </TouchableOpacity>
+                    );
+                })()}
             </View>
 
             {/* Section: Storage */}
@@ -838,6 +1112,77 @@ const makeStyles = (colors) => StyleSheet.create({
         marginTop: 10,
         lineHeight: 18,
     },
+
+    /* Dictionaries */
+    tokenRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' },
+    tokenInput: {
+        flex: 1,
+        minWidth: 140,
+        height: 40,
+        paddingHorizontal: 12,
+        borderRadius: 10,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 0.5,
+        borderColor: colors.hairline,
+        color: colors.textPrimary,
+        fontSize: 14,
+    },
+    tokenSaved: { color: colors.textSecondary, fontSize: 13, fontWeight: '600', marginRight: 'auto' },
+    smallBtn: {
+        paddingHorizontal: 14,
+        height: 40,
+        justifyContent: 'center',
+        borderRadius: 10,
+        backgroundColor: colors.accent,
+    },
+    smallBtnDisabled: { opacity: 0.45 },
+    smallBtnText: { color: colors.onAccent, fontSize: 14, fontWeight: '700' },
+    smallBtnGhost: {
+        paddingHorizontal: 12,
+        height: 34,
+        justifyContent: 'center',
+        borderRadius: 10,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 0.5,
+        borderColor: colors.hairline,
+    },
+    smallBtnGhostText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+    dictRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+    },
+    dictInfo: { flex: 1 },
+    dictName: { ...type.title, color: colors.textMuted },
+    dictNameOn: { color: colors.textPrimary },
+    dictSub: { fontSize: 12, color: colors.textFaint, lineHeight: 17 },
+    miniProgressRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6 },
+    miniProgressLabel: { fontSize: 11, fontWeight: '700', color: colors.accent, width: 108 },
+    dictIconBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: withAlpha(colors.danger, 0.08),
+    },
+    dictIconBtnAccent: { backgroundColor: withAlpha(colors.accent, 0.10) },
+    dictActions: { flexDirection: 'row', gap: 10, marginHorizontal: 16, marginTop: 10, flexWrap: 'wrap' },
+    dictActionBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        paddingVertical: 11,
+        paddingHorizontal: 14,
+        borderRadius: 12,
+        backgroundColor: withAlpha(colors.accent, 0.08),
+        borderWidth: 0.5,
+        borderColor: withAlpha(colors.accent, 0.2),
+    },
+    dictActionBtnDisabled: { opacity: 0.5 },
+    dictActionText: { color: colors.accent, fontSize: 14, fontWeight: '600' },
 
     logBtn: {
         flexDirection: 'row',

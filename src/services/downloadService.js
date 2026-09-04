@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { File, Paths } from 'expo-file-system';
 import { NativeModules } from 'react-native';
+import { USER_AGENT } from '../api/userAgent';
 
 // ─── Sherpa-ONNX model registry ──────────────────────────────────────────────
 
@@ -97,7 +98,9 @@ export const downloadAudioFile = async (url, filename, onProgress) => {
         const download = FileSystem.createDownloadResumable(
             url,
             tmpFile.uri,
-            {},
+            // Same Buzzsprout/Cloudflare constraint as fetchPodcastFeed: the
+            // default okhttp UA gets a 403 on the enclosure URL.
+            { headers: { 'User-Agent': USER_AGENT } },
             ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
                 if (onProgress && totalBytesExpectedToWrite > 0) {
                     onProgress((totalBytesWritten / totalBytesExpectedToWrite) * 100);

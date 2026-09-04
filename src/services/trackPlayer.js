@@ -9,6 +9,7 @@ import TrackPlayer, {
 } from 'react-native-track-player';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { persistProgress } from './playbackService';
+import { USER_AGENT } from '../api/userAgent';
 
 export const setupPlayer = async () => {
     try {
@@ -169,6 +170,11 @@ export const loadEpisodeTrack = async (episode, autoPlay = true) => {
         artist:  episode.podcast_title,
         artwork: episode.image_url || undefined,
     };
+    // Streaming hits the same Buzzsprout/Cloudflare 403 on the default okhttp
+    // UA as the feed fetch and downloads; local file:// tracks need no headers.
+    if (/^https?:/i.test(url || '')) {
+        track.headers = { 'User-Agent': USER_AGENT };
+    }
 
     _notifyUserPlay();
     await TrackPlayer.reset();

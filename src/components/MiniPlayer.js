@@ -10,6 +10,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 import { getEpisodeById } from '../database/queries';
 import { persistProgress } from '../services/playbackService';
 import { notifyUserStop } from '../services/trackPlayer';
+import { artworkSource } from '../api/userAgent';
 import { radii, withAlpha, useStyles, useTheme } from '../theme';
 
 // ─── MiniPlayer ───────────────────────────────────────────────────────────────
@@ -164,7 +165,7 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
 
                 {/* Artwork */}
                 {artworkUri ? (
-                    <Image source={{ uri: artworkUri }} style={styles.artwork} />
+                    <Image source={artworkSource(artworkUri)} style={styles.artwork} />
                 ) : (
                     <View style={[styles.artwork, styles.artworkFallback]}>
                         <Icon name="headphones" size={14} color={withAlpha(colors.textPrimary, 0.4)} />

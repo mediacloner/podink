@@ -7,6 +7,7 @@ import Animated, {
 import Pill from './Pill';
 import { type, useStyles, useTheme } from '../theme';
 import { onTranscriptProgress, getLastProgress } from '../services/whisperService';
+import { artworkSource } from '../api/userAgent';
 
 // "1h 23m" / "45 min" / "<1 min". Whole minutes throughout, so 1h 59m 40s
 // reads "2h" rather than "1h 60m".
@@ -114,7 +115,7 @@ const EpisodeItem = ({
             >
                 {showArtwork && (
                     episode.image_url ? (
-                        <Image source={{ uri: episode.image_url }} style={styles.artwork} />
+                        <Image source={artworkSource(episode.image_url)} style={styles.artwork} />
                     ) : (
                         <View style={[styles.artwork, styles.artworkPlaceholder]}>
                             <Icon name="headphones" size={18} color={colors.textFaint} />
