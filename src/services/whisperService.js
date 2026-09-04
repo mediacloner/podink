@@ -62,6 +62,23 @@ const WINDOW_MS = 29 * 1000;
 const JOB_MARKER_PREFIX = '@transcript_job_';
 const NOTIF_THROTTLE_MS = 10 * 1000; // at most one notification update per 10s
 
+// ─── Path helpers ────────────────────────────────────────────────────────────
+
+/**
+ * Filesystem path for a `file://` URI, for native code that opens the file
+ * with java.io.File / MediaExtractor. expo-file-system URIs are
+ * percent-encoded, so an imported chapter like `001-Emily Henry.m4b` is
+ * stored as `.../001-Emily%20Henry.m4b`; stripping the scheme alone hands
+ * the decoder a path that does not exist ("Failed to instantiate extractor").
+ * Podcast downloads (`episode_<id>.mp3`) never contain encoded characters,
+ * so decoding is a no-op for them. A malformed escape falls back to the raw
+ * path rather than throwing.
+ */
+export const fileUriToPath = (uri) => {
+    const raw = String(uri || '').replace(/^file:\/\//, '');
+    try { return decodeURIComponent(raw); } catch (_) { return raw; }
+};
+
 // ─── Audio pre-flight check ──────────────────────────────────────────────────
 
 export const validateAudio = async (filePath) => {
@@ -404,7 +421,7 @@ const _process = async (entry) => {
         }
         await AsyncStorage.setItem(markerKey, JSON.stringify({ modelKey: _ctxModel })).catch(() => {});
 
-        const nativePath = entry.audioFilePath.replace('file://', '');
+        const nativePath = fileUriToPath(entry.audioFilePath);
         const durationMs = (entry.durationSec || 0) * 1000;
 
         _startFg('Transcribing podcasts', 'Processing audio\u2026', entry.durationSec || 0);
