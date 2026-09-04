@@ -17,7 +17,7 @@ import {
 } from '../../services/dictionaryService';
 import { FUNCTION_WORDS, firstDefinitionText, flattenEntry } from '../../services/dictionaryHtml';
 import {
-    WIKIPEDIA_HEADERS, fetchListEntries, fetchWikipediaSummary, isListPage, lookupWikipedia,
+    WIKIPEDIA_HEADERS, fetchListEntries, fetchWikipediaSummary, isListPage, largeImage, lookupWikipedia,
     nameCandidates, wikipediaEntryHtml,
 } from '../../api/wikipedia';
 import { fetchTranslation, fetchWordInfo, langLabel, translateErrorMessage } from './translate';
@@ -25,6 +25,7 @@ import { fetchDefinitions } from './dictionary';
 import { askAssistantAboutWord, copyText, shareText } from './share';
 import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
 import DictionaryEntry from './DictionaryEntry';
+import ImageViewer from './ImageViewer';
 
 // In-memory lookup cache, keyed by language + normalized word.
 const _cache = new Map();
@@ -140,6 +141,8 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const [wikiPick, setWikiPick] = useState(null);
     const [wikiPicked, setWikiPicked] = useState({ status: 'idle' });
     const [wikiExpanded, setWikiExpanded] = useState(false);
+    // The Wikipedia picture opened full screen: null or the ImageViewer's `image`.
+    const [zoomImage, setZoomImage] = useState(null);
 
     const scrollRef = useRef(null);
     const bodyRef = useRef(null);
@@ -243,6 +246,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         setProbe(null);
         setWikiPick(null);
         setWikiExpanded(false);
+        setZoomImage(null);
     }, [visible, word, data]);
 
     // ── Offline lookup ───────────────────────────────────────────────────────
@@ -579,6 +583,19 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const openWikipedia = useCallback(() => {
         if (wikiPage?.url) Linking.openURL(wikiPage.url).catch(() => {});
     }, [wikiPage]);
+    const openImage = useCallback(() => {
+        const large = largeImage(wikiPage);
+        if (!large) return;
+        setZoomImage({
+            uri: large.uri,
+            thumbUri: wikiPage.thumbnail?.uri || null,
+            width: large.width,
+            height: large.height,
+            caption: wikiPage.title,
+            headers: WIKIPEDIA_HEADERS,
+        });
+    }, [wikiPage]);
+    const closeImage = useCallback(() => setZoomImage(null), []);
     // Where the section sits in the card body, so picking an entry scrolls
     // the card back up to the article that replaces the list.
     const wikiViewRef = useRef(null);
@@ -858,11 +875,18 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                             </Text>
                         </View>
                         {!!wikiPage.thumbnail && (
-                            <Image
-                                source={{ uri: wikiPage.thumbnail.uri, headers: WIKIPEDIA_HEADERS }}
-                                style={st.wikiThumb}
-                                accessibilityIgnoresInvertColors
-                            />
+                            <TouchableOpacity
+                                onPress={openImage}
+                                activeOpacity={0.8}
+                                accessibilityRole='imagebutton'
+                                accessibilityLabel='Enlarge picture'
+                            >
+                                <Image
+                                    source={{ uri: wikiPage.thumbnail.uri, headers: WIKIPEDIA_HEADERS }}
+                                    style={st.wikiThumb}
+                                    accessibilityIgnoresInvertColors
+                                />
+                            </TouchableOpacity>
                         )}
                     </View>
                     <DictionaryEntry flats={wikiFlatList} onLink={onWikiLink} />
@@ -881,6 +905,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     ) : null;
 
     return (
+        <>
         <SheetModal visible={visible} onClose={onClose} header={header} footer={footer} maxHeight='88%' scrollRef={scrollRef}>
             <View ref={bodyRef} collapsable={false}>
                 {pickerOpen ? picker : (
@@ -949,6 +974,9 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                 )}
             </View>
         </SheetModal>
+        {/* Its own Modal, shown after the card's, so it lands on top of it. */}
+        <ImageViewer image={zoomImage} onClose={closeImage} />
+        </>
     );
 };
 
