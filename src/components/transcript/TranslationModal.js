@@ -9,7 +9,32 @@ import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
 // on the same paragraph never re-hit the network within a session.
 const _cache = new Map();
 
-const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) => {
+// An English paragraph where every word opens the word card. Split on
+// whitespace — the same cut the transcript makes — so the tapped token's
+// index maps straight onto the chunk's words. The tap lands on a plain
+// nested Text (RN routes presses only to real Text spans); the token's
+// leading space is inside the span so the gap before a word counts too.
+const TappableParagraph = ({ text, style, onWordPress, paragraphOffset = 0, translation = '' }) => {
+    const tokens = useMemo(() => (text || '').split(/\s+/).filter(Boolean), [text]);
+    if (!onWordPress) return <Text style={style}>{text}</Text>;
+    return (
+        <Text style={style}>
+            {tokens.map((token, index) => (
+                <Text
+                    key={index}
+                    suppressHighlighting
+                    onPress={() => onWordPress({ token, index, tokens, paragraphOffset, translation })}
+                >
+                    {index > 0 ? ' ' : ''}{token}
+                </Text>
+            ))}
+        </Text>
+    );
+};
+
+// `onWordPress({ token, index, tokens, paragraphOffset, translation })`,
+// optional, makes the English words tappable (see TappableParagraph).
+const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose, onWordPress }) => {
     const { colors } = useTheme();
     const ms = useStyles(makeStyles);
     const [translationParts, setTranslationParts] = useState([]);
@@ -127,14 +152,25 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose }) 
             {/* Context pairs — English + translation side by side */}
             {expanded && hasContext && translatedCtx.map((translated, i) => (
                 <View key={i} style={ms.contextBlock}>
-                    <Text style={ms.contextEnglish}>{englishCtx[i] ?? ''}</Text>
+                    <TappableParagraph
+                        text={englishCtx[i] ?? ''}
+                        style={ms.contextEnglish}
+                        onWordPress={onWordPress}
+                        paragraphOffset={englishCtx.length - i}
+                        translation={translated}
+                    />
                     <Text style={ms.contextTranslated}>{translated}</Text>
                     <View style={ms.contextDivider} />
                 </View>
             ))}
 
-            {/* Current paragraph */}
-            <Text style={ms.originalText}>{text}</Text>
+            {/* Current paragraph — tap a word to look it up */}
+            <TappableParagraph
+                text={text}
+                style={ms.originalText}
+                onWordPress={onWordPress}
+                translation={lastTranslation}
+            />
             <View style={ms.divider} />
             {loading ? <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} />
             : error ? (
@@ -173,7 +209,8 @@ const makeStyles = (colors) => StyleSheet.create({
     contextTranslated: { color: colors.textSecondary, fontSize: 15, lineHeight: 22, marginBottom: 12 },
     contextDivider: { height: 0.5, backgroundColor: colors.hairlineFaint, marginBottom: 16 },
     // Current paragraph
-    originalText: { color: colors.textMuted, fontSize: 16, lineHeight: 24, marginBottom: 16 },
+    // Larger than before and a step up from muted: this is the text to tap.
+    originalText: { color: colors.textSecondary, fontSize: 18, lineHeight: 27, marginBottom: 16 },
     divider: { height: 0.5, backgroundColor: colors.hairline, marginBottom: 16 },
     translatedText: { color: colors.textPrimary, fontSize: 19, lineHeight: 28, fontWeight: '600', marginBottom: 12, letterSpacing: -0.2 },
     linkRow: { flexDirection: 'row', alignItems: 'center', gap: 18, marginBottom: 20 },

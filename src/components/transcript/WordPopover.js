@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
 import { createAudioPlayer } from 'expo-audio';
@@ -15,7 +15,8 @@ import {
     getInstalledDictionaries, getSelectedDictionaryId, setSelectedDictionaryId,
     lookupWord, probeDictionaries,
 } from '../../services/dictionaryService';
-import { firstDefinitionText } from '../../services/dictionaryHtml';
+import { FUNCTION_WORDS, firstDefinitionText, flattenEntry } from '../../services/dictionaryHtml';
+import { WIKIPEDIA_HEADERS, lookupWikipedia, nameCandidates, wikipediaEntryHtml } from '../../api/wikipedia';
 import { fetchTranslation, fetchWordInfo, langLabel, translateErrorMessage } from './translate';
 import { fetchDefinitions } from './dictionary';
 import { askAssistantAboutWord, copyText, shareText } from './share';
@@ -27,6 +28,20 @@ const _cache = new Map();
 // The sentence translation is cached separately: the same word turns up in
 // different sentences, and each one needs its own contextual rendering.
 const _ctxCache = new Map();
+// Wikipedia answers, keyed by the candidate titles; a miss is cached as null.
+const _wikiCache = new Map();
+
+// The article's intro flattened like a dictionary record. The card draws the
+// title line itself (with the thumbnail), so no paragraph gets the headword
+// treatment that the first paragraph of a dictionary entry receives.
+const wikiFlat = (page) => {
+    const flat = flattenEntry(wikipediaEntryHtml(page));
+    flat.paragraphs.forEach(p => { p.headword = false; });
+    return flat;
+};
+
+const IS_CAPITALISED = /^\p{Lu}/u;
+const CLITIC = /['’](?:s|re|ll|ve|d|m)$/;
 
 const IS_WORD_CHAR = /[\p{L}\p{N}]/u;
 
@@ -64,7 +79,9 @@ export const normalizeWord = (raw) =>
 // Bottom-sheet word card: a quick translation, the sentence in context, and
 // the entry from one of the offline MDict dictionaries (penReader set), with
 // a dictionary selector in the footer. `data` is null (hidden) or
-// { word, prevWords, nextWords, startMs, contextText }.
+// { word, prevWords, nextWords, startMs, contextText, contextTranslation? } —
+// the last one is the sentence's translation when the caller already has it
+// (a word tapped inside the translation card), shown without a request.
 //
 // The dictionary lookup is local and never waits for the network: Google's
 // translation is supplementary and its failures stay inside its own block.
@@ -92,6 +109,8 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     // A different headword to show: a cross-reference tap, or "the word
     // itself" after the sentence resolved to a phrasal verb or an idiom.
     const [override, setOverride] = useState(null);
+    // Wikipedia: idle | loading | ready { page, flats } | none | error { kind }
+    const [wiki, setWiki] = useState({ status: 'idle' });
 
     const scrollRef = useRef(null);
     const bodyRef = useRef(null);
@@ -100,6 +119,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const word = data?.word ?? '';
     // The chunk the word sits in — already carried for the vocabulary row.
     const sentence = (data?.contextText ?? '').trim();
+    const givenCtxTranslation = (data?.contextTranslation ?? '').trim();
     const normalized = normalizeWord(word);
     const shownWord = override?.word || word;
 
@@ -274,6 +294,50 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     }, [scrollToHighlight]);
     useEffect(() => { highlightYRef.current = null; }, [dict]);
 
+    // ── Wikipedia (names, places — what the dictionaries leave out) ──────────
+    // A capitalised word inside a clause is taken for a name; one that opens
+    // the clause may be a capitalised common word ("There's"), so it — like
+    // any lower-case word — is only tried once the dictionary has drawn a
+    // blank. Function words and the pronoun "I" never go. As with phrasal
+    // verbs, the capitalised words around the tap are tried together first
+    // ("Los Angeles", "Avidius Cassius"), then the word on its own.
+    const wikiCandidates = useMemo(
+        () => (data ? nameCandidates({ word, prevWords: data.prevWords || [], nextWords: data.nextWords || [] }) : []),
+        [data, word],
+    );
+    const capitalised = IS_CAPITALISED.test(word) && !/^I(?:['’]|$)/.test(word);
+    const dictSettled = dict.status === 'ready' || dict.status === 'missing' || dict.status === 'none';
+    const wikiWanted = visible && !override && !!normalized && dictSettled
+        && !FUNCTION_WORDS.has(normalized.replace(CLITIC, ''))
+        && (capitalised ? ((data?.prevWords || []).length > 0 || dict.status !== 'ready') : dict.status === 'missing');
+    const wikiKey = wikiWanted && wikiCandidates.length ? `en:${wikiCandidates.join('|')}` : '';
+    useEffect(() => {
+        if (!wikiKey) { setWiki({ status: 'idle' }); return; }
+        const cached = _wikiCache.get(wikiKey);
+        if (cached !== undefined) {
+            setWiki(cached ? { status: 'ready', ...cached } : { status: 'none' });
+            return;
+        }
+        let stale = false;
+        const ctrl = new AbortController();
+        setWiki({ status: 'loading' });
+        const t0 = Date.now();
+        lookupWikipedia(wikiCandidates, { lang: 'en', signal: ctrl.signal })
+            .then(page => {
+                if (stale) return;
+                log('DICT', 'Wikipedia', { tried: wikiCandidates, found: page?.title || null, disambiguation: page?.disambiguation || undefined, ms: Date.now() - t0 });
+                const value = page ? { page, flats: [wikiFlat(page)] } : null;
+                _wikiCache.set(wikiKey, value);
+                setWiki(value ? { status: 'ready', ...value } : { status: 'none' });
+            })
+            .catch(e => {
+                if (stale || e?.name === 'AbortError') return;
+                log('DICT', 'Wikipedia lookup failed', { tried: wikiCandidates, error: String(e?.message || e) });
+                setWiki({ status: 'error', kind: e?.kind });
+            });
+        return () => { stale = true; ctrl.abort(); };
+    }, [wikiKey, wikiCandidates]);
+
     // ── Online lookup (translation) ──────────────────────────────────────────
     useEffect(() => {
         if (!visible) return;
@@ -298,6 +362,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         // a failure here leaves the rest of the sheet untouched.
         if (sentence && sentence.toLowerCase() !== word.trim().toLowerCase()) {
             const ctxKey = `${lang}:${sentence}`;
+            if (givenCtxTranslation) _ctxCache.set(ctxKey, givenCtxTranslation);
             const ctxCached = _ctxCache.get(ctxKey);
             if (ctxCached) {
                 setCtxTranslation(ctxCached);
@@ -359,7 +424,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
             stale = true;
             ctrl.abort();
         };
-    }, [visible, word, normalized, sentence, lang, episodeId]);
+    }, [visible, word, normalized, sentence, givenCtxTranslation, lang, episodeId]);
 
     // ── Copy / share / ask ───────────────────────────────────────────────────
     useEffect(() => {
@@ -406,6 +471,10 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                         ? (firstMeaning.pos ? `${firstMeaning.pos}: ${firstDef}` : firstDef)
                         : (firstSense ? `${firstSense.pos}: ${firstSense.terms.join(', ')}` : '');
                 }
+                // A name the dictionaries lack: Wikipedia's one-line description.
+                if (!definition && wiki.status === 'ready' && !wiki.page.disambiguation) {
+                    definition = wiki.page.description ? `${wiki.page.title}: ${wiki.page.description}` : wiki.page.title;
+                }
                 const id = await addVocabWord({
                     word,
                     normalized,
@@ -422,11 +491,16 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
             }
         } catch (_) {}
         setSaving(false);
-    }, [data, saving, saved, savedId, normalized, word, lookup, dict, lang, episodeId, episodeTitle]);
+    }, [data, saving, saved, savedId, normalized, word, lookup, dict, wiki, lang, episodeId, episodeTitle]);
 
     const handleReplay = useCallback(() => {
         onReplay(Math.max(0, (data?.startMs ?? 0) - 1000));
     }, [onReplay, data]);
+
+    const wikiPage = wiki.status === 'ready' ? wiki.page : null;
+    const openWikipedia = useCallback(() => {
+        if (wikiPage?.url) Linking.openURL(wikiPage.url).catch(() => {});
+    }, [wikiPage]);
 
     // ── Render ───────────────────────────────────────────────────────────────
     const current = dicts.find(d => d.id === dictId) || null;
@@ -626,6 +700,62 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         </>
     );
 
+    // Shown under the dictionary entry when there is one, in its place when
+    // there is not. A disambiguation page ("Cassius may refer to…") only
+    // stands in for a missing entry; next to a real one it would be noise.
+    const wikiVisible = wiki.status === 'loading'
+        || (wiki.status === 'error' && dict.status === 'missing')
+        || (!!wikiPage && (!wikiPage.disambiguation || dict.status !== 'ready'));
+    const wikiSection = wikiVisible ? (
+        <>
+            <View style={st.sectionDivider} />
+            <View style={st.dictHead}>
+                <Text style={st.sectionLabel}>Wikipedia</Text>
+                <Text style={st.dictName} numberOfLines={1}>English Wikipedia</Text>
+            </View>
+
+            {wiki.status === 'loading' && <ActivityIndicator color={colors.accent} style={{ marginVertical: 14 }} />}
+
+            {wiki.status === 'error' && (
+                <Text style={st.softError}>
+                    {wiki.kind === 'offline' ? "Can't reach Wikipedia. Check your connection." : 'Wikipedia is not answering right now.'}
+                </Text>
+            )}
+
+            {!!wikiPage && (
+                <>
+                    {wikiPage.title.toLowerCase() !== word.toLowerCase() && (
+                        <View style={st.trailRow}>
+                            <Text style={st.trailText} numberOfLines={2}>
+                                {word}  →  <Text style={st.trailBold}>{wikiPage.title}</Text>
+                            </Text>
+                        </View>
+                    )}
+                    <View style={st.wikiHead}>
+                        <View style={{ flex: 1 }}>
+                            <Text style={st.wikiTitle}>{wikiPage.title}</Text>
+                            <Text style={st.wikiDesc}>
+                                {wikiPage.disambiguation ? 'Several Wikipedia articles share this name' : wikiPage.description}
+                            </Text>
+                        </View>
+                        {!!wikiPage.thumbnail && (
+                            <Image
+                                source={{ uri: wikiPage.thumbnail.uri, headers: WIKIPEDIA_HEADERS }}
+                                style={st.wikiThumb}
+                                accessibilityIgnoresInvertColors
+                            />
+                        )}
+                    </View>
+                    <DictionaryEntry flats={wiki.flats} />
+                    <TouchableOpacity style={st.wikiLink} onPress={openWikipedia} activeOpacity={0.7} accessibilityRole='link'>
+                        <Icon name='external-link' size={13} color={colors.accent} />
+                        <Text style={st.inlineLinkText}>Read on Wikipedia</Text>
+                    </TouchableOpacity>
+                </>
+            )}
+        </>
+    ) : null;
+
     return (
         <SheetModal visible={visible} onClose={onClose} header={header} footer={footer} maxHeight='88%' scrollRef={scrollRef}>
             <View ref={bodyRef} collapsable={false}>
@@ -662,7 +792,9 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                             </>
                         )}
 
-                        {dictionarySection}
+                        {dict.status === 'ready'
+                            ? <>{dictionarySection}{wikiSection}</>
+                            : <>{wikiSection}{dictionarySection}</>}
 
                         {/* Online definitions only stand in while nothing is installed */}
                         {dict.status === 'none' && (lookup?.meanings ?? []).length > 0 && (
@@ -755,6 +887,13 @@ const makeStyles = (colors) => StyleSheet.create({
     phraseChipText: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
     inlineLink: { alignSelf: 'flex-start', marginBottom: 10 },
     inlineLinkText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
+
+    // Wikipedia
+    wikiHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, marginBottom: 8 },
+    wikiTitle: { color: colors.textPrimary, fontSize: 20, lineHeight: 26, fontWeight: '700', letterSpacing: -0.2 },
+    wikiDesc: { color: colors.textSecondary, fontSize: 15, lineHeight: 21, fontStyle: 'italic', marginTop: 3 },
+    wikiThumb: { width: 64, height: 64, borderRadius: 12, backgroundColor: colors.hairlineFaint },
+    wikiLink: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', marginTop: 10, marginBottom: 4 },
 
     // Misses / hints / chips
     missBlock: { gap: 10, marginBottom: 6 },

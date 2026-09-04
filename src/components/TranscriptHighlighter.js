@@ -29,6 +29,33 @@ import { useTheme, useStyles, radii, withAlpha } from '../theme';
 import PositionFeeder from './transcript/PositionFeeder';
 import TranslationModal from './transcript/TranslationModal';
 import WordPopover from './transcript/WordPopover';
+
+// Unicode-aware edge-trim so accented loanwords ('café', 'résumé') keep
+// their letters instead of being clipped to 'caf' / 'r' before lookup.
+const trimWord = (t) => (t || '').trim().replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu, '');
+
+// The words around a tapped one let the dictionary spot a phrasal verb or
+// an idiom ("gave up", "gave it up", "kicked the bucket", "throw the baby
+// out with the bathwater") — see dictionaryLookup. Up to six words each way,
+// within the clause: a phrase doesn't cross a comma. `tokens` are the raw
+// words of the sentence (punctuation still attached), `at` the tapped one.
+const CONTEXT_WORDS = 6;
+const endsClause = (t) => /[.,;:!?…]["”’)]*\s*$/.test(t || '');
+const clauseContext = (tokens, at) => {
+    const prevWords = [];
+    for (let i = at - 1; i >= 0 && prevWords.length < CONTEXT_WORDS; i--) {
+        if (endsClause(tokens[i])) break;
+        prevWords.unshift(trimWord(tokens[i]));
+    }
+    const nextWords = [];
+    for (let i = at + 1; at >= 0 && i < tokens.length && nextWords.length < CONTEXT_WORDS; i++) {
+        if (endsClause(tokens[i - 1])) break;
+        nextWords.push(trimWord(tokens[i]));
+    }
+    return { prevWords, nextWords };
+};
+
+const CLOSED_TRANSLATE = { visible: false, text: '', contextText: '', chunkIndex: null };
 import FollowPill from './transcript/FollowPill';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -763,18 +790,21 @@ const TranscriptHighlighter = forwardRef(({
     }, []);
 
     // ── Translation modal (paragraph long-press) ─────────────────────────────
-    const [translateModal, setTranslateModal] = useState({ visible: false, text: '', contextText: '' });
+    const [translateModal, setTranslateModal] = useState(CLOSED_TRANSLATE);
+    // Read inside the word-card handlers without making it a dependency.
+    const translateModalRef = useRef(translateModal);
+    useEffect(() => { translateModalRef.current = translateModal; }, [translateModal]);
     const onLongPress = useCallback((text, chunkIndex) => {
         const ch = chunksRef.current;
         const prevTexts = [];
         if (chunkIndex >= 2 && ch[chunkIndex - 2]) prevTexts.push(ch[chunkIndex - 2].words.map(w => w.text).join('').trim());
         if (chunkIndex >= 1 && ch[chunkIndex - 1]) prevTexts.push(ch[chunkIndex - 1].words.map(w => w.text).join('').trim());
         const contextText = [...prevTexts, text].join('\n\n');
-        setTranslateModal({ visible: true, text, contextText });
+        setTranslateModal({ visible: true, text, contextText, chunkIndex });
         pauseForLookup();
     }, [pauseForLookup]);
     const closeModal = useCallback(() => {
-        setTranslateModal({ visible: false, text: '', contextText: '' });
+        setTranslateModal(CLOSED_TRANSLATE);
         resumeAfterLookup();
     }, [resumeAfterLookup]);
 
@@ -782,44 +812,55 @@ const TranscriptHighlighter = forwardRef(({
     const [wordPopover, setWordPopover] = useState(null);
     const onWordPress = useCallback((word, chunkIndex) => {
         const ch = chunksRef.current[chunkIndex];
-        // Unicode-aware edge-trim so accented loanwords ('café', 'résumé') keep
-        // their letters instead of being clipped to 'caf' / 'r' before lookup.
-        const trim = (t) => (t || '').trim().replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu, '');
-        const cleaned = trim(word.text);
+        const cleaned = trimWord(word.text);
         if (!cleaned) return;
-        // The words around the tap let the dictionary spot a phrasal verb or
-        // an idiom ("gave up", "gave it up", "kicked the bucket", "throw the
-        // baby out with the bathwater") — see dictionaryLookup. Up to six
-        // words each way, within the clause: a phrase doesn't cross a comma.
-        const CONTEXT_WORDS = 6;
-        const endsClause = (t) => /[.,;:!?…]["”’)]*\s*$/.test(t || '');
         const words = ch ? ch.words : [];
         const at = words.findIndex(w => w.globalIndex === word.globalIndex);
-        const prevWords = [];
-        for (let i = at - 1; i >= 0 && prevWords.length < CONTEXT_WORDS; i--) {
-            if (endsClause(words[i].text)) break;
-            prevWords.unshift(trim(words[i].text));
-        }
-        const nextWords = [];
-        for (let i = at + 1; at >= 0 && i < words.length && nextWords.length < CONTEXT_WORDS; i++) {
-            if (endsClause(words[i - 1].text)) break;
-            nextWords.push(trim(words[i].text));
-        }
         setWordPopover({
             word: cleaned,
-            prevWords,
-            nextWords,
+            ...clauseContext(words.map(w => w.text), at),
             startMs: Math.round(word.startMs),
             contextText: ch ? ch.words.map(w => w.text).join('').trim() : '',
         });
         pauseForLookup();
     }, [pauseForLookup]);
+
+    // A word tapped in the translation card's English text opens the word
+    // card on top of it — a second sheet — so closing the word card lands
+    // back on the sentence. The card's paragraphs are the pressed chunk and
+    // up to two before it; `paragraphOffset` counts back from the pressed
+    // one. The paragraph split on whitespace is exactly how the chunk's words
+    // were cut, so the tapped token's timing is found by position, with a
+    // same-text search as the fallback and the chunk's start as a last resort.
+    const onTranslationWordPress = useCallback(({ token, index, tokens, paragraphOffset = 0, translation }) => {
+        const cleaned = trimWord(token);
+        if (!cleaned) return;
+        const { chunkIndex } = translateModalRef.current;
+        const ch = chunkIndex != null ? chunksRef.current[chunkIndex - paragraphOffset] : null;
+        const words = ch ? ch.words : [];
+        let hit = words[index] && words[index].text.trim() === token ? words[index] : null;
+        if (!hit) {
+            let nth = 0;
+            for (let i = 0; i < index; i++) if (tokens[i] === token) nth++;
+            hit = words.filter(w => w.text.trim() === token)[nth] || null;
+        }
+        setWordPopover({
+            word: cleaned,
+            ...clauseContext(tokens, index),
+            startMs: Math.round(hit ? hit.startMs : (ch?.startMs ?? 0)),
+            contextText: tokens.join(' '),
+            contextTranslation: translation || '',
+        });
+        // Playback is already paused by the translation card underneath.
+    }, []);
     const closeWordPopover = useCallback(() => {
         setWordPopover(null);
-        resumeAfterLookup();
+        // Opened over the translation card: that card still holds the pause.
+        if (!translateModalRef.current.visible) resumeAfterLookup();
     }, [resumeAfterLookup]);
     const onWordReplay = useCallback((ms) => {
         setWordPopover(null);
+        if (translateModalRef.current.visible) setTranslateModal(CLOSED_TRANSLATE);
         // Seek first, then resume: the player commands run in order, so the
         // replay starts at the word instead of leaking a beat of the old spot.
         doSeek(ms);
@@ -978,6 +1019,7 @@ const TranscriptHighlighter = forwardRef(({
                 contextText={translateModal.contextText}
                 lang={translationLang}
                 onClose={closeModal}
+                onWordPress={onTranslationWordPress}
             />
             <WordPopover
                 data={wordPopover}
