@@ -38,6 +38,19 @@ const _wikiCache = new Map();
 
 // How many entries of a list page show before "Show all".
 const WIKI_LIST_PREVIEW = 8;
+// Translations of article intros, keyed by language + title.
+const _wikiTrCache = new Map();
+// The intro is translated whole up to this many characters, then cut at the
+// last sentence end before it — one request, and the translation service's
+// limit is never approached.
+const WIKI_TRANSLATE_MAX = 1200;
+const introForTranslation = (extract) => {
+    const text = (extract || '').trim();
+    if (text.length <= WIKI_TRANSLATE_MAX) return text;
+    const head = text.slice(0, WIKI_TRANSLATE_MAX);
+    const end = Math.max(head.lastIndexOf('. '), head.lastIndexOf('.\n'), head.lastIndexOf('! '), head.lastIndexOf('? '));
+    return end > 200 ? head.slice(0, end + 1) : head;
+};
 
 // Second phase for a disambiguation or surname list: its entries with their
 // real article titles (read from the wikitext), fetched after the page is
@@ -143,6 +156,9 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const [wikiExpanded, setWikiExpanded] = useState(false);
     // The Wikipedia picture opened full screen: null or the ImageViewer's `image`.
     const [zoomImage, setZoomImage] = useState(null);
+    // The shown article's intro in the learner's language:
+    // idle | loading | ready { text } | error { message }
+    const [wikiTr, setWikiTr] = useState({ status: 'idle' });
 
     const scrollRef = useRef(null);
     const bodyRef = useRef(null);
@@ -583,6 +599,33 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const openWikipedia = useCallback(() => {
         if (wikiPage?.url) Linking.openURL(wikiPage.url).catch(() => {});
     }, [wikiPage]);
+
+    // The intro translated below the English — an article's, not a list's
+    // (its entries are names). Supplementary: a failure shows as one line.
+    useEffect(() => {
+        const text = wikiPage && !isListPage(wikiPage) ? introForTranslation(wikiPage.extract) : '';
+        if (!text) { setWikiTr({ status: 'idle' }); return; }
+        const key = `${lang}:${wikiPage.title}`;
+        const cached = _wikiTrCache.get(key);
+        if (cached) { setWikiTr({ status: 'ready', text: cached }); return; }
+        let stale = false;
+        const ctrl = new AbortController();
+        setWikiTr({ status: 'loading' });
+        fetchTranslation(text, lang, ctrl.signal)
+            .then(t => {
+                if (stale) return;
+                const out = (t || '').trim();
+                if (!out) { setWikiTr({ status: 'error', message: 'No translation came back for this text.' }); return; }
+                _wikiTrCache.set(key, out);
+                setWikiTr({ status: 'ready', text: out });
+            })
+            .catch(e => {
+                if (stale || e?.name === 'AbortError') return;
+                setWikiTr({ status: 'error', message: translateErrorMessage(e) });
+            });
+        return () => { stale = true; ctrl.abort(); };
+    }, [wikiPage, lang]);
+
     const openImage = useCallback(() => {
         const large = largeImage(wikiPage);
         if (!large) return;
@@ -890,6 +933,16 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                         )}
                     </View>
                     <DictionaryEntry flats={wikiFlatList} onLink={onWikiLink} />
+                    {wikiTr.status !== 'idle' && (
+                        <View style={st.wikiTr}>
+                            <Text style={st.pos}>{langLabel(lang)}</Text>
+                            {wikiTr.status === 'loading' && <ActivityIndicator color={colors.accent} style={{ marginVertical: 8, alignSelf: 'flex-start' }} />}
+                            {wikiTr.status === 'error' && <Text style={st.softError}>{wikiTr.message}</Text>}
+                            {wikiTr.status === 'ready' && wikiTr.text.split(/\n+/).map((para, i) => (
+                                <Text key={i} style={st.wikiTrText}>{para.trim()}</Text>
+                            ))}
+                        </View>
+                    )}
                     {wikiHiddenEntries > 0 && (
                         <TouchableOpacity style={st.inlineLink} onPress={() => setWikiExpanded(true)} activeOpacity={0.7} accessibilityRole='button'>
                             <Text style={st.inlineLinkText}>Show all {wikiTotal} entries</Text>
@@ -1045,6 +1098,8 @@ const makeStyles = (colors) => StyleSheet.create({
     wikiTitle: { color: colors.textPrimary, fontSize: 20, lineHeight: 26, fontWeight: '700', letterSpacing: -0.2 },
     wikiDesc: { color: colors.textSecondary, fontSize: 15, lineHeight: 21, fontStyle: 'italic', marginTop: 3 },
     wikiThumb: { width: 64, height: 64, borderRadius: 12, backgroundColor: colors.hairlineFaint },
+    wikiTr: { marginTop: 12, paddingLeft: 12, borderLeftWidth: 2, borderLeftColor: withAlpha(colors.accent, 0.35) },
+    wikiTrText: { color: colors.textSecondary, fontSize: 15, lineHeight: 22, marginBottom: 6 },
     wikiLink: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', marginTop: 10, marginBottom: 4 },
 
     // Misses / hints / chips
