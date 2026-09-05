@@ -179,7 +179,7 @@ const SubscribedTimeline = ({ navigation }) => {
         try {
             await transcribeEpisode(episode);
         } catch (e) {
-            reportTranscriptionError(e);
+            reportTranscriptionError(e, episode);
         }
     }, []);
 

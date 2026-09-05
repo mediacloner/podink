@@ -5,6 +5,7 @@ import Animated, {
     FadeInDown, FadeOut, useAnimatedStyle, useSharedValue, withSpring,
 } from 'react-native-reanimated';
 import Pill from './Pill';
+import ShowNotes from './ShowNotes';
 import { type, useStyles, useTheme } from '../theme';
 import { onTranscriptProgress, getLastProgress } from '../services/whisperService';
 import { artworkSource } from '../api/userAgent';
@@ -319,9 +320,7 @@ const EpisodeItem = ({
                     exiting={FadeOut.duration(150)}
                     style={styles.description}
                 >
-                    <Text style={styles.descriptionText}>
-                        {episode.description?.replace(/<[^>]+>/g, '') || 'No description available.'}
-                    </Text>
+                    <ShowNotes html={episode.description} />
                     {expandOnPress && (
                         <Pill
                             variant="blue"
@@ -427,7 +426,6 @@ const makeStyles = (colors) => StyleSheet.create({
 
     /* Description */
     description: { paddingHorizontal: 20, paddingBottom: 16 },
-    descriptionText: { ...type.body, color: colors.textSecondary, lineHeight: 20 },
     playPill: { alignSelf: 'flex-start', marginTop: 12 },
 });
 

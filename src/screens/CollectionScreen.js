@@ -7,6 +7,7 @@ import { showAlert } from '../components/AppAlert';
 import EpisodeItem, { formatDuration } from '../components/EpisodeItem';
 import SwipeableRow, { closeOpenRow } from '../components/SwipeableRow';
 import Pill from '../components/Pill';
+import ShowNotes from '../components/ShowNotes';
 import EmptyState from '../components/EmptyState';
 import { getEpisodesForCollection, getPodcastByFeedUrl } from '../database/queries';
 import { deleteLocalEpisode, reportTranscriptionError, transcribeEpisode } from '../services/episodeService';
@@ -16,6 +17,7 @@ import { useTranscriptionQueue } from '../hooks/useTranscriptionQueue';
 import { onLibraryChange } from '../services/libraryEvents';
 import { artworkSource } from '../api/userAgent';
 import { log } from '../services/logService';
+import { showNotesPlainText } from '../services/showNotes';
 import { type, useStyles, useTheme } from '../theme';
 
 const formatBytes = (n) => {
@@ -161,7 +163,7 @@ const CollectionScreen = ({ navigation, route }) => {
         try {
             await transcribeEpisode(episode);
         } catch (e) {
-            reportTranscriptionError(e);
+            reportTranscriptionError(e, episode);
         }
     }, []);
     const handleCancel = useCallback((episode) => dequeueTranscription(episode.id), []);
@@ -193,7 +195,7 @@ const CollectionScreen = ({ navigation, route }) => {
                     text: 'Transcribe',
                     onPress: () => {
                         log('UI', 'Transcribe all', { feedUrl, chapters: list.length });
-                        for (const ep of list) transcribeEpisode(ep).catch(reportTranscriptionError);
+                        for (const ep of list) transcribeEpisode(ep).catch(e => reportTranscriptionError(e, ep));
                     },
                 },
             ],
@@ -217,7 +219,7 @@ const CollectionScreen = ({ navigation, route }) => {
     // ── Render ────────────────────────────────────────────────────────────
     const totalSec = useMemo(() => episodes.reduce((s, e) => s + (e.duration || 0), 0), [episodes]);
     const finished = useMemo(() => episodes.filter(e => e.is_played).length, [episodes]);
-    const description = (podcast?.description || '').replace(/<[^>]+>/g, '').trim();
+    const description = showNotesPlainText(podcast?.description);
 
     const header = podcast ? (
         <View style={styles.header}>
@@ -250,7 +252,9 @@ const CollectionScreen = ({ navigation, route }) => {
                     accessibilityRole="button"
                     accessibilityLabel={descExpanded ? 'Collapse description' : 'Expand description'}
                 >
-                    <Text style={styles.description} numberOfLines={descExpanded ? undefined : 3}>{description}</Text>
+                    {descExpanded
+                        ? <ShowNotes html={podcast.description} collapsible={false} />
+                        : <Text style={styles.description} numberOfLines={3}>{description}</Text>}
                 </TouchableOpacity>
             )}
 
