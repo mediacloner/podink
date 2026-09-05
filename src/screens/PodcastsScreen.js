@@ -27,6 +27,7 @@ import {
 } from '../services/episodeService';
 import { useTranscriptionQueue } from '../hooks/useTranscriptionQueue';
 import { notifyLibraryChange, onLibraryChange } from '../services/libraryEvents';
+import { showNotesPlainText } from '../services/showNotes';
 import { withAlpha, type, useStyles, useTheme } from '../theme';
 
 const MAX_NEW = 5;
@@ -57,7 +58,7 @@ const PodcastRow = React.memo(({
     const count = podcast.episode_count ?? 0;
     const subtitle = isLocal
         ? [podcast.author, `${count} ${count === 1 ? 'file' : 'files'}`].filter(Boolean).join(' · ')
-        : (podcast.description?.replace(/<[^>]+>/g, '') || '');
+        : showNotesPlainText(podcast.description, 160);
     return (
     <View>
         <SwipeableRow
@@ -425,7 +426,7 @@ const PodcastsScreen = ({ navigation }) => {
             await transcribeEpisode(episode);
             await refreshEpisodesFor(episode.podcast_feed_url);
         } catch (e) {
-            reportTranscriptionError(e);
+            reportTranscriptionError(e, episode);
         }
     }, [handleDownload, refreshEpisodesFor]);
 

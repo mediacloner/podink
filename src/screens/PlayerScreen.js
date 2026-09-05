@@ -302,7 +302,7 @@ const PlayerScreen = ({ route, navigation }) => {
             refetchTranscript();
             getEpisodeById(epId).then(r => { if (r) setEp(r); }).catch(() => {});
         } catch (e) {
-            reportTranscriptionError(e);
+            reportTranscriptionError(e, row);
         } finally {
             syncQueue();
         }

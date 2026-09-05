@@ -77,25 +77,72 @@ export const isLocalEpisode = (episode) =>
  *  waiting, or Settings reset the queue. No alert for these. */
 const QUIET_TRANSCRIPTION_ERRORS = new Set(['Cancelled', 'Already queued', 'Queue reset']);
 
-/** { title, message } for a transcription failure worth telling the user
- *  about, or null for the quiet endings above. */
-export const describeTranscriptionError = (e) => {
+/** The error's own words for the alert's "Reason:" line — the native
+ *  decoder's boilerplate prefix dropped, whitespace folded, cut short. */
+const transcriptionReason = (msg) => String(msg || '')
+    .replace(/^Failed to recognize speech from file:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
+
+/**
+ * { title, message } for a transcription failure worth telling the user
+ * about, or null for the quiet endings above. The message always ends with
+ * the underlying reason: "Could not transcribe" on its own gave nothing to
+ * act on or report — an imported audiobook chapter, a podcast download and
+ * a missing speech model all read the same. `episode` (optional) tailors
+ * the advice: an imported file cannot be "re-downloaded".
+ */
+export const describeTranscriptionError = (e, episode = null) => {
     const msg = e?.message || String(e);
     if (QUIET_TRANSCRIPTION_ERRORS.has(msg)) return null;
+    const reason = transcriptionReason(msg);
+    const local = isLocalEpisode(episode);
+    const what = local ? 'file' : 'episode';
+    const withReason = (text) => (reason ? `${text}\n\nReason: ${reason}` : text);
+
+    if (e?.code === 'MODEL_NOT_DOWNLOADED' || /^MODEL_/.test(e?.code || '') || /speech model|initialize STT/i.test(msg)) {
+        return {
+            title: 'Speech Model Not Ready',
+            message: withReason('The on-device speech model could not be loaded. Open Settings and download the transcription model again, then retry.'),
+        };
+    }
     if (/audio file|unrecognized header/i.test(msg)) {
         return {
             title: 'Invalid Audio File',
-            message: 'This audio file appears to be corrupted or missing. Try deleting and re-downloading the episode.',
+            message: withReason(local
+                ? 'This file could not be read as audio. It may be damaged or not an audio file at all — try importing it again.'
+                : 'This audio file appears to be corrupted or missing. Try deleting and re-downloading the episode.'),
+        };
+    }
+    if (/no audio track|instantiate extractor|extracted no audio|window reader|extract audio|decoder|codec/i.test(msg)) {
+        return {
+            title: 'Audio Could Not Be Decoded',
+            message: withReason(local
+                ? 'Android could not decode this file. Converting it to MP3 or M4B and importing it again usually fixes it.'
+                : 'Android could not decode this episode\'s audio. Try deleting and re-downloading it.'),
+        };
+    }
+    if (/stalled/i.test(msg)) {
+        return {
+            title: 'Transcription Stalled',
+            message: withReason(`The transcription stopped making progress and was cancelled. Try the ${what} again; if it keeps happening, switch to the faster model in Settings.`),
+        };
+    }
+    if (/disk space/i.test(msg)) {
+        return {
+            title: 'Not Enough Storage',
+            message: withReason('Free some space on the device, then retry.'),
         };
     }
     return {
         title: 'Transcription Failed',
-        message: 'Could not transcribe this episode. Make sure the AI model is downloaded in Settings.',
+        message: withReason(`Could not transcribe this ${what}.`),
     };
 };
 
-export const reportTranscriptionError = (e) => {
-    const d = describeTranscriptionError(e);
+export const reportTranscriptionError = (e, episode = null) => {
+    const d = describeTranscriptionError(e, episode);
     if (d) showAlert(d.title, d.message);
 };
 
@@ -148,7 +195,7 @@ export const downloadEpisode = async (episode, { onProgress } = {}) => {
     log('UI', 'Download completed', { id: episode.id });
     notifyLibraryChange({ type: 'download-complete', episodeId: episode.id });
     if (!episode.has_transcript) {
-        transcribeEpisode({ ...episode, local_audio_path: localPath }).catch(reportTranscriptionError);
+        transcribeEpisode({ ...episode, local_audio_path: localPath }).catch(e => reportTranscriptionError(e, episode));
     }
     return localPath;
 };

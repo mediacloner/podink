@@ -271,7 +271,7 @@ const DownloadedTimeline = ({ navigation }) => {
         } catch (e) {
             const errStr = e?.message || String(e);
             log('UI', 'Transcription catch', { id, error: errStr, stack: e?.stack?.slice(0, 300) });
-            reportTranscriptionError(e);
+            reportTranscriptionError(e, episode);
         } finally {
             if (becameActive) {
                 // This job actually ran and is now finishing: optimistically

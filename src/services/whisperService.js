@@ -81,6 +81,23 @@ export const fileUriToPath = (uri) => {
 
 // ─── Audio pre-flight check ──────────────────────────────────────────────────
 
+// Top-level ISO-BMFF box types a file may open with. Nearly every M4A/M4B/MP4
+// starts with 'ftyp', but 'moov'/'mdat'-first files exist and play fine.
+const MP4_BOXES = new Set(['ftyp', 'moov', 'mdat', 'free', 'skip', 'wide', 'pdin', 'moof', 'styp', 'uuid', 'junk']);
+const headerHex = (bytes) => Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+const asciiAt = (bytes, from, len) => String.fromCharCode(...bytes.slice(from, from + len));
+
+/**
+ * Pre-flight for a file about to be transcribed. Catches the two things
+ * that would otherwise cost a model load before failing: a missing / tiny
+ * file, and a download that saved an error page (HTML, JSON) as audio.
+ *
+ * The header sniff knows the common containers; a file that matches none of
+ * them but is clearly binary is *not* rejected — imported audio arrives in
+ * more formats than this list (FLAC, Matroska, AMR, odd MP4 layouts) and
+ * MediaExtractor, which reads it next, is the authority. Its error then
+ * reaches the user through describeTranscriptionError.
+ */
 export const validateAudio = async (filePath) => {
     const uri = filePath.startsWith('file://') ? filePath : `file://${filePath}`;
     const info = await FileSystem.getInfoAsync(uri);
@@ -88,29 +105,36 @@ export const validateAudio = async (filePath) => {
     if (!info.exists) throw new Error('Audio file not found');
     if (info.size < MIN_AUDIO_SIZE) throw new Error(`Audio file too small (${info.size} bytes)`);
 
-    // Read first 12 bytes to check for valid audio header. M4A/MP4 needs >= 8:
-    // bytes 0-3 are the ftyp box size, 4-7 are the 'ftyp' literal.
     const head = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
-        length: 12,
+        length: 16,
         position: 0,
     });
     const bytes = Uint8Array.from(atob(head), c => c.charCodeAt(0));
 
-    const isID3 = bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33;
+    const isID3  = asciiAt(bytes, 0, 3) === 'ID3';
+    // MPEG audio frame sync (MP3, MP2, ADTS AAC): 11 set bits.
     const isMPEG = bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0;
-    const isOGG = bytes[0] === 0x4F && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53;
-    const isRIFF = bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
-    // ISO-BMFF (M4A/MP4/AAC): 'ftyp' (0x66 0x74 0x79 0x70) at offset 4, after the
-    // 4-byte big-endian box size. (The old check tested bytes[3]===0x66, which is
-    // the box-size low byte — never 'f' — so every M4A was wrongly rejected.)
-    const isM4A = bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70;
+    const isOGG  = asciiAt(bytes, 0, 4) === 'OggS';
+    const isRIFF = asciiAt(bytes, 0, 4) === 'RIFF';
+    // ISO-BMFF (M4A/M4B/MP4/AAC): 4-byte big-endian box size, then the box type.
+    const isM4A  = MP4_BOXES.has(asciiAt(bytes, 4, 4));
+    const isFLAC = asciiAt(bytes, 0, 4) === 'fLaC';
+    const isMKV  = bytes[0] === 0x1A && bytes[1] === 0x45 && bytes[2] === 0xDF && bytes[3] === 0xA3; // Matroska / WebM
+    const isAMR  = asciiAt(bytes, 0, 5) === '#!AMR';
+    const known  = isID3 || isMPEG || isOGG || isRIFF || isM4A || isFLAC || isMKV || isAMR;
 
-    if (!isID3 && !isMPEG && !isOGG && !isRIFF && !isM4A) {
-        throw new Error('Invalid audio file (unrecognized header)');
+    if (!known) {
+        const textLike = bytes.every(b => (b >= 0x20 && b < 0x7F) || b === 0x09 || b === 0x0A || b === 0x0D);
+        const blank = bytes.every(b => b === 0);
+        if (textLike || blank) {
+            throw new Error(`Invalid audio file (unrecognized header: ${textLike ? JSON.stringify(asciiAt(bytes, 0, 16)) : headerHex(bytes)})`);
+        }
+        log('SERVICE', 'Audio header unrecognized — deferring to the decoder', { size: info.size, header: headerHex(bytes) });
+        return;
     }
 
-    log('SERVICE', 'Audio validated', { size: info.size, isID3, isMPEG, isOGG, isRIFF, isM4A });
+    log('SERVICE', 'Audio validated', { size: info.size, isID3, isMPEG, isOGG, isRIFF, isM4A, isFLAC, isMKV, isAMR });
 };
 
 // ─── Android foreground service ──────────────────────────────────────────────
@@ -186,7 +210,14 @@ const _initCtx = async (allowDownload = true) => {
     }
 
     log('SYSTEM', 'Loading STT model', { modelKey });
-    const folderPath = await ensureSherpaModel(modelKey);
+    let folderPath;
+    try {
+        folderPath = await ensureSherpaModel(modelKey);
+    } catch (e) {
+        const err = new Error(`Speech model download failed: ${e?.message || String(e)}`);
+        err.code = 'MODEL_DOWNLOAD_FAILED';
+        throw err;
+    }
     const model = SHERPA_MODELS[modelKey];
 
     // numThreads omitted on purpose: native defaults to clamp(cores/2, 2, 6),
@@ -199,7 +230,9 @@ const _initCtx = async (allowDownload = true) => {
     });
 
     if (!result.success) {
-        throw new Error(result.error || 'Failed to initialize STT');
+        const err = new Error(`Speech model failed to load: ${result.error || 'unknown error'}`);
+        err.code = 'MODEL_INIT_FAILED';
+        throw err;
     }
 
     _ctxModel = modelKey;
