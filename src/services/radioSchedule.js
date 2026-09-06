@@ -269,6 +269,27 @@ export const formatClock = (ms) => {
     return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 };
 
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/**
+ * The wall clock at a station's home right now (station screens show it next
+ * to the description: the guide is in the listener's clock, and a breakfast
+ * show can be on at their midnight).
+ *   { clock: '14:35', weekday: 'Saturday', dayShift: -1 | 0 | 1 }
+ * `dayShift` compares the station's calendar day with the listener's: +1 when
+ * it is already tomorrow there, -1 when still yesterday.
+ */
+export const stationLocalTime = (tz, date = new Date()) => {
+    const z = zoneParts(tz, date);
+    const there = Date.UTC(z.y, z.m - 1, z.d);
+    const here = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+    return {
+        clock: `${pad2(z.h)}:${pad2(z.min)}`,
+        weekday: WEEKDAYS[new Date(there).getUTCDay()],
+        dayShift: Math.round((there - here) / 86400000),
+    };
+};
+
 /** "12 min left" / "ends 14:30" helpers for the now card. */
 export const minutesLeft = (programme, nowMs = Date.now()) =>
     programme ? Math.max(0, Math.round((programme.end - nowMs) / 60000)) : 0;

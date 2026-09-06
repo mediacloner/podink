@@ -6,7 +6,7 @@ import { showAlert } from '../components/AppAlert';
 import ProgrammeGuide from '../components/ProgrammeGuide';
 import { getEpisodeById } from '../database/queries';
 import { getStation } from '../services/radioStations';
-import { fetchGuide } from '../services/radioSchedule';
+import { fetchGuide, stationLocalTime } from '../services/radioSchedule';
 import {
     currentProgramme, FOLLOW_DELAY_SEC, isRadioAvailable, startSession, stopSession, useRadioSession,
 } from '../services/radioService';
@@ -55,6 +55,19 @@ const RadioStationScreen = ({ route, navigation }) => {
     // The session's own guide read is fresher when we are the station playing.
     useEffect(() => { if (mine && session.guide) setGuide(session.guide); }, [mine, session?.guide]);
 
+    // The station's local clock: re-render on each minute boundary while in front.
+    const [nowMs, setNowMs] = useState(() => Date.now());
+    useEffect(() => {
+        if (!isFocused) return undefined;
+        let t = null;
+        const arm = () => {
+            t = setTimeout(() => { setNowMs(Date.now()); arm(); }, 60000 - (Date.now() % 60000) + 50);
+        };
+        setNowMs(Date.now());
+        arm();
+        return () => clearTimeout(t);
+    }, [isFocused]);
+
     const openPlayer = useCallback(async (episodeId) => {
         const episode = await getEpisodeById(episodeId);
         if (episode) navigation.navigate('Player', { episode });
@@ -99,6 +112,10 @@ const RadioStationScreen = ({ route, navigation }) => {
 
     const programme = mine ? currentProgramme(session) : (guide?.now || null);
     const canTranscribe = isRadioAvailable();
+    const local = station.tz ? stationLocalTime(station.tz, new Date(nowMs)) : null;
+    const localDay = local
+        ? (local.dayShift > 0 ? `already ${local.weekday}` : local.dayShift < 0 ? `still ${local.weekday}` : local.weekday)
+        : '';
 
     let statusLine = null;
     if (mine) {
@@ -135,6 +152,16 @@ const RadioStationScreen = ({ route, navigation }) => {
                 </View>
             </View>
             {!!station.detail && <Text style={styles.detail}>{station.detail}</Text>}
+            {!!local && (
+                <View style={styles.clockRow} accessibilityLabel={`Local time in ${station.city}: ${local.clock}, ${localDay}`}>
+                    <Icon name="clock" size={14} color={colors.textMuted} />
+                    <Text style={styles.clockText}>
+                        {`Local time in ${station.city}: `}
+                        <Text style={styles.clockValue}>{local.clock}</Text>
+                        {` · ${localDay}`}
+                    </Text>
+                </View>
+            )}
 
             {mine ? (
                 <View style={styles.sessionCard}>
@@ -199,8 +226,8 @@ const RadioStationScreen = ({ route, navigation }) => {
             )}
             {!mine && (
                 <Text style={styles.hint}>
-                    With transcript, the stream is recorded and transcribed on the device as it plays, about
-                    {FOLLOW_DELAY_SEC} seconds behind the air so the words are on screen before you hear them.
+                    With transcript, the stream is recorded and transcribed on the device as it plays,
+                    about {FOLLOW_DELAY_SEC} seconds behind the air so the words are on screen before you hear them.
                     You can rewind, replay a sentence, look words up, and jump back to live at any time.
                 </Text>
             )}
@@ -225,6 +252,9 @@ const makeStyles = (colors) => StyleSheet.create({
     name: { fontSize: 22, fontWeight: '700', letterSpacing: -0.3, color: colors.textPrimary },
     blurb: { ...type.body, fontSize: 14, color: colors.textSecondary, lineHeight: 19, marginTop: 3 },
     detail: { ...type.body, fontSize: 14, lineHeight: 21, color: colors.textMuted, paddingHorizontal: 20, paddingTop: 14 },
+    clockRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 20, paddingTop: 8 },
+    clockText: { ...type.body, fontSize: 14, lineHeight: 20, color: colors.textMuted },
+    clockValue: { ...type.bodyStrong, fontSize: 14, color: colors.textPrimary, fontVariant: ['tabular-nums'] },
     actions: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, paddingTop: 18 },
     btn: {
         flex: 1, minHeight: 48, borderRadius: radii.m,
