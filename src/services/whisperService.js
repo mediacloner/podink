@@ -255,6 +255,29 @@ const _abandonCtx = () => {
 // is retired). Cold-start cost is only paid when the model is already present.
 export const initializeWhisper = () => _getCtx(false).catch(() => {});
 
+// ─── Engine access for other transcribers (live radio) ──────────────────────
+
+/** Load the configured model (downloading it when `allowDownload`). Resolves
+ *  when the engine is ready; rejects with a coded error otherwise. */
+export const ensureEngine = (allowDownload = true) => _getCtx(allowDownload);
+/** The model key the engine currently holds, or null. */
+export const getEngineModelKey = () => _ctxModel;
+/** The user's model choice (falls back to the default lineup entry). */
+export const getConfiguredModelKey = async () => {
+    try {
+        const saved = await AsyncStorage.getItem('@whisper_model');
+        if (saved && SHERPA_MODELS[saved]) return saved;
+    } catch (_) {}
+    return DEFAULT_MODEL_KEY;
+};
+/** The Android windowed-recognition native API, when the patch is present. */
+export const getNativeRecognizer = () =>
+    (SherpaNative && typeof SherpaNative.recognizeFromFileWithOptions === 'function') ? SherpaNative : null;
+/** Foreground service + wake lock while something other than the queue
+ *  transcribes; every call refreshes the wake-lock budget. */
+export const keepTranscriptionServiceAlive = (title, message) => _startFg(title, message, 0);
+export const stopTranscriptionService = () => { if (!_running && _queue.length === 0) _stopFg(); };
+
 // ─── Text-to-segment conversion ─────────────────────────────────────────────
 
 /** Split full transcript text into segments at sentence boundaries.
@@ -624,8 +647,21 @@ const _process = async (entry) => {
 
 // ─── Queue runner ────────────────────────────────────────────────────────────
 
+// Set while a live-radio session transcribes (radioService): the episode
+// queue waits so the native decoder — one executor, one job at a time — is
+// free for the radio windows that must land within seconds. Whatever was
+// running was cancelled by the holder (its resume marker survives) and is
+// re-enqueued on release.
+let _held = false;
+export const holdQueue = () => { _held = true; };
+export const releaseQueue = () => {
+    _held = false;
+    setTimeout(_runNext, 0);
+};
+export const isQueueHeld = () => _held;
+
 const _runNext = async () => {
-    if (_running || _queue.length === 0) return;
+    if (_running || _held || _queue.length === 0) return;
     _running = true;
     _abort = { current: false, resolve: null };
 

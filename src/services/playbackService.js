@@ -29,8 +29,14 @@ export const isPlaybackComplete = (position, duration) => {
  *  cold-start stale-queue flush). A completed episode persists
  *  play_position = 0 — so any replay starts from the top without needing
  *  a trustworthy Episodes.duration — and is marked played exactly once. */
+// Live radio sessions (ids 'radio:<station>:<t>') are never resumed, never
+// "finished" and never prompt to delete a download: the position is always a
+// few seconds from the growing end, which the completion test would read as
+// the episode ending on every tick.
+export const isRadioTrackId = (id) => typeof id === 'string' && id.startsWith('radio:');
+
 export const persistProgress = async (trackId, position, duration, { ended = false } = {}) => {
-    if (!trackId) return;
+    if (!trackId || isRadioTrackId(trackId)) return;
     try {
         // The player knows the real length as soon as the track loads; store
         // it for feeds that shipped no <itunes:duration> so their rows can
@@ -74,7 +80,7 @@ const _endedListeners = new Set();
 export const onEpisodeEnded = (cb) => { _endedListeners.add(cb); return () => _endedListeners.delete(cb); };
 
 const announceEpisodeEnded = async (trackId) => {
-    if (!trackId) return;
+    if (!trackId || isRadioTrackId(trackId)) return;
     try { await AsyncStorage.setItem(FINISHED_PROMPT_KEY, String(trackId)); } catch (_) {}
     [..._endedListeners].forEach(cb => { try { cb(trackId); } catch (_) {} });
 };

@@ -41,8 +41,14 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     // DB lookup in case the track was loaded before artwork was wired up.
     const [artworkUri, setArtworkUri] = useState(null);
     useEffect(() => {
-        if (track?.artwork) {
-            setArtworkUri(track.artwork);
+        // A require()d asset (live-radio station logos) comes back from RNTP
+        // as the resolved { uri, width, height } object, not a string; the
+        // Image source must get the uri alone or the native side throws.
+        const raw = track?.artwork;
+        const fromTrack = typeof raw === 'string' ? raw
+            : raw && typeof raw === 'object' && typeof raw.uri === 'string' ? raw.uri : null;
+        if (fromTrack) {
+            setArtworkUri(fromTrack);
         } else if (track?.id) {
             getEpisodeById(track.id).then(ep => {
                 setArtworkUri(ep?.image_url || null);

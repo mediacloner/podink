@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     View, StyleSheet, Text, Image,
-    ActivityIndicator, TouchableOpacity,
+    ActivityIndicator, TouchableOpacity, ScrollView,
 } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +19,12 @@ import {
     downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
 } from '../services/episodeService';
 import { getEpisodeById, getTranscriptsForEpisode } from '../database/queries';
+import ProgrammeGuide from '../components/ProgrammeGuide';
+import {
+    attachPlayer as attachRadioPlayer, FOLLOW_DELAY_SEC, goLive as radioGoLive, isRadioEpisode, readLiveState,
+    stopSession as stopRadioSession, useRadioSession,
+} from '../services/radioService';
+import { getStation, stationIdFromFeedUrl } from '../services/radioStations';
 import { artworkSource } from '../api/userAgent';
 import { extractColor, softenForHeader } from '../services/colorExtractor';
 import { useTheme, useStyles, radii, withAlpha } from '../theme';
@@ -41,6 +47,16 @@ const PlayerScreen = ({ route, navigation }) => {
     const [ep, setEp] = useState(episodeParam);
     const epRef = useRef(ep);
     epRef.current = ep;
+
+    // Live radio (4.0.0): a session row plays either the station's stream
+    // ('live' — programme guide instead of a transcript, no seeking) or the
+    // growing local recording ('transcript' — text arrives window by window,
+    // seek anywhere, LIVE jumps to the newest transcribed moment).
+    const isRadio = isRadioEpisode(ep);
+    const radio = useRadioSession();
+    const radioMode = isRadio ? (ep.local_audio_path ? 'transcript' : 'live') : null;
+    const radioSession = isRadio && radio?.episodeId === epId ? radio : null;
+    const radioStation = isRadio ? getStation(stationIdFromFeedUrl(ep.podcast_feed_url)) : null;
 
     const [segments, setSegments] = useState([]);
     const [transcriptLoading, setTranscriptLoading] = useState(false);
@@ -92,6 +108,21 @@ const PlayerScreen = ({ route, navigation }) => {
             const fresh = await getEpisodeById(epId);
             const row = fresh || episodeParam;
             if (isCurrent()) setEp(row);
+
+            if (isRadioEpisode(row)) {
+                // radioService owns the session: it starts playback itself once
+                // the first window has text (transcript) or right away (live);
+                // attachPlayer waits for that, or re-attaches a reset player.
+                setAudioStatus(row.local_audio_path ? 'Recording the live stream…' : 'Connecting to the station…');
+                const ok = await attachRadioPlayer();
+                if (isCurrent()) {
+                    setAudioStatus('');
+                    if (!ok && !fresh) setAudioError(true);
+                    playerReadyRef.current = true;
+                    setPlayerReady(true);
+                }
+                return;
+            }
 
             const currentTrack = await TrackPlayer.getActiveTrack();
             const alreadyLoaded = currentTrack?.id === epId;
@@ -267,6 +298,9 @@ const PlayerScreen = ({ route, navigation }) => {
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
             } else if (payload.type === 'transcript-error') {
                 setTranscribing(false);
+            } else if (payload.type === 'radio-programme') {
+                // A new programme started on air: header title / description.
+                getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
             } else if (payload.type === 'episode-delete') {
                 // The finished-episode prompt (or the Library) removed this
                 // episode's download and transcript and reset the player —
@@ -348,7 +382,28 @@ const PlayerScreen = ({ route, navigation }) => {
     }, []);
 
     const hasTranscript = !!ep?.has_transcript || segments.length > 0;
-    const canTranscribe = !!ep?.local_audio_path;
+    const canTranscribe = !!ep?.local_audio_path && !isRadio;
+
+    // Live radio: what the empty transcript pane says while the first window
+    // records + transcribes, and the controls' LIVE state.
+    let radioEmptyStatus = null;
+    if (radioMode === 'transcript' && segments.length === 0) {
+        if (!radioSession) {
+            radioEmptyStatus = 'This radio session has ended.';
+        } else if (radioSession.transcriptError && !radioSession.hasText) {
+            radioEmptyStatus = `The transcript could not start: ${radioSession.transcriptError}`;
+        } else if (radioSession.totalSec > 0) {
+            radioEmptyStatus = `Buffering ${FOLLOW_DELAY_SEC} s of live radio so the text stays ahead of the sound — ${Math.min(FOLLOW_DELAY_SEC, Math.round(radioSession.totalSec))} s so far.`;
+        } else {
+            radioEmptyStatus = 'Connecting to the stream…';
+        }
+    }
+    const liveControls = !isRadio ? null
+        : radioMode === 'live' ? { mode: 'live' }
+        : { mode: 'transcript', read: readLiveState, onGoLive: radioGoLive };
+    const radioNotice = radioSession && (radioSession.status === 'error' || radioSession.status === 'ended')
+        ? radioSession.statusMessage || (radioSession.status === 'ended' ? 'The stream ended' : 'Something went wrong')
+        : null;
     // Artwork-derived accent only when it contrasts with the page: bright tints
     // on the dark player, dark tints on the paper one.
     const accent = colorInfo && colorInfo.isDark !== isDark ? colorInfo.bgColor : colors.accent;
@@ -381,7 +436,11 @@ const PlayerScreen = ({ route, navigation }) => {
                     { backgroundColor: headerBg, paddingTop: insets.top + 8 },
                 ]}
             >
-                {ep.image_url ? (
+                {isRadio && radioStation?.logo ? (
+                    <View style={styles.radioLogoTile}>
+                        <Image source={radioStation.logo} style={styles.radioLogo} resizeMode='contain' accessibilityIgnoresInvertColors />
+                    </View>
+                ) : ep.image_url ? (
                     <Image source={artworkSource(ep.image_url)} style={styles.artwork} />
                 ) : (
                     <View style={[styles.artwork, styles.artworkPlaceholder]}>
@@ -391,36 +450,68 @@ const PlayerScreen = ({ route, navigation }) => {
 
                 <View style={styles.meta}>
                     <Text style={[styles.podcastName, headerTextStyle, { color: withAlpha(headerFg, 0.6) }]} numberOfLines={1}>
-                        {ep.podcast_title}
+                        {isRadio ? `${ep.podcast_title} · LIVE` : ep.podcast_title}
                     </Text>
                     <Text style={[styles.episodeTitle, headerTextStyle]} numberOfLines={2}>
                         {ep.title}
                     </Text>
                 </View>
+                {isRadio && (
+                    <TouchableOpacity
+                        onPress={() => stopRadioSession()}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        style={styles.radioStop}
+                        accessibilityRole='button'
+                        accessibilityLabel='Stop the radio'
+                    >
+                        <Icon name='power' size={18} color={withAlpha(headerFg, 0.75)} />
+                    </TouchableOpacity>
+                )}
             </View>
 
             {/* ── Transcript ────────────────────────────────────────────── */}
             <View style={styles.transcriptArea}>
-                <TranscriptHighlighter
-                    ref={transcriptRef}
-                    segments={segments}
-                    fadeTo={colors.bgPlayer}
-                    loading={transcriptLoading && hasTranscript}
-                    hasTranscript={hasTranscript}
-                    canTranscribe={canTranscribe}
-                    onTranscribe={handleTranscribe}
-                    onDownload={handleDownload}
-                    downloading={downloading}
-                    downloadProgress={downloadProgress}
-                    transcribing={transcribing}
-                    isQueued={isQueued}
-                    transcribeProgress={transcribeProgress}
-                    playbackRate={playbackRate}
-                    episodeId={epId}
-                    episodeTitle={ep.title}
-                />
+                {radioMode === 'live' ? (
+                    <ScrollView contentContainerStyle={styles.livePane} showsVerticalScrollIndicator={false}>
+                        <ProgrammeGuide
+                            guide={radioSession?.guide || null}
+                            icyTitle={radioSession?.icyTitle || null}
+                            compact
+                            accent={accent}
+                        />
+                        <Text style={styles.liveFootnote}>
+                            Playing the station as it airs — no transcript. To read along, stop and choose
+                            “With transcript” on the station’s page.
+                        </Text>
+                    </ScrollView>
+                ) : (
+                    <TranscriptHighlighter
+                        ref={transcriptRef}
+                        segments={segments}
+                        fadeTo={colors.bgPlayer}
+                        loading={transcriptLoading && hasTranscript}
+                        hasTranscript={hasTranscript}
+                        canTranscribe={canTranscribe}
+                        onTranscribe={handleTranscribe}
+                        onDownload={isRadio ? undefined : handleDownload}
+                        downloading={downloading}
+                        downloadProgress={downloadProgress}
+                        transcribing={transcribing}
+                        isQueued={isQueued}
+                        transcribeProgress={transcribeProgress}
+                        emptyStatus={radioEmptyStatus}
+                        playbackRate={playbackRate}
+                        episodeId={epId}
+                        episodeTitle={ep.title}
+                    />
+                )}
 
-                {audioError ? (
+                {radioNotice ? (
+                    <View style={styles.loadingBadge}>
+                        <Icon name='alert-circle' size={14} color={colors.warning} />
+                        <Text style={styles.loadingText}>{radioNotice}</Text>
+                    </View>
+                ) : audioError ? (
                     <TouchableOpacity
                         style={styles.loadingBadge}
                         onPress={startAudio}
@@ -449,8 +540,9 @@ const PlayerScreen = ({ route, navigation }) => {
                 </TouchableOpacity>
                 <PlayerControls
                     accent={accent}
-                    onReplaySentence={handleReplaySentence}
+                    onReplaySentence={radioMode === 'live' ? null : handleReplaySentence}
                     onRateChange={setPlaybackRate}
+                    live={liveControls}
                 />
             </View>
 
@@ -515,10 +607,36 @@ const makeStyles = (colors) => StyleSheet.create({
         textShadowRadius: 3,
     },
 
+    radioStop: {
+        padding: 6,
+    },
+    radioLogoTile: {
+        width: 88,
+        height: 56,
+        borderRadius: 10,
+        backgroundColor: '#FFFFFF',
+        padding: 7,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    radioLogo: { width: '100%', height: '100%' },
+
     // ── Transcript ────────────────────────────────────────────
     transcriptArea: {
         flex: 1,
         backgroundColor: colors.bgPlayer,
+    },
+    // Live radio without a transcript: the programme guide takes the pane.
+    livePane: {
+        paddingTop: 18,
+        paddingBottom: 40,
+    },
+    liveFootnote: {
+        fontSize: 13,
+        lineHeight: 19,
+        color: colors.textMuted,
+        paddingHorizontal: 24,
+        paddingTop: 8,
     },
     loadingBadge: {
         position: 'absolute',

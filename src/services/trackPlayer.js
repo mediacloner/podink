@@ -10,6 +10,7 @@ import TrackPlayer, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { persistProgress } from './playbackService';
 import { USER_AGENT } from '../api/userAgent';
+import { getStation, stationIdFromFeedUrl } from './radioStations';
 
 export const setupPlayer = async () => {
     try {
@@ -158,22 +159,64 @@ export const ensurePlayerAlive = async () => {
     }
 };
 
-export const loadEpisodeTrack = async (episode, autoPlay = true) => {
-    // Determine whether to use local or remote path
-    // local_audio_path is already a file:// URI from expo-file-system
-    const url = episode.is_downloaded && episode.local_audio_path ? episode.local_audio_path : episode.audio_url;
+// Notified with the episode about to be loaded, before the queue is touched.
+// radioService ends a live-radio session when anything else starts playing.
+const _loadListeners = new Set();
+export const onTrackLoad = (cb) => { _loadListeners.add(cb); return () => _loadListeners.delete(cb); };
 
+/**
+ * The track for a live-radio session row (podcast_kind 'radio'). With a
+ * recording (local_audio_path = the local HLS event playlist) the track is
+ * forced to HLS — the scheme is file://, so ExoPlayer would not guess it —
+ * and stays seekable; without one it is the station's stream itself, marked
+ * live so the notification hides its seek bar.
+ */
+export const buildRadioTrack = (episode) => {
+    const station = getStation(stationIdFromFeedUrl(episode.podcast_feed_url));
     const track = {
         id:      episode.id,
-        url:     url,
         title:   episode.title,
         artist:  episode.podcast_title,
-        artwork: episode.image_url || undefined,
+        // The bundled logo (RNTP resolves a require()d asset to a URI) for
+        // the notification and the MiniPlayer.
+        artwork: station?.logo || episode.image_url || undefined,
     };
-    // Streaming hits the same Buzzsprout/Cloudflare 403 on the default okhttp
-    // UA as the feed fetch and downloads; local file:// tracks need no headers.
-    if (/^https?:/i.test(url || '')) {
+    if (episode.local_audio_path) {
+        track.url = episode.local_audio_path;
+        track.type = 'hls';
+    } else {
+        track.url = episode.audio_url;
+        track.isLiveStream = true;
         track.headers = { 'User-Agent': USER_AGENT };
+        // KotlinAudio builds a progressive source unless told otherwise; an
+        // HLS playlist URL must be declared as such to play at all.
+        if (/\.m3u8(\?|$)/i.test(track.url || '')) track.type = 'hls';
+    }
+    return track;
+};
+
+export const loadEpisodeTrack = async (episode, autoPlay = true) => {
+    [..._loadListeners].forEach(cb => { try { cb(episode); } catch (_) {} });
+
+    let track;
+    if (episode.podcast_kind === 'radio') {
+        track = buildRadioTrack(episode);
+    } else {
+        // Determine whether to use local or remote path
+        // local_audio_path is already a file:// URI from expo-file-system
+        const url = episode.is_downloaded && episode.local_audio_path ? episode.local_audio_path : episode.audio_url;
+        track = {
+            id:      episode.id,
+            url:     url,
+            title:   episode.title,
+            artist:  episode.podcast_title,
+            artwork: episode.image_url || undefined,
+        };
+        // Streaming hits the same Buzzsprout/Cloudflare 403 on the default okhttp
+        // UA as the feed fetch and downloads; local file:// tracks need no headers.
+        if (/^https?:/i.test(url || '')) {
+            track.headers = { 'User-Agent': USER_AGENT };
+        }
     }
 
     _notifyUserPlay();

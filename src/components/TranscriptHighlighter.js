@@ -137,6 +137,9 @@ const TranscriptHighlighter = forwardRef(({
     transcribing = false,
     isQueued = false,
     transcribeProgress = 0,
+    // Live radio: what to show instead of the CTA card while the recording's
+    // first window is still on its way (spinner + this text).
+    emptyStatus = null,
     playbackRate = 1,
     episodeId,
     episodeTitle,
@@ -345,12 +348,24 @@ const TranscriptHighlighter = forwardRef(({
             setIsBuilding(false);
         };
 
-        // Wait for the player open animation to settle before hogging the JS thread.
-        const handle = InteractionManager.runAfterInteractions(buildChunksBatch);
+        // The first build waits for the player's open animation to settle
+        // before hogging the JS thread. Rebuilds while text is already on
+        // screen (live transcription: a new window every ~24 s) must not wait
+        // for "interactions" — a scroll in progress counts as one, so the new
+        // words would only appear once the finger came off, all at once, and
+        // the bottom of the list looked empty while scrolling towards it.
+        let handle = null;
+        let timer = null;
+        if (computedRef.current.displayItems.length > 0) {
+            timer = setTimeout(buildChunksBatch, 0);
+        } else {
+            handle = InteractionManager.runAfterInteractions(buildChunksBatch);
+        }
 
         return () => {
             cancelled = true;
             if (handle?.cancel) handle.cancel();
+            if (timer) clearTimeout(timer);
         };
     }, [segments]);
 
@@ -929,6 +944,15 @@ const TranscriptHighlighter = forwardRef(({
                     <Text style={[styles.placeholder, styles.placeholderGap]}>Preparing transcript…</Text>
                 </View>
             );
+        } else if (emptyStatus) {
+            statusPane = (
+                <View style={styles.empty}>
+                    <ActivityIndicator size='small' color={colors.accent} />
+                    <Text style={[styles.placeholder, styles.placeholderGap, styles.placeholderWrap]}>
+                        {emptyStatus}
+                    </Text>
+                </View>
+            );
         } else if (isQueued) {
             statusPane = (
                 <View style={styles.empty}>
@@ -1317,6 +1341,7 @@ const makeStyles = (colors) => StyleSheet.create({
     empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 },
     placeholder: { fontSize: 16, color: colors.textSecondary, textAlign: 'center' },
     placeholderGap: { marginTop: 12 },
+    placeholderWrap: { textAlign: 'center', paddingHorizontal: 40, lineHeight: 20 },
 
     sentenceWrap: { marginBottom: CHUNK_MARGIN },
     pressedChunk: { opacity: 0.65 },
