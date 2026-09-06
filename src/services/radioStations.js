@@ -3,6 +3,11 @@
  * stations for learners; each carries the stream the app plays / records and
  * where its programme guide comes from (radioSchedule.js).
  *
+ * `tz` / `city` are the station's home time zone and city: the screens show
+ * the local hour there next to the description, since the programme guide
+ * shows times in the listener's own clock and a breakfast show can be on at
+ * midnight for them.
+ *
  * Streams were verified on 2026-09-06. `kind`:
  *   'hls'          a live HLS playlist (MPEG-TS or packed-audio segments). The
  *                  recorder mirrors it; the player can also play it directly.
@@ -33,6 +38,8 @@ const RAW_STATIONS = [
     {
         id: 'bbc_radio_4',
         flag: '🇬🇧',
+        tz: 'Europe/London',
+        city: 'London',
         name: 'BBC Radio 4',
         blurb: 'Best overall',
         detail: 'Speech radio from London: news, documentaries, drama, comedy and long interviews in clear British English.',
@@ -45,6 +52,8 @@ const RAW_STATIONS = [
     {
         id: 'abc_rn',
         flag: '🇦🇺',
+        tz: 'Australia/Sydney',
+        city: 'Sydney',
         name: 'ABC Radio National',
         blurb: 'Superb interviews, ideas, science and long-form conversations',
         detail: 'Australia’s national ideas network: science, history, religion, the arts and unhurried conversation.',
@@ -58,6 +67,8 @@ const RAW_STATIONS = [
     {
         id: 'rte_radio_1',
         flag: '🇮🇪',
+        tz: 'Europe/Dublin',
+        city: 'Dublin',
         name: 'RTÉ Radio 1',
         blurb: 'Lots of natural conversation and varied programmes',
         detail: 'Ireland’s national talk station: phone-ins, news, arts and sport in Irish English.',
@@ -70,6 +81,8 @@ const RAW_STATIONS = [
     {
         id: 'cbc_radio_one',
         flag: '🇨🇦',
+        tz: 'America/Toronto',
+        city: 'Toronto',
         name: 'CBC Radio One',
         blurb: 'Excellent conversational English',
         detail: 'Canada’s public talk network (Toronto feed): current affairs, documentaries and warm long-form interviews.',
@@ -82,6 +95,8 @@ const RAW_STATIONS = [
     {
         id: 'bbc_radio_4_extra',
         flag: '🇬🇧',
+        tz: 'Europe/London',
+        city: 'London',
         name: 'BBC Radio 4 Extra',
         blurb: 'Excellent, but much of it is drama, comedy and archive material rather than contemporary conversation',
         detail: 'The BBC’s archive speech station: classic comedy, drama and readings — beautifully spoken, rarely current.',
@@ -94,6 +109,8 @@ const RAW_STATIONS = [
     {
         id: 'rnz_national',
         flag: '🇳🇿',
+        tz: 'Pacific/Auckland',
+        city: 'Wellington',
         name: 'RNZ National',
         blurb: 'New Zealand’s public talk station',
         detail: 'Radio New Zealand’s flagship: news, interviews, features and documentaries in New Zealand English.',
@@ -107,6 +124,8 @@ const RAW_STATIONS = [
     {
         id: 'bbc_world_service',
         flag: '🌍',
+        tz: 'Europe/London',
+        city: 'London',
         name: 'BBC World Service',
         blurb: 'World news and features for an international audience',
         detail: 'The BBC’s international station: news on the hour, documentaries and discussion in measured, global English.',
@@ -120,6 +139,8 @@ const RAW_STATIONS = [
     {
         id: 'npr',
         flag: '🇺🇸',
+        tz: 'America/New_York',
+        city: 'Washington',
         name: 'NPR',
         blurb: 'American public radio: news and talk',
         detail: 'The NPR Program Stream — Morning Edition, All Things Considered, Fresh Air and more in American English.',
@@ -133,6 +154,8 @@ const RAW_STATIONS = [
     {
         id: 'bbc_radio_scotland',
         flag: '🏴󠁧󠁢󠁳󠁣󠁴󠁿',
+        tz: 'Europe/London',
+        city: 'Glasgow',
         name: 'BBC Radio Scotland',
         blurb: 'News, phone-ins and conversation in Scottish English',
         detail: 'The BBC’s national station for Scotland: news, sport, phone-ins and long conversations — a chance to get used to Scottish accents.',
@@ -145,6 +168,8 @@ const RAW_STATIONS = [
     {
         id: 'bbc_radio_ulster',
         flag: '🇬🇧',
+        tz: 'Europe/London',
+        city: 'Belfast',
         name: 'BBC Radio Ulster',
         blurb: 'Talk and phone-ins from Belfast, in Northern Irish English',
         detail: 'The BBC’s station for Northern Ireland: news, talk, phone-ins and warm local conversation in the Ulster accent.',
@@ -157,6 +182,8 @@ const RAW_STATIONS = [
     {
         id: 'lbc',
         flag: '🇬🇧',
+        tz: 'Europe/London',
+        city: 'London',
         name: 'LBC',
         blurb: 'Britain’s phone-in station: callers, debate and everyday spoken English',
         detail: 'London’s commercial talk station: presenters and callers arguing the day’s news — fast, natural, unscripted British English.',
@@ -170,6 +197,8 @@ const RAW_STATIONS = [
     {
         id: 'wnyc',
         flag: '🇺🇸',
+        tz: 'America/New_York',
+        city: 'New York',
         name: 'WNYC',
         blurb: 'New York public radio: NPR news and long-form talk',
         detail: 'New York Public Radio’s flagship: Morning Edition, All Things Considered, The Brian Lehrer Show and Radiolab in American English.',
@@ -182,6 +211,8 @@ const RAW_STATIONS = [
     {
         id: 'abc_newsradio',
         flag: '🇦🇺',
+        tz: 'Australia/Sydney',
+        city: 'Sydney',
         name: 'ABC NewsRadio',
         blurb: 'Rolling news from Australia, clearly spoken',
         detail: 'The ABC’s continuous news station: bulletins, interviews and the BBC World Service overnight — measured, clear Australian English.',
@@ -195,6 +226,8 @@ const RAW_STATIONS = [
     {
         id: 'bbc_radio_5_live',
         flag: '🇬🇧',
+        tz: 'Europe/London',
+        city: 'Salford',
         name: 'BBC Radio 5 Live',
         blurb: 'News, sport and phone-ins — fast, informal British English',
         detail: 'The BBC’s news and sport network: rolling news, phone-ins and lively studio chat. Live sport commentary is often blanked outside the UK for rights reasons.',
