@@ -254,6 +254,11 @@ const PlayerScreen = ({ route, navigation }) => {
             st.timer = setTimeout(() => { st.timer = null; fetchNow(); }, wait);
         };
         const unsub = onLibraryChange((payload) => {
+            if (payload?.type === 'unsubscribe' && payload.episodeIds?.includes(epId)) {
+                // The whole podcast is gone (rows included) — nothing to show.
+                if (navigation.canGoBack()) navigation.goBack();
+                return;
+            }
             if (!payload || payload.episodeId !== epId) return;
             if (payload.type === 'transcript-progress') {
                 schedule(false);

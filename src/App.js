@@ -13,7 +13,7 @@ import { setupPlayer, ensurePlayerAlive, onUserPlay, onUserStop } from './servic
 import { restoreQueue, initializeWhisper } from './services/whisperService';
 import { cleanupOldWhisperModels } from './services/downloadService';
 import { restoreLogs } from './services/logService';
-import { sweepStaleFinishedDownloads } from './services/episodeService';
+import { sweepOrphanFiles, sweepStaleFinishedDownloads } from './services/episodeService';
 import { getTotalNewEpisodesCount } from './database/queries';
 import { onLibraryChange } from './services/libraryEvents';
 import { ThemeProvider, useTheme, useStyles, type } from './theme';
@@ -177,8 +177,12 @@ const AppRoot = () => {
     useEffect(() => {
         restoreLogs();
         initDB()
-            .then(() => {
+            .then(async () => {
                 console.log('Database Initialized');
+                // Files no row refers to (.part of a killed download, audio of
+                // podcasts unsubscribed by old builds, folders of deleted
+                // collections) — before any screen can start a new download.
+                await sweepOrphanFiles();
                 restoreQueue();
                 cleanupOldWhisperModels();
                 // Finished downloads that went a week without a replay go

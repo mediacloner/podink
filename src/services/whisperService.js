@@ -735,6 +735,18 @@ export const dequeueTranscription = (id) => {
     }
 };
 
+/**
+ * Dequeue AND forget a job for good — the resume marker goes too. For the
+ * delete paths (download removed, chapter or collection or podcast deleted):
+ * nothing is left to resume into. A user *cancel* keeps using
+ * dequeueTranscription so the marker survives and a later retry resumes.
+ */
+export const forgetTranscription = (id) => {
+    dequeueTranscription(id);
+    _lastPercent.delete(String(id));
+    AsyncStorage.removeItem(`${JOB_MARKER_PREFIX}${id}`).catch(() => {});
+};
+
 export const resetService = async () => {
     log('SERVICE', 'Reset', { activeId: _activeId, queue: _queue.map(e => e.id), running: _running });
 

@@ -1,12 +1,14 @@
 import TrackPlayer from 'react-native-track-player';
 import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Directory, File, Paths } from 'expo-file-system';
 import {
-    clearPlayProgress, deleteEpisodeLocalData, deleteEpisodeRow, getStaleFinishedDownloads, isLocalFeedUrl,
+    clearPlayProgress, deleteEpisodeLocalData, deleteEpisodeRow, deletePodcast, getAllLocalAudioPaths,
+    getEpisodesForPodcastFeed, getLocalCollectionFeedUrls, getStaleFinishedDownloads, isLocalFeedUrl,
     LOCAL_KIND, markEpisodeFinished, markEpisodeSeen, updateEpisodeLocalPath,
 } from '../database/queries';
 import { deleteAudioFile, downloadAudioFile } from './downloadService';
-import { dequeueTranscription, enqueueTranscription } from './whisperService';
+import { enqueueTranscription, forgetTranscription } from './whisperService';
 import { notifyUserStop } from './trackPlayer';
 import { persistProgress } from './playbackService';
 import { notifyLibraryChange } from './libraryEvents';
@@ -217,7 +219,7 @@ export const removeEpisodeDownload = async (episode) => {
     if (isLocalEpisode(episode)) return deleteLocalEpisode(episode);
     const id = episode.id;
     log('UI', 'Remove download', { id, title: episode.title });
-    dequeueTranscription(id);
+    forgetTranscription(id);
     try {
         const track = await TrackPlayer.getActiveTrack();
         if (track?.id === id) {
@@ -240,7 +242,7 @@ export const removeEpisodeDownload = async (episode) => {
 export const deleteLocalEpisode = async (episode) => {
     const id = episode.id;
     log('UI', 'Delete imported chapter', { id, title: episode.title });
-    dequeueTranscription(id);
+    forgetTranscription(id);
     try {
         const track = await TrackPlayer.getActiveTrack();
         if (track?.id === id) {
@@ -251,6 +253,92 @@ export const deleteLocalEpisode = async (episode) => {
     if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
     await deleteEpisodeRow(id);
     notifyLibraryChange({ type: 'episode-delete', episodeId: id });
+};
+
+/** Tear the player down if the loaded track is one of `ids` (a Set). */
+const stopPlayerIfActive = async (ids) => {
+    try {
+        const track = await TrackPlayer.getActiveTrack();
+        if (track && ids.has(track.id)) {
+            await TrackPlayer.reset();
+            notifyUserStop(); // unmounts the MiniPlayer (App.js)
+        }
+    } catch (_) {}
+};
+
+/**
+ * Unsubscribe from an RSS podcast: every trace of it goes. Queued or running
+ * transcriptions of its episodes are dropped with their resume markers, the
+ * player is torn down if it is on one of them (streamed or downloaded — the
+ * row it plays from is about to vanish), the downloaded audio files are
+ * deleted, then the rows: episodes, their transcripts (and the search index,
+ * through the FTS trigger) and the podcast itself. Vocabulary words and
+ * lookup history saved from its episodes are the learner's own and stay.
+ * Throws on failure so the caller can alert.
+ */
+export const unsubscribePodcast = async (feedUrl) => {
+    const episodes = await getEpisodesForPodcastFeed(feedUrl);
+    const ids = episodes.map(e => e.id);
+    log('UI', 'Unsubscribe', {
+        feedUrl, episodes: ids.length, downloaded: episodes.filter(e => e.local_audio_path).length,
+    });
+    for (const id of ids) forgetTranscription(id);
+    await stopPlayerIfActive(new Set(ids));
+    for (const e of episodes) {
+        if (e.local_audio_path) await deleteAudioFile(e.local_audio_path);
+    }
+    await deletePodcast(feedUrl);
+    notifyLibraryChange({ type: 'unsubscribe', feedUrl, episodeIds: ids });
+};
+
+// ─── Orphaned files ──────────────────────────────────────────────────────────
+
+const basename = (uri) => String(uri || '').split('/').pop();
+
+/**
+ * Startup hygiene: delete what sits in the app's storage with no row left
+ * to refer to it — a `.part` from a download the process died in the middle
+ * of, an `episode_*.mp3` whose row was removed before unsubscribing deleted
+ * files (releases before 2.3.0), an `imports/<id>` folder whose collection
+ * is gone. Runs once at launch, before any screen can start a download, so
+ * nothing in flight can be taken for an orphan. Downloads are matched by
+ * file name (unique: episode_<id>.mp3) rather than full URI, because rows
+ * written by older builds spell the same path differently. Never throws;
+ * a failed DB read skips the sweep rather than risk a live file.
+ */
+export const sweepOrphanFiles = async () => {
+    try {
+        const referenced = new Set((await getAllLocalAudioPaths()).map(r => basename(r.local_audio_path)));
+        const collections = new Set(
+            (await getLocalCollectionFeedUrls()).map(r => String(r.feed_url).replace(/^local:\/\//, '')),
+        );
+        let files = 0;
+        let dirs = 0;
+        let bytes = 0;
+        for (const entry of new Directory(Paths.document).list()) {
+            if (entry instanceof File) {
+                const name = entry.name;
+                const isDownload = /^episode_.*\.mp3$/.test(name);
+                const isPartial = name.endsWith('.part');
+                if (!isDownload && !isPartial) continue;
+                if (isDownload && referenced.has(name)) continue;
+                bytes += entry.size || 0;
+                files += 1;
+                entry.delete();
+            } else if (entry instanceof Directory && entry.name === 'imports') {
+                for (const sub of entry.list()) {
+                    if (!(sub instanceof Directory) || collections.has(sub.name)) continue;
+                    dirs += 1;
+                    sub.delete();
+                }
+            }
+        }
+        if (files || dirs) {
+            log('SYSTEM', 'Orphan files swept', { files, dirs, mb: Math.round(bytes / 1024 / 1024) });
+        }
+    } catch (e) {
+        log('SYSTEM', 'Orphan sweep skipped', { error: e?.message || String(e) });
+    }
 };
 
 // ─── Automatic cleanup of finished downloads ─────────────────────────────────
