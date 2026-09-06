@@ -23,6 +23,7 @@ class MainApplication : Application(), ReactApplication {
         PackageList(this).packages.apply {
           add(TranscriptionServicePackage())
           add(AudioImportPackage())
+          add(LiveRadioPackage())
         }
     )
   }

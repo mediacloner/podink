@@ -14,6 +14,7 @@ import { restoreQueue, initializeWhisper } from './services/whisperService';
 import { cleanupOldWhisperModels } from './services/downloadService';
 import { restoreLogs } from './services/logService';
 import { sweepOrphanFiles, sweepStaleFinishedDownloads } from './services/episodeService';
+import { sweepRadioSessions } from './services/radioService';
 import { getTotalNewEpisodesCount } from './database/queries';
 import { onLibraryChange } from './services/libraryEvents';
 import { ThemeProvider, useTheme, useStyles, type } from './theme';
@@ -31,6 +32,8 @@ import FinishedEpisodePrompt from './components/FinishedEpisodePrompt';
 import SettingsGearButton from './components/SettingsGearButton';
 import CollectionScreen from './screens/CollectionScreen';
 import CollectionEditorScreen from './screens/CollectionEditorScreen';
+import RadioScreen from './screens/RadioScreen';
+import RadioStationScreen from './screens/RadioStationScreen';
 
 LogBox.ignoreLogs(['Attempted to import the module']);
 
@@ -42,6 +45,7 @@ const TAB_ICONS = {
     Podcasts:   'headphones',
     Library:    'archive',
     Listening:  'play-circle',
+    Radio:      'radio',
 };
 
 // React Navigation theme derived from the active palette (headers, tab bar
@@ -158,6 +162,9 @@ const TabNavigator = ({ navigation }) => {
                 />
                 <Tab.Screen name="Library"  component={DownloadedTimeline}  options={{ title: 'Library' }} />
                 <Tab.Screen name="Listening" component={ListeningScreen} options={{ title: 'Listening' }} />
+                {/* Live radio (4.0.0): stations, on-air guide, listen with or
+                    without a transcript. */}
+                <Tab.Screen name="Radio" component={RadioScreen} options={{ title: 'Live Radio' }} />
             </Tab.Navigator>
 
             {showMiniPlayer && (
@@ -183,6 +190,8 @@ const AppRoot = () => {
                 // podcasts unsubscribed by old builds, folders of deleted
                 // collections) — before any screen can start a new download.
                 await sweepOrphanFiles();
+                // Live-radio sessions never outlive the process: rows + files go.
+                await sweepRadioSessions();
                 restoreQueue();
                 cleanupOldWhisperModels();
                 // Finished downloads that went a week without a replay go
@@ -266,6 +275,11 @@ const AppRoot = () => {
                         name="CollectionEditor"
                         component={CollectionEditorScreen}
                         options={{ headerShown: true, title: 'Import audio' }}
+                    />
+                    <Stack.Screen
+                        name="RadioStation"
+                        component={RadioStationScreen}
+                        options={{ headerShown: true, title: '' }}
                     />
                     <Stack.Screen
                         name="DebugLog"

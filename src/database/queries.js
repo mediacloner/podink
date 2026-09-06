@@ -18,6 +18,13 @@ const runInTxn = (db, task) => {
 export const LOCAL_KIND = 'local';
 export const isLocalFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feedUrl.startsWith('local://');
 
+/** Podcasts.kind for a live radio station (4.0.0). Its "episodes" are
+ *  listening sessions: one row per time the user tunes in, gone when the
+ *  session ends or the app next starts. They never appear in the Feed,
+ *  My Podcasts, Library or Listening — the Radio tab is their only home. */
+export const RADIO_KIND = 'radio';
+export const isRadioFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feedUrl.startsWith('radio://');
+
 // Every episode row carries its collection's kind and author, so screens can
 // tell a chapter of an imported book (no feed, no re-download, its file *is*
 // the episode) from a podcast episode without a second query.
@@ -27,6 +34,7 @@ const EPISODE_WITH_IMAGE = `
   LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
 `;
 const NOT_LOCAL = `COALESCE(p.kind, 'rss') != '${LOCAL_KIND}'`;
+const NOT_RADIO = `COALESCE(p.kind, 'rss') != '${RADIO_KIND}'`;
 
 export const getDownloadedEpisodes = async () => {
   const db = await openDatabaseContext();
@@ -40,7 +48,7 @@ export const getDownloadedEpisodes = async () => {
  *  My Podcasts → the collection, and in Listening once started. */
 export const getSubscribedEpisodes = async () => {
   const db = await openDatabaseContext();
-  return db.getAllAsync(`${EPISODE_WITH_IMAGE} WHERE ${NOT_LOCAL} ORDER BY e.release_date DESC`);
+  return db.getAllAsync(`${EPISODE_WITH_IMAGE} WHERE ${NOT_LOCAL} AND ${NOT_RADIO} ORDER BY e.release_date DESC`);
 };
 
 // INSERT OR IGNORE preserves is_new, is_downloaded, local_audio_path, etc. for existing episodes
@@ -116,6 +124,7 @@ export const getPodcasts = async () => {
            (SELECT MAX(e.release_date) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS latest_episode_at,
            (SELECT COUNT(*) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS episode_count
     FROM Podcasts p
+    WHERE COALESCE(p.kind, 'rss') != '${RADIO_KIND}'
     ORDER BY latest_episode_at DESC, p.subscribed_at DESC
   `);
 };
@@ -377,10 +386,10 @@ const LISTENING_STATE_SQL = {
        AND ${NOT_LOCAL}
      ORDER BY e.release_date DESC`,
   'in-progress':
-    `WHERE e.is_played = 0 AND e.play_position > 0
+    `WHERE e.is_played = 0 AND e.play_position > 0 AND ${NOT_RADIO}
      ORDER BY (e.last_played_at IS NULL), e.last_played_at DESC, e.release_date DESC`,
   'finished':
-    `WHERE e.is_played = 1
+    `WHERE e.is_played = 1 AND ${NOT_RADIO}
      ORDER BY (e.last_played_at IS NULL), e.last_played_at DESC, e.release_date DESC`,
 };
 
@@ -560,4 +569,53 @@ export const getAllLocalAudioPaths = async () => {
 export const getLocalCollectionFeedUrls = async () => {
   const db = await openDatabaseContext();
   return db.getAllAsync('SELECT feed_url FROM Podcasts WHERE kind = ?', [LOCAL_KIND]);
+};
+
+// ─── Live radio (4.0.0) ──────────────────────────────────────────────────────
+
+/** A station row (kind 'radio'), created the first time it is tuned in.
+ *  INSERT OR IGNORE: a second session re-uses it. */
+export const saveRadioStation = async ({ feed_url, title, description, image_url }) => {
+  const db = await openDatabaseContext();
+  // Upsert: the station's name / blurb follow the catalog across versions.
+  await db.runAsync(
+    `INSERT INTO Podcasts (title, description, feed_url, image_url, subscribed_at, kind)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(feed_url) DO UPDATE SET title = excluded.title, description = excluded.description`,
+    [title, description || '', feed_url, image_url || '', new Date().toISOString(), RADIO_KIND]
+  );
+};
+
+/** One listening session. `local_audio_path` is the local HLS playlist when
+ *  the session records for a transcript, NULL when it plays the stream
+ *  directly; is_downloaded stays 0 either way so the Library never lists it. */
+export const insertRadioEpisode = async ({ id, title, description, podcast_title, podcast_feed_url, audio_url, local_audio_path }) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `INSERT OR REPLACE INTO Episodes
+       (id, title, description, podcast_title, podcast_feed_url, release_date, audio_url,
+        local_audio_path, is_downloaded, is_new, duration, play_position)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0)`,
+    [id, title, description || '', podcast_title, podcast_feed_url, new Date().toISOString(), audio_url, local_audio_path || null]
+  );
+};
+
+/** The programme changed on air: the session row follows (Player header,
+ *  MiniPlayer). */
+export const updateRadioEpisodeProgramme = async (id, title, description) => {
+  const db = await openDatabaseContext();
+  await db.runAsync('UPDATE Episodes SET title = ?, description = ? WHERE id = ?', [title, description || '', id]);
+};
+
+/** Every session row (with transcripts) — at launch, nothing can be resumed. */
+export const deleteAllRadioEpisodes = async () => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync(
+      `DELETE FROM Transcripts WHERE episode_id IN (
+         SELECT id FROM Episodes WHERE podcast_feed_url LIKE 'radio://%'
+       )`
+    );
+    await db.runAsync(`DELETE FROM Episodes WHERE podcast_feed_url LIKE 'radio://%'`);
+  });
 };

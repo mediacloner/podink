@@ -22,7 +22,26 @@ const formatTime = (seconds) => {
 // while 0.7/1.15 stay intact.
 const formatRate = (rate) => `${String(Number(rate.toFixed(2)))}x`;
 
-const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange }) => {
+/**
+ * `live` (live radio, 4.0.0):
+ *   null                                   an episode — nothing changes
+ *   { mode: 'live' }                       the station's stream itself: no
+ *                                          past to seek into, so the slider,
+ *                                          skips and times give way to LIVE
+ *   { mode: 'transcript', read, onGoLive } a recording that grows while it
+ *                                          plays. `read()` returns the live
+ *                                          state { followSec, airSec, edgeSec }:
+ *                                          followSec is where playback sits when
+ *                                          it simply follows the broadcast (a
+ *                                          constant ~30 s delay), edgeSec the
+ *                                          last moment that has text. The
+ *                                          slider and skips stop at the text
+ *                                          edge; the right pill reads LIVE when
+ *                                          following, else how far behind and
+ *                                          taps back to live; the middle shows
+ *                                          the delay behind the broadcast.
+ */
+const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange, live = null }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
     const accent = accentProp ?? colors.accent;
@@ -136,6 +155,7 @@ const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange }) 
             const base = fresh && consistent ? pending.target : pos;
             let target = Math.max(0, base + delta);
             if (dur > 0) target = Math.min(target, dur);
+            if (seekMaxRef.current != null) target = Math.min(target, seekMaxRef.current);
             pendingJumpRef.current = { target, ts: now };
             await TrackPlayer.seekTo(target);
         } catch (_) {}
@@ -161,29 +181,90 @@ const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange }) 
     const displayPosition = isSeeking ? seekValue : position;
     const remaining = Math.max(0, duration - displayPosition);
 
+    const liveDirect = live?.mode === 'live';
+    const liveRecording = live?.mode === 'transcript';
+    // Re-read on every progress tick: the follow position and the air time
+    // move with the clock, not with React state.
+    const liveState = liveRecording && typeof live.read === 'function' ? live.read() : null;
+    const behind = liveState ? Math.max(0, liveState.followSec - displayPosition) : 0;
+    // The air clock advances in ~6 s segment steps (HLS sources deliver in
+    // bursts), so "following" tolerates that much slack before it reads as
+    // being behind.
+    const atEdge = liveRecording && behind < 8;
+    const delaySec = liveState ? Math.max(0, liveState.airSec - displayPosition) : 0;
+    // Seeking past the text edge would play audio nobody can read yet.
+    const seekMax = liveState && liveState.edgeSec > 0 ? liveState.edgeSec : (duration || 1);
+    const seekMaxRef = useRef(null);
+    seekMaxRef.current = liveRecording ? seekMax : null;
+
     return (
         <View style={styles.container}>
-            {/* Slider */}
-            <Slider
-                style={styles.slider}
-                minimumValue={0}
-                maximumValue={duration || 1}
-                value={displayPosition}
-                minimumTrackTintColor={accent}
-                maximumTrackTintColor={colors.hairline}
-                thumbTintColor={colors.textPrimary}
-                onSlidingStart={handleSlidingStart}
-                onValueChange={handleValueChange}
-                onSlidingComplete={handleSlidingComplete}
-            />
+            {liveDirect ? (
+                <View style={styles.liveRow}>
+                    <View style={[styles.liveBadge, { backgroundColor: withAlpha(colors.danger, 0.12) }]}>
+                        <View style={[styles.liveDot, { backgroundColor: colors.danger }]} />
+                        <Text style={[styles.liveBadgeText, { color: colors.danger }]}>LIVE</Text>
+                    </View>
+                    <Text style={styles.liveHint}>Playing the station as it airs</Text>
+                </View>
+            ) : (
+                <>
+                    {/* Slider */}
+                    <Slider
+                        style={styles.slider}
+                        minimumValue={0}
+                        maximumValue={liveRecording ? Math.max(1, seekMax) : (duration || 1)}
+                        value={displayPosition}
+                        minimumTrackTintColor={accent}
+                        maximumTrackTintColor={colors.hairline}
+                        thumbTintColor={colors.textPrimary}
+                        onSlidingStart={handleSlidingStart}
+                        onValueChange={handleValueChange}
+                        onSlidingComplete={handleSlidingComplete}
+                    />
 
-            {/* Time row — left side shows the scrub target while seeking */}
-            <View style={styles.timeRow}>
-                <Text style={[styles.time, isSeeking && { color: accent }]}>
-                    {formatTime(displayPosition)}
-                </Text>
-                <Text style={styles.time}>−{formatTime(remaining)}</Text>
-            </View>
+                    {/* Time row — left side shows the scrub target while seeking */}
+                    <View style={styles.timeRow}>
+                        <Text style={[styles.time, isSeeking && { color: accent }]}>
+                            {formatTime(displayPosition)}
+                        </Text>
+                        {liveRecording && (
+                            <Text style={styles.delayHint}>
+                                {delaySec >= 90
+                                    ? `${formatTime(delaySec)} behind`
+                                    : `≈ ${Math.max(5, Math.round(delaySec / 5) * 5)} s delay`}
+                            </Text>
+                        )}
+                        {liveRecording ? (
+                            <TouchableOpacity
+                                onPress={live.onGoLive}
+                                disabled={atEdge}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                style={[styles.liveBadge, atEdge
+                                    ? { backgroundColor: withAlpha(colors.danger, 0.12) }
+                                    : { backgroundColor: withAlpha(accent, 0.12), borderWidth: 0.5, borderColor: withAlpha(accent, 0.35) }]}
+                                accessibilityRole="button"
+                                accessibilityLabel={atEdge ? 'Live' : `${formatTime(behind)} behind live, tap to go live`}
+                            >
+                                {atEdge ? (
+                                    <>
+                                        <View style={[styles.liveDot, { backgroundColor: colors.danger }]} />
+                                        <Text style={[styles.liveBadgeText, { color: colors.danger }]}>LIVE</Text>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Text style={[styles.liveBadgeText, { color: accent }]}>−{formatTime(behind)}</Text>
+                                        <Icon name="fast-forward" size={11} color={accent} />
+                                        <Text style={[styles.liveBadgeText, { color: accent }]}>LIVE</Text>
+                                    </>
+                                )}
+                            </TouchableOpacity>
+                        ) : (
+                            <Text style={styles.time}>−{formatTime(remaining)}</Text>
+                        )}
+                    </View>
+                </>
+            )}
 
             {/* Controls */}
             <View style={styles.controls}>
@@ -200,7 +281,7 @@ const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange }) 
                 </TouchableOpacity>
 
                 {/* Skip back */}
-                <TouchableOpacity style={styles.skipBtn} onPress={() => jump(-10)}>
+                <TouchableOpacity style={[styles.skipBtn, liveDirect && styles.skipOff]} onPress={() => jump(-10)} disabled={liveDirect}>
                     <Icon name="rotate-ccw" size={28} color={colors.textPrimary} />
                     <Text style={styles.skipLabel}>10</Text>
                 </TouchableOpacity>
@@ -228,7 +309,7 @@ const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange }) 
                 </TouchableOpacity>
 
                 {/* Skip forward */}
-                <TouchableOpacity style={styles.skipBtn} onPress={() => jump(10)}>
+                <TouchableOpacity style={[styles.skipBtn, liveDirect && styles.skipOff]} onPress={() => jump(10)} disabled={liveDirect}>
                     <Icon name="rotate-cw" size={28} color={colors.textPrimary} />
                     <Text style={styles.skipLabel}>10</Text>
                 </TouchableOpacity>
@@ -300,6 +381,29 @@ const makeStyles = (colors) => StyleSheet.create({
         alignItems: 'center',
         gap: 3,
     },
+    skipOff: { opacity: 0.25 },
+
+    // Live radio (see the `live` prop)
+    liveRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        height: 36,
+        marginBottom: 22,
+        paddingHorizontal: 4,
+    },
+    liveBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 9,
+        paddingVertical: 3,
+        borderRadius: 999,
+    },
+    liveDot: { width: 6, height: 6, borderRadius: 3 },
+    liveBadgeText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.6, fontVariant: ['tabular-nums'] },
+    liveHint: { fontSize: 12, color: colors.textMuted },
+    delayHint: { fontSize: 12, color: colors.textMuted, fontVariant: ['tabular-nums'] },
     skipLabel: {
         fontSize: 10,
         fontWeight: '700',
