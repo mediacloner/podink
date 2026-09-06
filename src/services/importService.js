@@ -26,7 +26,7 @@ import {
     deletePodcast, getEpisodesForCollection, getMaxTrackNumber, getPodcastByFeedUrl,
     insertLocalEpisodes, saveLocalCollection, updateCollection, updateEpisodeTitle,
 } from '../database/queries';
-import { dequeueTranscription } from './whisperService';
+import { forgetTranscription } from './whisperService';
 import { notifyUserStop } from './trackPlayer';
 import { persistProgress } from './playbackService';
 import { notifyLibraryChange } from './libraryEvents';
@@ -332,7 +332,7 @@ export const saveCollectionEdits = async (feedUrl, { title, author, description,
 export const deleteCollection = async (feedUrl) => {
     const episodes = await getEpisodesForCollection(feedUrl);
     const ids = new Set(episodes.map(e => e.id));
-    for (const id of ids) dequeueTranscription(id);
+    for (const id of ids) forgetTranscription(id);
     try {
         const track = await TrackPlayer.getActiveTrack();
         if (track && ids.has(track.id)) {

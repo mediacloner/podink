@@ -539,3 +539,25 @@ export const getDownloadedEpisodesForPodcast = async (feedUrl) => {
     [feedUrl]
   );
 };
+
+/** Every episode of a feed (id + audio path, NULL when streamed) — what
+ *  unsubscribing has to dequeue, stop, delete and forget. */
+export const getEpisodesForPodcastFeed = async (feedUrl) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    'SELECT id, local_audio_path FROM Episodes WHERE podcast_feed_url = ?',
+    [feedUrl]
+  );
+};
+
+/** Every audio path a row still refers to — the orphan sweep keeps these. */
+export const getAllLocalAudioPaths = async () => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync('SELECT local_audio_path FROM Episodes WHERE local_audio_path IS NOT NULL');
+};
+
+/** feed_url of every imported collection — its imports/<id> folder is live. */
+export const getLocalCollectionFeedUrls = async () => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync('SELECT feed_url FROM Podcasts WHERE kind = ?', [LOCAL_KIND]);
+};

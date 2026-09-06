@@ -13,17 +13,16 @@ import SwipeableRow, { closeOpenRow } from '../components/SwipeableRow';
 import EmptyState from '../components/EmptyState';
 import SettingsGearButton from '../components/SettingsGearButton';
 import {
-    getPodcasts, deletePodcast,
+    getPodcasts,
     getNewEpisodesCountForPodcast, getLatestEpisodesForPodcast,
     markPodcastEpisodesAsSeen, capNewEpisodes,
-    pruneOldEpisodesForPodcast, getDownloadedEpisodesForPodcast, LOCAL_KIND,
+    pruneOldEpisodesForPodcast, LOCAL_KIND,
 } from '../database/queries';
 import { deleteCollection, isImportSupported, pickAudioFiles, pickFolder } from '../services/importService';
-import { deleteAudioFile } from '../services/downloadService';
 import { artworkSource } from '../api/userAgent';
 import { dequeueTranscription } from '../services/whisperService';
 import {
-    downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
+    downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode, unsubscribePodcast,
 } from '../services/episodeService';
 import { useTranscriptionQueue } from '../hooks/useTranscriptionQueue';
 import { notifyLibraryChange, onLibraryChange } from '../services/libraryEvents';
@@ -365,16 +364,14 @@ const PodcastsScreen = ({ navigation }) => {
                     style: 'destructive',
                     onPress: async () => {
                         if (expandedRef.current === podcast.feed_url) setExpanded(null);
-                        // Cancel any queued/active transcriptions and delete the
-                        // on-disk audio BEFORE the rows (and their paths) are gone,
-                        // otherwise the mp3 files leak in the documents directory.
-                        const downloaded = await getDownloadedEpisodesForPodcast(podcast.feed_url);
-                        for (const dl of downloaded) {
-                            dequeueTranscription(dl.id);
-                            if (dl.local_audio_path) await deleteAudioFile(dl.local_audio_path);
+                        // Transcription jobs, the player, the audio files and the
+                        // rows all go in episodeService.unsubscribePodcast, which
+                        // also broadcasts the 'unsubscribe' event.
+                        try {
+                            await unsubscribePodcast(podcast.feed_url);
+                        } catch (e) {
+                            showAlert('Unsubscribe failed', e?.message || 'Please try again.');
                         }
-                        await deletePodcast(podcast.feed_url);
-                        notifyLibraryChange({ type: 'unsubscribe' });
                         loadPodcasts();
                     },
                 },
