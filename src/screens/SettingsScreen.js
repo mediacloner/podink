@@ -659,7 +659,7 @@ const SettingsScreen = () => {
                             <Text style={styles.settingTitle}>Ask to delete finished episodes</Text>
                         </View>
                         <Text style={[styles.settingHint, styles.indent]}>
-                            When a downloaded episode plays to the end, offer to delete its download and transcript
+                            When a downloaded episode plays to the end, offer to delete its download and transcript. A finished YouTube video is offered for deletion too
                         </Text>
                     </View>
                     <Switch
