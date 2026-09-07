@@ -88,6 +88,11 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace 'com.podink.app'
+    // NewPipe Extractor (YouTube import, 4.1.0) uses java.time and java.nio.file;
+    // below minSdk 33 they must be desugared (its README: desugar_jdk_libs_nio).
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+    }
     defaultConfig {
         applicationId 'com.podink.app'
         minSdkVersion rootProject.ext.minSdkVersion
@@ -155,6 +160,11 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+
+    // YouTube import (4.1.0): NewPipe Extractor reads a video page and its audio
+    // streams on the device (JitPack; Rhino runs the player JS). GPL-3.0.
+    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.5")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";

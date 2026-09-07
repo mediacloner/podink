@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { showAlert } from './AppAlert';
 import { onEpisodeEnded, FINISHED_PROMPT_KEY, ASK_DELETE_ON_FINISH_KEY } from '../services/playbackService';
-import { isLocalEpisode, removeEpisodeDownload } from '../services/episodeService';
+import { isImportedEpisode, removeEpisodeDownload } from '../services/episodeService';
 import { getEpisodeById } from '../database/queries';
 import { log } from '../services/logService';
 
@@ -50,7 +50,7 @@ const FinishedEpisodePrompt = () => {
                 try { ep = await getEpisodeById(episodeId); } catch (_) {}
             }
             if (!alive) return;
-            if (!enabled || !ep || !ep.is_downloaded || !ep.local_audio_path || isLocalEpisode(ep)) {
+            if (!enabled || !ep || !ep.is_downloaded || !ep.local_audio_path || isImportedEpisode(ep)) {
                 // Turned off in Settings — or streamed, unsubscribed, already
                 // deleted, or a chapter of an imported book (its file is the
                 // episode; deleting it is a deliberate act in the collection

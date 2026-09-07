@@ -12,3 +12,11 @@
 -keep class com.facebook.react.turbomodule.** { *; }
 
 # Add any project specific keep options here:
+
+# NewPipe Extractor (YouTube import, 4.1.0): Rhino evaluates YouTube's player JS
+# and the extractor loads time-ago patterns by reflection.
+-keep class org.mozilla.javascript.** { *; }
+-keep class org.mozilla.classfile.ClassFileWriter
+-dontwarn org.mozilla.javascript.tools.**
+-keep class org.schabi.newpipe.extractor.** { *; }
+-dontwarn org.schabi.newpipe.extractor.**

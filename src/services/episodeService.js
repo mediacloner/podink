@@ -4,8 +4,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
 import {
     clearPlayProgress, deleteEpisodeLocalData, deleteEpisodeRow, deletePodcast, getAllLocalAudioPaths,
-    getEpisodesForPodcastFeed, getLocalCollectionFeedUrls, getStaleFinishedDownloads, isLocalFeedUrl,
-    LOCAL_KIND, markEpisodeFinished, markEpisodeSeen, updateEpisodeLocalPath,
+    getEpisodesForPodcastFeed, getLocalCollectionFeedUrls, getPodcastByFeedUrl, getStaleFinishedDownloads,
+    isLocalFeedUrl, isYouTubeFeedUrl, LOCAL_KIND, markEpisodeFinished, markEpisodeSeen, updateEpisodeLocalPath,
+    YOUTUBE_KIND,
 } from '../database/queries';
 import { deleteAudioFile, downloadAudioFile } from './downloadService';
 import { enqueueTranscription, forgetTranscription } from './whisperService';
@@ -61,17 +62,27 @@ import { log } from './logService';
  *   a Listening swipe, or the Feed — brings the transcript back without
  *   touching played / position, and gives the download a fresh week.
  *
- * Imported collections (3.5.0, podcast_kind 'local' — an audiobook's chapters
- * or any local audio files) sit outside the download axis: their file *is*
- * the episode, there is no feed to stream it from again. isLocalEpisode()
- * tells them apart. "Delete download" on one deletes the chapter itself
- * (deleteLocalEpisode); the weekly sweep and the end-of-episode prompt leave
- * them alone.
+ * Imported audio sits outside the download axis: its file *is* the episode,
+ * there is no feed to stream it from again. Two kinds — collections (3.5.0,
+ * podcast_kind 'local': an audiobook's chapters or any local audio files) and
+ * YouTube videos (4.1.0, podcast_kind 'youtube': one video's audio, pulled at
+ * import; audio_url is only the watch page). isImportedEpisode() tells them
+ * apart from podcast episodes. "Delete download" on one deletes the episode
+ * itself (deleteLocalEpisode); the weekly sweep and the end-of-episode prompt
+ * leave them alone. A YouTube video is imported again from its link.
  */
 
 /** A chapter of an imported collection rather than a podcast episode. */
 export const isLocalEpisode = (episode) =>
     episode?.podcast_kind === LOCAL_KIND || isLocalFeedUrl(episode?.podcast_feed_url);
+
+/** A YouTube video imported as audio (4.1.0). */
+export const isYouTubeEpisode = (episode) =>
+    episode?.podcast_kind === YOUTUBE_KIND || isYouTubeFeedUrl(episode?.podcast_feed_url);
+
+/** Imported audio of either kind: the file is the episode — deleting the
+ *  download deletes the episode, and nothing re-fetches it automatically. */
+export const isImportedEpisode = (episode) => isLocalEpisode(episode) || isYouTubeEpisode(episode);
 
 // ─── Download ⇒ transcript ────────────────────────────────────────────────────
 
@@ -100,7 +111,8 @@ export const describeTranscriptionError = (e, episode = null) => {
     if (QUIET_TRANSCRIPTION_ERRORS.has(msg)) return null;
     const reason = transcriptionReason(msg);
     const local = isLocalEpisode(episode);
-    const what = local ? 'file' : 'episode';
+    const youtube = isYouTubeEpisode(episode);
+    const what = local ? 'file' : youtube ? 'video' : 'episode';
     const withReason = (text) => (reason ? `${text}\n\nReason: ${reason}` : text);
 
     if (e?.code === 'MODEL_NOT_DOWNLOADED' || /^MODEL_/.test(e?.code || '') || /speech model|initialize STT/i.test(msg)) {
@@ -114,7 +126,9 @@ export const describeTranscriptionError = (e, episode = null) => {
             title: 'Invalid Audio File',
             message: withReason(local
                 ? 'This file could not be read as audio. It may be damaged or not an audio file at all — try importing it again.'
-                : 'This audio file appears to be corrupted or missing. Try deleting and re-downloading the episode.'),
+                : youtube
+                    ? 'The downloaded audio could not be read. Delete the video and import its link again.'
+                    : 'This audio file appears to be corrupted or missing. Try deleting and re-downloading the episode.'),
         };
     }
     if (/no audio track|instantiate extractor|extracted no audio|window reader|extract audio|decoder|codec/i.test(msg)) {
@@ -122,7 +136,9 @@ export const describeTranscriptionError = (e, episode = null) => {
             title: 'Audio Could Not Be Decoded',
             message: withReason(local
                 ? 'Android could not decode this file. Converting it to MP3 or M4B and importing it again usually fixes it.'
-                : 'Android could not decode this episode\'s audio. Try deleting and re-downloading it.'),
+                : youtube
+                    ? 'Android could not decode this video\'s audio. Delete the video and import its link again.'
+                    : 'Android could not decode this episode\'s audio. Try deleting and re-downloading it.'),
         };
     }
     if (/stalled/i.test(msg)) {
@@ -216,7 +232,7 @@ export const downloadEpisode = async (episode, { onProgress } = {}) => {
  * Throws on failure so callers can show an error and restore their row.
  */
 export const removeEpisodeDownload = async (episode) => {
-    if (isLocalEpisode(episode)) return deleteLocalEpisode(episode);
+    if (isImportedEpisode(episode)) return deleteLocalEpisode(episode);
     const id = episode.id;
     log('UI', 'Remove download', { id, title: episode.title });
     forgetTranscription(id);
@@ -235,13 +251,16 @@ export const removeEpisodeDownload = async (episode) => {
 };
 
 /**
- * Remove a chapter of an imported collection for good — the file, its
- * transcript and the row (nothing could re-list it). Stops the player first
- * when it is the loaded track. Throws on failure.
+ * Remove imported audio for good — a chapter of a collection or a YouTube
+ * video: the file, its transcript and the row (nothing could re-list it).
+ * Stops the player first when it is the loaded track. A YouTube channel row
+ * left without videos goes with its last one (an empty collection stays: it
+ * is something the user built and can add files to). Throws on failure.
  */
 export const deleteLocalEpisode = async (episode) => {
     const id = episode.id;
-    log('UI', 'Delete imported chapter', { id, title: episode.title });
+    const youtube = isYouTubeEpisode(episode);
+    log('UI', youtube ? 'Delete imported video' : 'Delete imported chapter', { id, title: episode.title });
     forgetTranscription(id);
     try {
         const track = await TrackPlayer.getActiveTrack();
@@ -253,6 +272,17 @@ export const deleteLocalEpisode = async (episode) => {
     if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
     await deleteEpisodeRow(id);
     notifyLibraryChange({ type: 'episode-delete', episodeId: id });
+    if (youtube && episode.podcast_feed_url) {
+        try {
+            const channel = await getPodcastByFeedUrl(episode.podcast_feed_url);
+            if (channel && (channel.episode_count ?? 0) === 0) {
+                await deletePodcast(episode.podcast_feed_url);
+                notifyLibraryChange({ type: 'unsubscribe', feedUrl: episode.podcast_feed_url, episodeIds: [] });
+            }
+        } catch (e) {
+            log('UI', 'Empty YouTube channel not removed', { feedUrl: episode.podcast_feed_url, error: e?.message || String(e) });
+        }
+    }
 };
 
 /** Tear the player down if the loaded track is one of `ids` (a Set). */
@@ -300,7 +330,8 @@ const basename = (uri) => String(uri || '').split('/').pop();
  * to refer to it — a `.part` from a download the process died in the middle
  * of, an `episode_*.mp3` whose row was removed before unsubscribing deleted
  * files (releases before 2.3.0), an `imports/<id>` folder whose collection
- * is gone. Runs once at launch, before any screen can start a download, so
+ * is gone, a `youtube/<videoId>.m4a` (or its `.part`) no video row refers
+ * to. Runs once at launch, before any screen can start a download, so
  * nothing in flight can be taken for an orphan. Downloads are matched by
  * file name (unique: episode_<id>.mp3) rather than full URI, because rows
  * written by older builds spell the same path differently. Never throws;
@@ -329,6 +360,16 @@ export const sweepOrphanFiles = async () => {
                 for (const sub of entry.list()) {
                     if (!(sub instanceof Directory) || collections.has(sub.name)) continue;
                     dirs += 1;
+                    sub.delete();
+                }
+            } else if (entry instanceof Directory && entry.name === 'youtube') {
+                // Imported videos: <videoId>.<ext>, unique per video, so the
+                // basename match is exact; a .part is a download the process
+                // died in the middle of.
+                for (const sub of entry.list()) {
+                    if (!(sub instanceof File) || referenced.has(sub.name)) continue;
+                    bytes += sub.size || 0;
+                    files += 1;
                     sub.delete();
                 }
             }
