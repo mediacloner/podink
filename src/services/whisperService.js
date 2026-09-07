@@ -274,9 +274,12 @@ export const getConfiguredModelKey = async () => {
 export const getNativeRecognizer = () =>
     (SherpaNative && typeof SherpaNative.recognizeFromFileWithOptions === 'function') ? SherpaNative : null;
 /** Foreground service + wake lock while something other than the queue
- *  transcribes; every call refreshes the wake-lock budget. */
-export const keepTranscriptionServiceAlive = (title, message) => _startFg(title, message, 0);
-export const stopTranscriptionService = () => { if (!_running && _queue.length === 0) _stopFg(); };
+ *  needs the process alive (the live-radio recorder, with or without a
+ *  transcript); every call refreshes the wake-lock budget, and the queue
+ *  runner leaves the service up until stopTranscriptionService(). */
+let _keeper = false;
+export const keepTranscriptionServiceAlive = (title, message) => { _keeper = true; _startFg(title, message, 0); };
+export const stopTranscriptionService = () => { _keeper = false; if (!_running && _queue.length === 0) _stopFg(); };
 
 // ─── Text-to-segment conversion ─────────────────────────────────────────────
 
@@ -691,9 +694,10 @@ const _runNext = async () => {
         _notify(); // per-listener safe
 
         if (_queue.length === 0) {
-            // While live radio holds the queue the foreground service is its
-            // recorder's — a job it cancelled must not take the service down.
-            if (!_held) _stopFg();
+            // While live radio records (holding the queue or not) the
+            // foreground service is its recorder's — a finished or cancelled
+            // job must not take the service down.
+            if (!_held && !_keeper) _stopFg();
             log('SERVICE', 'Queue empty');
         } else {
             setTimeout(_runNext, 0);

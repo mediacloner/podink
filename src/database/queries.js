@@ -607,6 +607,13 @@ export const updateRadioEpisodeProgramme = async (id, title, description) => {
   await db.runAsync('UPDATE Episodes SET title = ?, description = ? WHERE id = ?', [title, description || '', id]);
 };
 
+/** The session stopped recording and plays the stream directly (recorder
+ *  failure): the row loses its playlist so the Player shows live controls. */
+export const updateRadioEpisodeLocalPath = async (id, localPath) => {
+  const db = await openDatabaseContext();
+  await db.runAsync('UPDATE Episodes SET local_audio_path = ? WHERE id = ?', [localPath || null, id]);
+};
+
 /** Every session row (with transcripts) — at launch, nothing can be resumed. */
 export const deleteAllRadioEpisodes = async () => {
   const db = await openDatabaseContext();

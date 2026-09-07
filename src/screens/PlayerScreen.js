@@ -48,14 +48,18 @@ const PlayerScreen = ({ route, navigation }) => {
     const epRef = useRef(ep);
     epRef.current = ep;
 
-    // Live radio (4.0.0): a session row plays either the station's stream
-    // ('live' — programme guide instead of a transcript, no seeking) or the
-    // growing local recording ('transcript' — text arrives window by window,
-    // seek anywhere, LIVE jumps to the newest transcribed moment).
+    // Live radio (4.0.0): 'transcript' shows the text (arriving window by
+    // window), 'live' the programme guide. A recorded session — its row's
+    // local_audio_path is the growing local playlist — gets the full controls
+    // either way (seek anywhere, LIVE catches up); the station's own stream,
+    // played directly, has no past and shows LIVE alone.
     const isRadio = isRadioEpisode(ep);
     const radio = useRadioSession();
-    const radioMode = isRadio ? (ep.local_audio_path ? 'transcript' : 'live') : null;
     const radioSession = isRadio && radio?.episodeId === epId ? radio : null;
+    const radioMode = !isRadio ? null
+        : radioSession ? radioSession.mode
+        : (ep.has_transcript ? 'transcript' : 'live');
+    const radioRecorded = isRadio && !!ep.local_audio_path;
     const radioStation = isRadio ? getStation(stationIdFromFeedUrl(ep.podcast_feed_url)) : null;
 
     const [segments, setSegments] = useState([]);
@@ -399,8 +403,8 @@ const PlayerScreen = ({ route, navigation }) => {
         }
     }
     const liveControls = !isRadio ? null
-        : radioMode === 'live' ? { mode: 'live' }
-        : { mode: 'transcript', read: readLiveState, onGoLive: radioGoLive };
+        : radioRecorded ? { mode: 'recording', read: readLiveState, onGoLive: radioGoLive }
+        : { mode: 'live' };
     const radioNotice = radioSession && (radioSession.status === 'error' || radioSession.status === 'ended')
         ? radioSession.statusMessage || (radioSession.status === 'ended' ? 'The stream ended' : 'Something went wrong')
         : null;
@@ -480,8 +484,9 @@ const PlayerScreen = ({ route, navigation }) => {
                             accent={accent}
                         />
                         <Text style={styles.liveFootnote}>
-                            Playing the station as it airs — no transcript. To read along, stop and choose
-                            “With transcript” on the station’s page.
+                            {radioRecorded
+                                ? 'No transcript — but everything since you tuned in is kept: pause, skip back and forth, and tap LIVE to catch up. To read along, stop and choose “With transcript” on the station’s page.'
+                                : 'Playing the station as it airs — no transcript. To read along, stop and choose “With transcript” on the station’s page.'}
                         </Text>
                     </ScrollView>
                 ) : (

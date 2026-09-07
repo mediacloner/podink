@@ -53,9 +53,9 @@ const RadioScreen = ({ navigation }) => {
                 ItemSeparatorComponent={() => <View style={styles.separator} />}
                 ListHeaderComponent={(
                     <Text style={styles.intro}>
-                        English-language talk radio, live. Listen straight away, or with a transcript —
-                        about 40 seconds behind the air so the words are on screen before you hear them.
-                        Rewind, replay, look words up.
+                        English-language talk radio, live. Listen straight away — pause, skip back and
+                        catch up as you like — or with a transcript, about 40 seconds behind the air so
+                        the words are on screen before you hear them. Rewind, replay, look words up.
                     </Text>
                 )}
                 contentContainerStyle={{ paddingBottom: 120 }}

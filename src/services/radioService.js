@@ -3,9 +3,15 @@
  *
  * Two ways to listen to a station:
  *
- *   'live'        the player plays the station's stream itself. Nothing is
- *                 recorded; the programme guide is shown instead of a
- *                 transcript. No rewind — the stream has no past.
+ *   'live'        no transcript; the programme guide is shown instead. On
+ *                 Android the native recorder still rewrites the stream as a
+ *                 local HLS event playlist (see below), so the listener can
+ *                 pause, skip back and forth through what has aired since
+ *                 tuning in, and catch up with LIVE — playback starts once
+ *                 LIVE_BUFFER_SEC (15 s) is recorded and follows that far
+ *                 behind. Without the recorder (iOS, or after a fatal
+ *                 recorder error) the player plays the stream itself: no
+ *                 past, nothing to seek.
  *
  *   'transcript'  the native LiveRadio recorder rewrites the stream as a local
  *                 HLS event playlist (segments of exact, frame-counted length)
@@ -27,7 +33,8 @@ import TrackPlayer, { Event } from 'react-native-track-player';
 import { Directory, File, Paths } from 'expo-file-system';
 import {
     deleteAllRadioEpisodes, deleteEpisodeRow, finalizeTranscript, getEpisodeById,
-    insertRadioEpisode, saveRadioStation, saveTranscriptsIncremental, updateRadioEpisodeProgramme,
+    insertRadioEpisode, saveRadioStation, saveTranscriptsIncremental, updateRadioEpisodeLocalPath,
+    updateRadioEpisodeProgramme,
 } from '../database/queries';
 import {
     dequeueTranscription, enqueueTranscription, ensureEngine, getActiveId, getConfiguredModelKey,
@@ -59,6 +66,11 @@ export const FOLLOW_DELAY_SEC = 40;
 // The text frontier is the end of the last transcribed window; the player is
 // never sent closer to it than this, so a word is on screen.
 const LIVE_LEAD_SEC = 1.5;
+// Live mode with the recorder (no transcript): playback starts once this much
+// is recorded and never comes closer than this to the recorded edge. The
+// player reloads the growing playlist about every TARGETDURATION (12 s), so
+// staying 15 s back keeps at least one unplayed segment ahead at every reload.
+export const LIVE_BUFFER_SEC = 15;
 // Within this many seconds of the follow position the Player shows "LIVE".
 export const LIVE_EDGE_SEC = 6;
 const PROGRAMME_POLL_MS = 60 * 1000;
@@ -232,6 +244,14 @@ const onWindow = (w) => {
     const s = _session;
     if (!s || w.sessionId !== s.id) return;
     s.windowsSeen += 1;
+    if (s.mode !== 'transcript') {
+        // No transcript wanted: the window file is surplus (the recorder
+        // cannot skip writing them). Its arrival is a handy ~24 s beat to
+        // renew the wake lock behind a long recording.
+        try { new File(`file://${w.path}`).delete(); } catch (_) {}
+        keepTranscriptionServiceAlive('Live radio', `Recording ${s.stationName}…`);
+        return;
+    }
     _windowChain = _windowChain
         .then(() => transcribeWindow(s, w))
         .catch((e) => {
@@ -252,16 +272,22 @@ const onWindow = (w) => {
         });
 };
 
+/** How far behind the recorded edge playback starts and follows. */
+const startDelaySec = (s) => (s.mode === 'transcript' ? FOLLOW_DELAY_SEC : LIVE_BUFFER_SEC);
+
 /**
- * Start playback from the top once the first window has been transcribed
- * AND FOLLOW_DELAY_SEC of audio is recorded, so the text stays ahead of the
- * playhead from the first second. A timer covers the gap when the recorder
- * is between segment events.
+ * Start playback from the top once enough audio is recorded — FOLLOW_DELAY_SEC
+ * for a transcript session (after its first window has been transcribed, so
+ * the text stays ahead of the playhead from the first second), LIVE_BUFFER_SEC
+ * for a live one. A timer covers the gap when the recorder is between
+ * segment events.
  */
 const maybeStartFollowing = (s) => {
-    if (_session !== s || s.status !== 'buffering' || !s.firstWindowDone) return;
+    if (_session !== s || s.status !== 'buffering') return;
+    if (s.mode === 'transcript' && !s.firstWindowDone) return;
+    const need = startDelaySec(s);
     const air = airSec(s);
-    if (air >= FOLLOW_DELAY_SEC) {
+    if (air >= need) {
         if (s.startTimer) { clearTimeout(s.startTimer); s.startTimer = null; }
         startPlayback(s, 0);
         return;
@@ -270,7 +296,7 @@ const maybeStartFollowing = (s) => {
         s.startTimer = setTimeout(() => {
             s.startTimer = null;
             if (_session === s && s.status === 'buffering') startPlayback(s, 0);
-        }, Math.max(500, (FOLLOW_DELAY_SEC - air) * 1000 + 300));
+        }, Math.max(500, (need - air) * 1000 + 300));
     }
 };
 
@@ -287,11 +313,11 @@ const startPlayback = async (s, positionSec) => {
         }
         await TrackPlayer.play();
         if (_session !== s) return;
-        // The delay behind the broadcast at which playback started (~27 s:
-        // one window plus its decode). Following live keeps this delay; the
-        // Player's LIVE pill measures how far the user is behind it.
-        if (s.mode === 'transcript' && s.followDelaySec == null) {
-            s.followDelaySec = Math.max(FOLLOW_DELAY_SEC, airSec(s) - (positionSec || 0));
+        // The delay behind the broadcast at which playback started. Following
+        // live keeps this delay; the Player's LIVE pill measures how far the
+        // user is behind it.
+        if (s.buffered && s.followDelaySec == null) {
+            s.followDelaySec = Math.max(startDelaySec(s), airSec(s) - (positionSec || 0));
         }
         setStatus('playing');
     } catch (e) {
@@ -322,7 +348,7 @@ export const attachPlayer = async () => {
     try {
         const track = await TrackPlayer.getActiveTrack();
         if (track?.id !== s.episodeId) {
-            await startPlayback(s, s.mode === 'transcript' ? livePositionSec(s) : null);
+            await startPlayback(s, s.buffered ? livePositionSec(s) : null);
         }
     } catch (_) {}
     return _session === s;
@@ -336,17 +362,24 @@ export const airSec = (s = _session) => {
     return s.totalSec + Math.min(Math.max(since, 0), SEGMENT_SEC);
 };
 
-/** The newest moment that has text, minus a lead so a word is on screen. */
-export const textEdgeSec = (s = _session) => (s ? Math.max(0, s.frontierSec - LIVE_LEAD_SEC) : 0);
+/** The newest moment the player may be sent to: for a transcript session the
+ *  newest moment that has text (minus a lead so a word is on screen), for a
+ *  recorded live session LIVE_BUFFER_SEC behind the recorded edge. */
+export const edgeSec = (s = _session) => {
+    if (!s) return 0;
+    if (s.mode === 'transcript') return Math.max(0, s.frontierSec - LIVE_LEAD_SEC);
+    return Math.max(0, s.totalSec - LIVE_BUFFER_SEC);
+};
+export const textEdgeSec = edgeSec;
 
 /**
- * "Live" for a transcript session: the position that keeps the delay
- * playback started with (about half a minute behind the broadcast) — never
- * past the text edge. Before playback has started it is the text edge.
+ * "Live" for a recorded session: the position that keeps the delay playback
+ * started with — never past the edge. Before playback has started it is the
+ * edge itself.
  */
 export const livePositionSec = (s = _session) => {
     if (!s) return 0;
-    const edge = textEdgeSec(s);
+    const edge = edgeSec(s);
     if (s.followDelaySec == null) return edge;
     return Math.max(0, Math.min(airSec(s) - s.followDelaySec, edge));
 };
@@ -355,14 +388,14 @@ export const livePositionSec = (s = _session) => {
 export const readLiveState = () => {
     const s = _session;
     if (!s) return null;
-    return { followSec: livePositionSec(s), airSec: airSec(s), edgeSec: textEdgeSec(s), status: s.status };
+    return { followSec: livePositionSec(s), airSec: airSec(s), edgeSec: edgeSec(s), status: s.status };
 };
 
-/** Jump to live (transcript sessions); on the direct stream just play. */
+/** Jump to live (recorded sessions); on the direct stream just play. */
 export const goLive = async () => {
     const s = _session;
     if (!s) return;
-    if (s.mode !== 'transcript') { try { await TrackPlayer.play(); } catch (_) {} return; }
+    if (!s.buffered) { try { await TrackPlayer.play(); } catch (_) {} return; }
     try {
         const track = await TrackPlayer.getActiveTrack();
         if (track?.id !== s.episodeId) { await startPlayback(s, livePositionSec(s)); return; }
@@ -376,7 +409,7 @@ export const goLive = async () => {
 let _recoveries = [];
 const onPlaybackError = async (e) => {
     const s = _session;
-    if (!s || s.mode !== 'transcript') return;
+    if (!s || !s.buffered) return;
     try {
         const track = await TrackPlayer.getActiveTrack();
         if (track?.id !== s.episodeId) return;
@@ -390,6 +423,30 @@ const onPlaybackError = async (e) => {
     _recoveries.push(now);
     log('RADIO', 'Playback error — re-attaching the recording', { message: e?.message, code: e?.code, at: s.lastPositionSec });
     await startPlayback(s, Math.min(s.lastPositionSec || 0, livePositionSec(s)));
+};
+
+/**
+ * Live mode when the recorder gives up on a station (a stream shape it
+ * cannot parse, a fatal network error): keep listening on the stream itself.
+ * The row loses its playlist so the Player switches to the LIVE-only
+ * controls; the seek limit and the recorder go with it.
+ */
+const fallbackToDirectStream = async (s, why) => {
+    if (_session !== s || s.mode !== 'live' || !s.buffered) return false;
+    log('RADIO', 'Recorder failed — playing the stream directly', { why });
+    s.buffered = false;
+    s.playlistUri = null;
+    s.followDelaySec = null;
+    s.recorderError = null;
+    if (s.startTimer) { clearTimeout(s.startTimer); s.startTimer = null; }
+    if (LiveRadio) { try { await LiveRadio.stop(s.id); } catch (_) {} }
+    setRemoteSeekLimit(null);
+    try { await updateRadioEpisodeLocalPath(s.episodeId, null); } catch (_) {}
+    if (_session !== s) return false;
+    notifyLibraryChange({ type: 'radio-programme', episodeId: s.episodeId });
+    _notify();
+    await startPlayback(s, null);
+    return true;
 };
 
 // ─── Start / stop ────────────────────────────────────────────────────────────
@@ -432,11 +489,14 @@ const _startSession = async (stationId, mode) => {
     const episodeId = `radio:${stationId}:${startedAt}`;
     const feedUrl = stationFeedUrl(stationId);
     const dir = new Directory(Paths.document, RADIO_DIR, id);
-    const playlistUri = mode === 'transcript' ? new File(dir, 'live.m3u8').uri : null;
+    // With the recorder both modes play the local recording; without it
+    // (iOS) live mode plays the stream itself.
+    const buffered = !!LiveRadio;
+    const playlistUri = buffered ? new File(dir, 'live.m3u8').uri : null;
 
     const s = {
         id, stationId, stationName: station.name, stationTitle: stationTitle(station), mode, episodeId, feedUrl,
-        startedAt, dirUri: dir.uri, playlistUri, streamUrl: stream.url,
+        startedAt, dirUri: dir.uri, playlistUri, buffered, streamUrl: stream.url,
         status: 'starting', statusMessage: '',
         guide: null, programmeTitle: null, icyTitle: null,
         totalSec: 0, lastSegmentAt: 0, followDelaySec: null,
@@ -445,7 +505,7 @@ const _startSession = async (stationId, mode) => {
     };
     _session = s;
     _notify();
-    log('RADIO', 'Session start', { stationId, mode, stream: stream.url });
+    log('RADIO', 'Session start', { stationId, mode, buffered, stream: stream.url });
 
     try {
         await saveRadioStation({ feed_url: feedUrl, title: s.stationTitle, description: station.blurb });
@@ -479,33 +539,39 @@ const _startSession = async (stationId, mode) => {
         s.programmeTimer = setInterval(() => refreshProgramme(), PROGRAMME_POLL_MS);
         if (!guide) refreshProgramme();
 
-        if (mode === 'live') {
+        if (!buffered) {
+            // No recorder: the stream itself, nothing to seek.
             await startPlayback(s, null);
             return s;
         }
 
-        // Transcript mode: the engine gets the decoder to itself. The episode
-        // queue is held; the job that was running is cancelled (its partial
-        // rows and resume marker stay) and put straight back at the front of
-        // the held queue, so it shows as queued while the radio plays and is
-        // the first to resume — from where it stopped — when the session ends.
-        holdQueue();
-        const activeId = getActiveId();
-        if (activeId) {
-            let row = null;
-            try { row = await getEpisodeById(activeId); } catch (_) {}
-            dequeueTranscription(activeId);
-            if (row?.local_audio_path) {
-                enqueueTranscription(activeId, row.local_audio_path, null, null, row.duration || 0, { front: true }).catch(() => {});
+        if (mode === 'transcript') {
+            // The engine gets the decoder to itself. The episode queue is
+            // held; the job that was running is cancelled (its partial rows
+            // and resume marker stay) and put straight back at the front of
+            // the held queue, so it shows as queued while the radio plays and
+            // is the first to resume — from where it stopped — when the
+            // session ends.
+            holdQueue();
+            const activeId = getActiveId();
+            if (activeId) {
+                let row = null;
+                try { row = await getEpisodeById(activeId); } catch (_) {}
+                dequeueTranscription(activeId);
+                if (row?.local_audio_path) {
+                    enqueueTranscription(activeId, row.local_audio_path, null, null, row.duration || 0, { front: true }).catch(() => {});
+                }
+                log('RADIO', 'Paused the episode transcription', { activeId, requeued: !!row?.local_audio_path });
             }
-            log('RADIO', 'Paused the episode transcription', { activeId, requeued: !!row?.local_audio_path });
         }
-        // The notification's skip-forward and seek bar stop at the text edge,
-        // like the Player's own controls.
-        setRemoteSeekLimit(() => (_session === s ? textEdgeSec(s) : null));
+        // The notification's skip-forward and seek bar stop at the edge, like
+        // the Player's own controls.
+        setRemoteSeekLimit(() => (_session === s ? edgeSec(s) : null));
         setStatus('buffering');
-        await ensureEngine(true);
-        if (_session !== s) return s;
+        if (mode === 'transcript') {
+            await ensureEngine(true);
+            if (_session !== s) return s;
+        }
 
         _subs.push(DeviceEventEmitter.addListener('LiveRadioSegment', (ev) => {
             if (_session !== s || ev?.sessionId !== s.id) return;
@@ -522,18 +588,28 @@ const _startSession = async (stationId, mode) => {
         _subs.push(DeviceEventEmitter.addListener('LiveRadioError', (ev) => {
             if (_session !== s || ev?.sessionId !== s.id) return;
             log('RADIO', ev.fatal ? 'Recorder failed' : 'Recorder hiccup', { message: ev.message });
-            if (ev.fatal) setStatus('error', ev.message || 'The stream could not be recorded');
-            else { s.recorderError = ev.message || 'Reconnecting…'; _notify(); }
+            if (!ev.fatal) { s.recorderError = ev.message || 'Reconnecting…'; _notify(); return; }
+            // Without a transcript the stream itself is a fine second best.
+            if (s.mode === 'live') fallbackToDirectStream(s, ev.message);
+            else setStatus('error', ev.message || 'The stream could not be recorded');
         }));
         _subs.push(DeviceEventEmitter.addListener('LiveRadioStopped', (ev) => {
             if (_session !== s || ev?.sessionId !== s.id || s.stopping) return;
             if (s.status !== 'error') setStatus('ended', 'The stream ended');
         }));
 
-        await LiveRadio.start({
-            sessionId: id, url: stream.url, kind: stream.kind, dir: dir.uri,
-            segmentSec: SEGMENT_SEC, windowSegments: WINDOW_SEGMENTS, userAgent: USER_AGENT,
-        });
+        try {
+            await LiveRadio.start({
+                sessionId: id, url: stream.url, kind: stream.kind, dir: dir.uri,
+                segmentSec: SEGMENT_SEC, windowSegments: WINDOW_SEGMENTS, userAgent: USER_AGENT,
+            });
+        } catch (e) {
+            if (mode === 'live' && _session === s) {
+                await fallbackToDirectStream(s, e?.message || String(e));
+                return s;
+            }
+            throw e;
+        }
         keepTranscriptionServiceAlive('Live radio', `Recording ${station.name}…`);
         return s;
     } catch (e) {
@@ -559,7 +635,7 @@ export const stopSession = async ({ keepPlayer = false } = {}) => {
     if (s.startTimer) clearTimeout(s.startTimer);
     clearSubs();
 
-    if (s.mode === 'transcript' && LiveRadio) {
+    if (s.buffered && LiveRadio) {
         try { await LiveRadio.stop(s.id); } catch (_) {}
     }
     if (!keepPlayer) {
@@ -575,12 +651,10 @@ export const stopSession = async ({ keepPlayer = false } = {}) => {
     try { new Directory(s.dirUri).delete(); } catch (_) {}
     notifyLibraryChange({ type: 'unsubscribe', feedUrl: s.feedUrl, episodeIds: [s.episodeId] });
 
-    if (s.mode === 'transcript') {
-        setRemoteSeekLimit(null);
-        // The held queue runs again — the job the session interrupted first.
-        releaseQueue();
-        stopTranscriptionService();
-    }
+    setRemoteSeekLimit(null);
+    // The held queue runs again — the job the session interrupted first.
+    if (s.mode === 'transcript') releaseQueue();
+    stopTranscriptionService();
 };
 
 /** Launch hygiene: no session survives a restart — rows and files go. */
