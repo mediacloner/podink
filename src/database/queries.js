@@ -40,7 +40,7 @@ export const isYouTubeFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feed
 // the episode) from a podcast episode without a second query.
 const EPISODE_WITH_IMAGE = `
   SELECT e.*, p.image_url, p.kind AS podcast_kind, p.author AS podcast_author,
-         (SELECT COUNT(*) FROM EpisodeBooks b WHERE b.episode_id = e.id) AS books_count
+         (SELECT COUNT(*) FROM EpisodeBooks b WHERE b.episode_id = e.id AND b.first_ms IS NOT NULL) AS books_count
   FROM Episodes e
   LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
 `;
@@ -367,15 +367,17 @@ export const replaceEpisodeBooks = async (episodeId, books, indexedAt = Date.now
   });
 };
 
-/** Ids of transcribed episodes never scanned for books (services/bookIndex.js
- *  backlog), the ones listened to most recently first; radio sessions excluded. */
-export const getEpisodesNeedingBookScan = async () => {
+/** Ids of transcribed episodes never scanned for books, or scanned before
+ *  `staleBefore` (epoch ms — an older detector), the ones listened to most
+ *  recently first; radio sessions excluded. (services/bookIndex.js backlog) */
+export const getEpisodesNeedingBookScan = async (staleBefore = 0) => {
   const db = await openDatabaseContext();
   const rows = await db.getAllAsync(
     `SELECT e.id FROM Episodes e
      LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
-     WHERE e.has_transcript = 1 AND e.books_indexed_at IS NULL AND ${NOT_RADIO}
-     ORDER BY COALESCE(e.last_played_at, 0) DESC, COALESCE(e.downloaded_at, 0) DESC`
+     WHERE e.has_transcript = 1 AND (e.books_indexed_at IS NULL OR e.books_indexed_at < ?) AND ${NOT_RADIO}
+     ORDER BY COALESCE(e.last_played_at, 0) DESC, COALESCE(e.downloaded_at, 0) DESC`,
+    [staleBefore]
   );
   return rows.map(r => r.id).filter(Boolean);
 };

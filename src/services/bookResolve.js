@@ -92,7 +92,9 @@ const popular = (doc) => (doc.ratingsCount || 0) >= POPULAR_GR || (doc.editions 
 export const pickMatch = (docs, cand, ctx = {}) => {
     const wantT = normTitle(cand.title);
     if (!wantT) return null;
-    const confirmed = [...(ctx.confirmedAuthors || [])];
+    // Authors this episode points at: confirmed from earlier candidates, or
+    // hinted by its title / notes (the interviewed writer).
+    const confirmed = [...(ctx.confirmedAuthors || []), ...(ctx.hintAuthors || [])];
     let best = null;
     for (const doc of docs || []) {
         const authors = doc.authors || (doc.author ? [doc.author] : []);
@@ -130,7 +132,7 @@ const cacheKey = (title) => normTitle(title).replace(/\s+/g, '');
  * @returns books: [{ title, author, description, rating, ratingsCount, coverUrl,
  *   year, pages, openlibraryUrl, goodreadsUrl, source, heardAs: [], firstMs }]
  */
-export const resolveCandidates = async (cands, fetchers, { signal } = {}) => {
+export const resolveCandidates = async (cands, fetchers, { signal, hintAuthors = [] } = {}) => {
     const { searchOpenLibrary, searchGoodreads, fetchOpenLibraryDescription, sleep } = fetchers;
     const log = fetchers.log || (() => {});
     const confirmedAuthors = new Set();
@@ -155,7 +157,7 @@ export const resolveCandidates = async (cands, fetchers, { signal } = {}) => {
     };
 
     const resolveOne = async (cand) => {
-        const ctx = { confirmedAuthors };
+        const ctx = { confirmedAuthors, hintAuthors };
         const olDocs = await paced('ol', () => searchOpenLibrary(cand.title, signal));
         const ol = pickMatch(olDocs, cand, ctx);
         // Goodreads: the fallback when Open Library has nothing, and the

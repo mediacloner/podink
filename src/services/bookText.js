@@ -34,6 +34,14 @@ const AUTHOR = `(?:[A-Z]\\.|${CAP})(?:\\s+${NAME_PART}${END}){0,3}`;   // "D. Ro
 const RE_BY = new RegExp(`\\bby\\s+(${AUTHOR})`, 'gu');
 const RE_CALLED = new RegExp(`\\b(?:called|titled|entitled|named)\\s+(${TITLE})`, 'gu');
 const RE_POSSESSIVE = new RegExp(`\\b(${CAP}(?:\\s+${CAP}){0,2})['’]s\\s+(${TITLE})`, 'gu');
+// "your new book Taipei Story", "her debut novel The Poppy War", "the
+// novella, Boulder": how an interview names the guest's own book — no
+// author is said because the author is in the room.
+const BOOK_NOUN = '(?:book|novel|memoir|novella|biography|autobiography|thriller|debut|sequel|prequel|collection|anthology|trilogy|series|title|story|poem|essay|bestseller|masterpiece|classic)s?';
+const RE_NOUN = new RegExp(`\\b${BOOK_NOUN},?\\s+(${TITLE})`, 'gu');
+// Show notes: "author of Babel and Yellowface", "The Dragon Republic (2019)".
+const RE_AUTHOR_OF = new RegExp(`\\bauthor of\\s+(${TITLE})(?:,?\\s+and\\s+(${TITLE}))?`, 'gu');
+const RE_YEARED = new RegExp(`(${TITLE})\\s*\\((?:19|20)\\d\\d\\)`, 'gu');
 
 const SMALL_RE = new RegExp(`^(?:${SMALL_WORDS})$`, 'u');   // lower case only, on purpose
 // Publishers, prizes, shows: capitalised runs that are never a title.
@@ -169,8 +177,69 @@ export const extractBookCandidates = (text) => {
         push(m[2], m[1], m.index, 'possessive');
     }
 
+    // 4. "<book noun> <Title>" — no author; the lookup accepts it only when the
+    //    title is unmistakable or its author is one the episode points at.
+    RE_NOUN.lastIndex = 0;
+    while ((m = RE_NOUN.exec(src))) { site++; push(m[1], '', m.index, 'noun'); }
+
     // Position order, alternatives of a site kept in their guess order.
     return out.map((c, i) => ({ ...c, _i: i })).sort((a, b) => (a.site - b.site) || (a._i - b._i)).map(({ _i, ...c }) => c);
+};
+
+/**
+ * Candidates from an episode's show notes (plain text): the transcript
+ * patterns plus the two forms notes use — "author of X and Y" and a list of
+ * titles with years. They carry no position; bookIndex finds where (if
+ * anywhere) the transcript says them.
+ */
+export const extractNotesCandidates = (notes) => {
+    const src = String(notes || '');
+    const out = extractBookCandidates(src).map(c => ({ ...c, fromNotes: true }));
+    const seen = new Set(out.map(c => c.title.toLowerCase()));
+    let site = 1000;
+    const add = (raw, index, pattern) => {
+        const t = cleanTitle(raw);
+        if (!t || seen.has(t.toLowerCase())) return;
+        seen.add(t.toLowerCase());
+        out.push({ title: t, author: '', heard: t, index, pattern, site: site++, fromNotes: true });
+    };
+    let m;
+    RE_AUTHOR_OF.lastIndex = 0;
+    while ((m = RE_AUTHOR_OF.exec(src))) {
+        for (const g of [m[1], m[2]]) {
+            if (!g) continue;
+            // "Babel and Yellowface": one capture, two books.
+            for (const part of g.split(/\s+and\s+/u)) if (isCap(part)) add(part, m.index, 'notes-author-of');
+        }
+    }
+    RE_YEARED.lastIndex = 0;
+    while ((m = RE_YEARED.exec(src))) add(m[1], m.index, 'notes-year');
+    return out;
+};
+
+// A person's name as written in a title or in notes: two to four parts,
+// initials allowed ("Rebecca F. Kuang", "R.F. Kuang", "Samantha Shannon").
+const NAME_PART_RE = `(?:(?:[A-Z]\\.){1,3}|${CAP})`;   // initials first: "F." must not stop at "F"
+const NAME_RE = new RegExp(`\\b(${NAME_PART_RE}(?:\\s+${NAME_PART_RE}){1,3})(?![\\p{L}\\p{N}])`, 'gu');
+const NOUN_WORD = new RegExp(`^${BOOK_NOUN}$`, 'iu');
+
+/**
+ * Names the episode points at — its title, its show notes, the podcast's
+ * author field: hints for the lookup when a book is named without its
+ * author ("your new book Taipei Story" in an interview with its writer).
+ */
+export const extractNames = (text) => {
+    const out = new Set();
+    let m;
+    NAME_RE.lastIndex = 0;
+    while ((m = NAME_RE.exec(String(text || '')))) {
+        const parts = m[1].split(/\s+/);
+        if (parts.some(w => STARTERS.has(w) || AUTHOR_TAIL.has(w) || NOUN_WORD.test(w) || SMALL_RE.test(w.toLowerCase()))) continue;
+        if (NOT_A_TITLE.test(m[1])) continue;
+        if (!parts.some(w => /^[A-Z][\p{L}]{2,}/u.test(w))) continue;   // at least one real word, not all initials
+        out.add(m[1].replace(/\s+/g, ' '));
+    }
+    return [...out];
 };
 
 /**
@@ -226,6 +295,31 @@ export const bookVariants = (book) => {
     }
     out.sort((a, b) => b.length - a.length);
     return out;
+};
+
+/**
+ * The start time (ms) of the first place the transcript says the book's
+ * title in any of its spellings, or null when it never does — used for a
+ * book that came from the show notes.
+ */
+export const findFirstMention = (rows, book) => {
+    const toks = [], caps = [], ms = [];
+    for (const r of rows || []) {
+        const t = r.start_time ?? r.start ?? 0;
+        for (const w of String(r.text || '').split(/\s+/)) {
+            if (!w) continue;
+            toks.push(normTok(w)); caps.push(/^[^\p{L}\p{N}]*[A-Z]/u.test(w) ? 1 : 0); ms.push(t);
+        }
+    }
+    for (const variant of bookVariants(book)) {
+        const L = variant.length;
+        outer: for (let i = 0; i + L <= toks.length; i++) {
+            for (let k = 0; k < L; k++) if (toks[i + k] !== variant[k]) continue outer;
+            if (L === 1 && (!caps[i] || variant[0].length < 4)) continue;
+            return ms[i];
+        }
+    }
+    return null;
 };
 
 /**

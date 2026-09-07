@@ -28,12 +28,17 @@ import {
 } from '../database/queries';
 import { searchOpenLibraryByTitle, fetchOpenLibraryDescription } from '../api/openLibrary';
 import { searchGoodreads } from '../api/goodreads';
-import { extractBookCandidates, joinSegments } from './bookText';
+import { extractBookCandidates, extractNames, extractNotesCandidates, findFirstMention, joinSegments } from './bookText';
 import { resolveCandidates } from './bookResolve';
+import { showNotesPlainText } from './showNotes';
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// When the detector last changed in a way that finds more: episodes scanned
+// before this are scanned again by the launch backlog.
+export const BOOK_SCAN_SINCE = Date.UTC(2026, 8, 7, 17, 30);
 
 const isOnline = async () => {
     try {
@@ -102,10 +107,10 @@ export const indexEpisodeBooks = (episodeId, { force = false, front = false } = 
 export const backfillBookIndex = async () => {
     try {
         if (!(await isOnline())) return 0;
-        const ids = await getEpisodesNeedingBookScan();
+        const ids = await getEpisodesNeedingBookScan(BOOK_SCAN_SINCE);
         if (!ids.length) return 0;
         log('SYSTEM', 'Book scan backlog queued', { episodes: ids.length });
-        for (const id of ids) indexEpisodeBooks(id);
+        for (const id of ids) indexEpisodeBooks(id, { force: true });
         return ids.length;
     } catch (e) {
         log('SYSTEM', 'Book scan backlog failed', { error: e?.message || String(e) });
@@ -129,8 +134,19 @@ const scanOne = async (episodeId, force) => {
     }
 
     const { text, msAt } = joinSegments(rows);
-    const cands = extractBookCandidates(text).map(c => ({ ...c, ms: msAt(c.index) }));
-    log('SYSTEM', 'Book scan started', { id: episodeId, title: ep.title, words: text.split(/\s+/).length, candidates: cands.length });
+    // The show notes name books too, often spelled right, and together with
+    // the episode title (and a collection's author) they say who the writer
+    // in the room is — the hint that lets "your new book Taipei Story" resolve.
+    const notes = showNotesPlainText(ep.description || '');
+    const hintAuthors = extractNames(`${ep.title || ''}. ${ep.podcast_author || ''}. ${notes}`);
+    const cands = [
+        ...extractBookCandidates(text).map(c => ({ ...c, ms: msAt(c.index) })),
+        ...extractNotesCandidates(notes),
+    ];
+    log('SYSTEM', 'Book scan started', {
+        id: episodeId, title: ep.title, words: text.split(/\s+/).length,
+        candidates: cands.length, fromNotes: cands.filter(c => c.fromNotes).length, hints: hintAuthors,
+    });
     const t0 = Date.now();
     const books = await resolveCandidates(cands, {
         searchOpenLibrary: searchOpenLibraryByTitle,
@@ -138,7 +154,11 @@ const scanOne = async (episodeId, force) => {
         fetchOpenLibraryDescription,
         sleep,
         log: (msg, data) => log('SYSTEM', `Book scan: ${msg}`, data),
-    });
+    }, { hintAuthors });
+    // A book that came from the notes is placed where the transcript first
+    // says it; one the transcript never says stays without a position (it is
+    // not bold and does not count on the Listening row).
+    for (const b of books) if (b.firstMs == null) b.firstMs = findFirstMention(rows, b);
     await replaceEpisodeBooks(episodeId, books);
     log('SYSTEM', 'Book scan finished', {
         id: episodeId, books: books.length, seconds: Math.round((Date.now() - t0) / 1000),
