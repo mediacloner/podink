@@ -35,6 +35,23 @@ export const isPlaybackComplete = (position, duration) => {
 // the episode ending on every tick.
 export const isRadioTrackId = (id) => typeof id === 'string' && id.startsWith('radio:');
 
+// What the notification, lock screen and headset may do with the position.
+// A station's own live stream (track.isLiveStream — live radio without a
+// transcript) has no past: its remote seeks are ignored, as the Player's
+// own controls are. A live-radio transcript session sets a limit function
+// (radioService) so a forward skip stops at the newest moment that has
+// text, like the Player's slider and skip button.
+let _remoteSeekLimit = null;
+export const setRemoteSeekLimit = (fn) => { _remoteSeekLimit = typeof fn === 'function' ? fn : null; };
+const remoteSeekable = async () => {
+    try { return !(await TrackPlayer.getActiveTrack())?.isLiveStream; } catch (_) { return true; }
+};
+const clampRemoteSeek = (target) => {
+    let limit = null;
+    try { limit = _remoteSeekLimit ? _remoteSeekLimit() : null; } catch (_) {}
+    return limit != null && limit >= 0 ? Math.min(target, limit) : target;
+};
+
 export const persistProgress = async (trackId, position, duration, { ended = false } = {}) => {
     if (!trackId || isRadioTrackId(trackId)) return;
     try {
@@ -108,17 +125,22 @@ export default async function() {
     });
 
     TrackPlayer.addEventListener(Event.RemoteJumpForward, async ({ interval }) => {
+        if (!(await remoteSeekable())) return;
         const { position, duration } = await TrackPlayer.getProgress();
         const target = position + (interval || 10);
-        await TrackPlayer.seekTo(duration > 0 ? Math.min(target, duration) : target);
+        await TrackPlayer.seekTo(clampRemoteSeek(duration > 0 ? Math.min(target, duration) : target));
     });
 
     TrackPlayer.addEventListener(Event.RemoteJumpBackward, async ({ interval }) => {
+        if (!(await remoteSeekable())) return;
         const { position } = await TrackPlayer.getProgress();
         await TrackPlayer.seekTo(Math.max(0, position - (interval || 10)));
     });
 
-    TrackPlayer.addEventListener(Event.RemoteSeek, ({ position }) => TrackPlayer.seekTo(position));
+    TrackPlayer.addEventListener(Event.RemoteSeek, async ({ position }) => {
+        if (!(await remoteSeekable())) return;
+        await TrackPlayer.seekTo(clampRemoteSeek(Math.max(0, position || 0)));
+    });
 
     TrackPlayer.addEventListener(Event.RemoteStop, async () => {
         // save before stop — stopping can reset the reported position

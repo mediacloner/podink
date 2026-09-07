@@ -364,10 +364,13 @@ const _emitProgress = (episodeId, percent) => {
 let _activeEntry = null;
 
 const _persistQueue = () => {
+    // One entry per id: a job cancelled by live radio sits in the queue again
+    // while its old process is still winding down as the active entry.
+    const seen = new Set();
     const items = [
         ...(_activeEntry ? [{ id: _activeEntry.id, audioFilePath: _activeEntry.audioFilePath }] : []),
         ..._queue.map(e => ({ id: e.id, audioFilePath: e.audioFilePath })),
-    ];
+    ].filter(it => !seen.has(it.id) && seen.add(it.id));
     AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(items)).catch(() => {});
 };
 
@@ -629,7 +632,10 @@ const _process = async (entry) => {
         // attempt resume instead of restarting from zero.
         // Only tear down the engine if we still own the active slot — a wedged
         // older process must not release the engine the live job is using.
-        if (_abort === myAbort) _abandonCtx();
+        // A cancel is not an engine fault: the decoder is healthy, and when
+        // live radio cancelled the job to take the engine over, releasing it
+        // would only force a model reload seconds later.
+        if (_abort === myAbort && msg !== 'Cancelled') _abandonCtx();
         try { notifyLibraryChange({ type: 'transcript-error', episodeId: entry.id }); } catch (_) {}
         entry.reject(e);
     } finally {
@@ -650,8 +656,9 @@ const _process = async (entry) => {
 // Set while a live-radio session transcribes (radioService): the episode
 // queue waits so the native decoder — one executor, one job at a time — is
 // free for the radio windows that must land within seconds. Whatever was
-// running was cancelled by the holder (its resume marker survives) and is
-// re-enqueued on release.
+// running is cancelled by the holder (its resume marker survives) and put
+// back at the front of the held queue, so it shows as queued meanwhile and
+// is the first to resume on release.
 let _held = false;
 export const holdQueue = () => { _held = true; };
 export const releaseQueue = () => {
@@ -684,7 +691,9 @@ const _runNext = async () => {
         _notify(); // per-listener safe
 
         if (_queue.length === 0) {
-            _stopFg();
+            // While live radio holds the queue the foreground service is its
+            // recorder's — a job it cancelled must not take the service down.
+            if (!_held) _stopFg();
             log('SERVICE', 'Queue empty');
         } else {
             setTimeout(_runNext, 0);
@@ -727,7 +736,9 @@ AppState.addEventListener('change', (state) => {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-export const enqueueTranscription = async (id, audioFilePath, onProgress, onStart, durationSec = 0) => {
+/** `front` puts the job ahead of everything waiting — for a job that was
+ *  interrupted mid-way (live radio) and should be the first to resume. */
+export const enqueueTranscription = async (id, audioFilePath, onProgress, onStart, durationSec = 0, { front = false } = {}) => {
     await validateAudio(audioFilePath);
 
     const isAborting = _activeId === id && _abort?.current;
@@ -742,7 +753,8 @@ export const enqueueTranscription = async (id, audioFilePath, onProgress, onStar
     }
 
     return new Promise((resolve, reject) => {
-        _queue.push({ id, audioFilePath, onProgress, onStart, durationSec, resolve, reject });
+        const entry = { id, audioFilePath, onProgress, onStart, durationSec, resolve, reject };
+        if (front) _queue.unshift(entry); else _queue.push(entry);
         _persistQueue();
         _notify();
         setTimeout(_runNext, 0);

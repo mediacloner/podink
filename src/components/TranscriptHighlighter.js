@@ -55,7 +55,25 @@ const clauseContext = (tokens, at) => {
     return { prevWords, nextWords };
 };
 
-const CLOSED_TRANSLATE = { visible: false, text: '', contextText: '', chunkIndex: null };
+const CLOSED_TRANSLATE = { visible: false, text: '', contextText: '', precedingText: '', chunkIndex: null };
+
+// The transcript just before a chunk, for the "ask an assistant" requests
+// (share.js): up to ASK_CONTEXT_CHUNKS chunks, the oldest dropped when the
+// run gets long, so the assistant reads the passage the way the listener
+// heard it — who "she" is, what the joke answers — without a wall of text.
+const ASK_CONTEXT_CHUNKS = 3;
+const ASK_CONTEXT_MAX_CHARS = 700;
+const chunkText = (ch) => (ch ? ch.words.map(w => w.text).join('').trim() : '');
+const precedingText = (chunks, chunkIndex) => {
+    if (chunkIndex == null || chunkIndex <= 0) return '';
+    const parts = [];
+    for (let i = Math.max(0, chunkIndex - ASK_CONTEXT_CHUNKS); i < chunkIndex; i++) {
+        const t = chunkText(chunks[i]);
+        if (t) parts.push(t);
+    }
+    while (parts.length > 1 && parts.join(' ').length > ASK_CONTEXT_MAX_CHARS) parts.shift();
+    return parts.join(' ');
+};
 import FollowPill from './transcript/FollowPill';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -812,10 +830,10 @@ const TranscriptHighlighter = forwardRef(({
     const onLongPress = useCallback((text, chunkIndex) => {
         const ch = chunksRef.current;
         const prevTexts = [];
-        if (chunkIndex >= 2 && ch[chunkIndex - 2]) prevTexts.push(ch[chunkIndex - 2].words.map(w => w.text).join('').trim());
-        if (chunkIndex >= 1 && ch[chunkIndex - 1]) prevTexts.push(ch[chunkIndex - 1].words.map(w => w.text).join('').trim());
+        if (chunkIndex >= 2 && ch[chunkIndex - 2]) prevTexts.push(chunkText(ch[chunkIndex - 2]));
+        if (chunkIndex >= 1 && ch[chunkIndex - 1]) prevTexts.push(chunkText(ch[chunkIndex - 1]));
         const contextText = [...prevTexts, text].join('\n\n');
-        setTranslateModal({ visible: true, text, contextText, chunkIndex });
+        setTranslateModal({ visible: true, text, contextText, precedingText: precedingText(ch, chunkIndex), chunkIndex });
         pauseForLookup();
     }, [pauseForLookup]);
     const closeModal = useCallback(() => {
@@ -835,7 +853,8 @@ const TranscriptHighlighter = forwardRef(({
             word: cleaned,
             ...clauseContext(words.map(w => w.text), at),
             startMs: Math.round(word.startMs),
-            contextText: ch ? ch.words.map(w => w.text).join('').trim() : '',
+            contextText: chunkText(ch),
+            precedingText: precedingText(chunksRef.current, chunkIndex),
         });
         pauseForLookup();
     }, [pauseForLookup]);
@@ -865,6 +884,7 @@ const TranscriptHighlighter = forwardRef(({
             startMs: Math.round(hit ? hit.startMs : (ch?.startMs ?? 0)),
             contextText: tokens.join(' '),
             contextTranslation: translation || '',
+            precedingText: chunkIndex != null ? precedingText(chunksRef.current, chunkIndex - paragraphOffset) : '',
         });
         // Playback is already paused by the translation card underneath.
     }, []);
@@ -1041,6 +1061,8 @@ const TranscriptHighlighter = forwardRef(({
                 visible={translateModal.visible}
                 text={translateModal.text}
                 contextText={translateModal.contextText}
+                precedingText={translateModal.precedingText}
+                episodeTitle={episodeTitle}
                 lang={translationLang}
                 onClose={closeModal}
                 onWordPress={onTranslationWordPress}

@@ -149,7 +149,9 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
         },
     })).current;
 
-    const progress = duration > 0 ? position / duration : 0;
+    // A live stream's "duration" is only the player's buffer window, so its
+    // stripe would fill with nothing to mean; it stays empty.
+    const progress = duration > 0 && !track?.isLiveStream ? position / duration : 0;
 
     return (
         <Animated.View
@@ -184,20 +186,24 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
                     <Text style={styles.title}   numberOfLines={1}>{track?.title  ?? ''}</Text>
                 </View>
 
-                {/* Right side: -10 · play/pause · expand */}
+                {/* Right side: -10 · play/pause · expand. A station's own live
+                    stream (live radio without a transcript) has no past, so
+                    its card carries no rewind. */}
                 <View style={styles.rightControls}>
-                    <TouchableOpacity
-                        onPress={async () => {
-                            // fresh read — the useProgress(500) value lags
-                            try {
-                                const { position: pos } = await TrackPlayer.getProgress();
-                                await TrackPlayer.seekTo(Math.max(0, pos - 10));
-                            } catch (_) {}
-                        }}
-                        hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
-                    >
-                        <Icon name="rotate-ccw" size={22} color={withAlpha(colors.textPrimary, 0.75)} />
-                    </TouchableOpacity>
+                    {!track?.isLiveStream && (
+                        <TouchableOpacity
+                            onPress={async () => {
+                                // fresh read — the useProgress(500) value lags
+                                try {
+                                    const { position: pos } = await TrackPlayer.getProgress();
+                                    await TrackPlayer.seekTo(Math.max(0, pos - 10));
+                                } catch (_) {}
+                            }}
+                            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+                        >
+                            <Icon name="rotate-ccw" size={22} color={withAlpha(colors.textPrimary, 0.75)} />
+                        </TouchableOpacity>
+                    )}
 
                     <TouchableOpacity
                         style={styles.playBtn}

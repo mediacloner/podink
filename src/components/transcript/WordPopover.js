@@ -118,9 +118,11 @@ export const normalizeWord = (raw) =>
 // Bottom-sheet word card: a quick translation, the sentence in context, and
 // the entry from one of the offline MDict dictionaries (penReader set), with
 // a dictionary selector in the footer. `data` is null (hidden) or
-// { word, prevWords, nextWords, startMs, contextText, contextTranslation? } —
-// the last one is the sentence's translation when the caller already has it
-// (a word tapped inside the translation card), shown without a request.
+// { word, prevWords, nextWords, startMs, contextText, contextTranslation?,
+// precedingText? } — contextTranslation is the sentence's translation when
+// the caller already has it (a word tapped inside the translation card),
+// shown without a request; precedingText is the transcript just before the
+// sentence, sent along with the "ask an assistant" request as context.
 //
 // The dictionary lookup is local and never waits for the network: Google's
 // translation is supplementary and its failures stay inside its own block.
@@ -525,7 +527,11 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         const hasSentence = sentence && sentence.toLowerCase() !== word.trim().toLowerCase();
         shareText(hasSentence ? `${word}\n\n“${sentence}”` : word, 'Share word');
     }, [word, sentence]);
-    const onAsk = useCallback(() => askAssistantAboutWord(word, sentence, lang), [word, sentence, lang]);
+    const precedingText = data?.precedingText ?? '';
+    const onAsk = useCallback(
+        () => askAssistantAboutWord(word, sentence, lang, { before: precedingText, source: episodeTitle || '' }),
+        [word, sentence, lang, precedingText, episodeTitle],
+    );
 
     // ── Save / replay ────────────────────────────────────────────────────────
     const toggleSave = useCallback(async () => {

@@ -35,6 +35,7 @@ import {
 } from './whisperService';
 import { isSherpaModelDownloaded } from './downloadService';
 import { ensurePlayerAlive, loadEpisodeTrack, notifyUserStop, onTrackLoad, onUserStop } from './trackPlayer';
+import { setRemoteSeekLimit } from './playbackService';
 import { notifyLibraryChange } from './libraryEvents';
 import { USER_AGENT } from '../api/userAgent';
 import { getStation, stationFeedUrl, stationTitle } from './radioStations';
@@ -441,7 +442,6 @@ const _startSession = async (stationId, mode) => {
         totalSec: 0, lastSegmentAt: 0, followDelaySec: null,
         frontierSec: 0, windowsSeen: 0, windowsDone: 0, hasText: false, firstWindowDone: false, startTimer: null,
         transcriptError: null, recorderError: null, lastDecodeMs: 0, lastPositionSec: 0,
-        heldJob: null,
     };
     _session = s;
     _notify();
@@ -484,17 +484,25 @@ const _startSession = async (stationId, mode) => {
             return s;
         }
 
-        // Transcript mode: the engine gets the decoder to itself.
+        // Transcript mode: the engine gets the decoder to itself. The episode
+        // queue is held; the job that was running is cancelled (its partial
+        // rows and resume marker stay) and put straight back at the front of
+        // the held queue, so it shows as queued while the radio plays and is
+        // the first to resume — from where it stopped — when the session ends.
         holdQueue();
         const activeId = getActiveId();
         if (activeId) {
-            try {
-                const row = await getEpisodeById(activeId);
-                if (row?.local_audio_path) s.heldJob = { id: activeId, path: row.local_audio_path, duration: row.duration || 0 };
-            } catch (_) {}
+            let row = null;
+            try { row = await getEpisodeById(activeId); } catch (_) {}
             dequeueTranscription(activeId);
-            log('RADIO', 'Paused the episode transcription', { activeId });
+            if (row?.local_audio_path) {
+                enqueueTranscription(activeId, row.local_audio_path, null, null, row.duration || 0, { front: true }).catch(() => {});
+            }
+            log('RADIO', 'Paused the episode transcription', { activeId, requeued: !!row?.local_audio_path });
         }
+        // The notification's skip-forward and seek bar stop at the text edge,
+        // like the Player's own controls.
+        setRemoteSeekLimit(() => (_session === s ? textEdgeSec(s) : null));
         setStatus('buffering');
         await ensureEngine(true);
         if (_session !== s) return s;
@@ -568,11 +576,9 @@ export const stopSession = async ({ keepPlayer = false } = {}) => {
     notifyLibraryChange({ type: 'unsubscribe', feedUrl: s.feedUrl, episodeIds: [s.episodeId] });
 
     if (s.mode === 'transcript') {
+        setRemoteSeekLimit(null);
+        // The held queue runs again — the job the session interrupted first.
         releaseQueue();
-        if (s.heldJob) {
-            enqueueTranscription(s.heldJob.id, s.heldJob.path, null, null, s.heldJob.duration).catch(() => {});
-            log('RADIO', 'Resumed the episode transcription', { id: s.heldJob.id });
-        }
         stopTranscriptionService();
     }
 };
