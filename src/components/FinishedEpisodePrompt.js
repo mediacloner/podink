@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { showAlert } from './AppAlert';
 import { onEpisodeEnded, FINISHED_PROMPT_KEY, ASK_DELETE_ON_FINISH_KEY } from '../services/playbackService';
-import { isImportedEpisode, removeEpisodeDownload } from '../services/episodeService';
+import { isLocalEpisode, isYouTubeEpisode, removeEpisodeDownload } from '../services/episodeService';
 import { getEpisodeById } from '../database/queries';
 import { log } from '../services/logService';
 
@@ -13,10 +13,19 @@ import { log } from '../services/logService';
  * never prompt, and Settings → Storage → "Ask to delete finished episodes"
  * turns the prompt off entirely (checked on every ask, not cached).
  *
- * "Keep" keeps the download for now, not forever: unless switched off in
- * Settings → Storage, the weekly sweep — episodeService's
+ * An imported YouTube video (4.1.0) asks too, with its own wording: its file
+ * *is* the episode, so "Delete" removes the video from the library (row,
+ * file, transcript — episodeService.deleteLocalEpisode via
+ * removeEpisodeDownload; an emptied channel goes with it) and the message
+ * says so, pointing at the link as the way back. Chapters of an imported
+ * collection never ask: deleting one chapter of an audiobook because it was
+ * heard is not what anyone wants, and the collection screen is where that
+ * choice belongs.
+ *
+ * "Keep" keeps a podcast download for now, not forever: unless switched off
+ * in Settings → Storage, the weekly sweep — episodeService's
  * sweepStaleFinishedDownloads — removes it once the episode has gone a week
- * without a replay.
+ * without a replay. A kept YouTube video is left alone by the sweep.
  *
  * Two entry points, same handler:
  *  - live: playbackService's onEpisodeEnded (State.Ended, i.e. the real end
@@ -50,7 +59,7 @@ const FinishedEpisodePrompt = () => {
                 try { ep = await getEpisodeById(episodeId); } catch (_) {}
             }
             if (!alive) return;
-            if (!enabled || !ep || !ep.is_downloaded || !ep.local_audio_path || isImportedEpisode(ep)) {
+            if (!enabled || !ep || !ep.is_downloaded || !ep.local_audio_path || isLocalEpisode(ep)) {
                 // Turned off in Settings — or streamed, unsubscribed, already
                 // deleted, or a chapter of an imported book (its file is the
                 // episode; deleting it is a deliberate act in the collection
@@ -61,10 +70,13 @@ const FinishedEpisodePrompt = () => {
             }
 
             const settle = () => { askingRef.current = null; clearPending(); };
-            log('UI', 'Finished-episode prompt', { id: ep.id, title: ep.title });
+            const youtube = isYouTubeEpisode(ep);
+            log('UI', 'Finished-episode prompt', { id: ep.id, title: ep.title, youtube });
             showAlert(
-                'Episode finished',
-                `You finished "${ep.title}". Delete the download and its transcript to free up space? The episode stays in your feed, marked as played.`,
+                youtube ? 'Video finished' : 'Episode finished',
+                youtube
+                    ? `You finished "${ep.title}". Delete this video and its transcript to free up space? It leaves your library; you can import it again from its YouTube link.`
+                    : `You finished "${ep.title}". Delete the download and its transcript to free up space? The episode stays in your feed, marked as played.`,
                 [
                     { text: 'Keep', style: 'cancel', onPress: settle },
                     {

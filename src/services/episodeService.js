@@ -68,8 +68,10 @@ import { log } from './logService';
  * YouTube videos (4.1.0, podcast_kind 'youtube': one video's audio, pulled at
  * import; audio_url is only the watch page). isImportedEpisode() tells them
  * apart from podcast episodes. "Delete download" on one deletes the episode
- * itself (deleteLocalEpisode); the weekly sweep and the end-of-episode prompt
- * leave them alone. A YouTube video is imported again from its link.
+ * itself (deleteLocalEpisode); the weekly sweep leaves both kinds alone. The
+ * end-of-episode prompt skips collection chapters but does ask for a finished
+ * YouTube video (with wording that says the video leaves the library) — one
+ * video is a one-off, and it is imported again from its link.
  */
 
 /** A chapter of an imported collection rather than a podcast episode. */
