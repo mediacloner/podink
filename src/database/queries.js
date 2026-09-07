@@ -39,7 +39,8 @@ export const isYouTubeFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feed
 // tell a chapter of an imported book (no feed, no re-download, its file *is*
 // the episode) from a podcast episode without a second query.
 const EPISODE_WITH_IMAGE = `
-  SELECT e.*, p.image_url, p.kind AS podcast_kind, p.author AS podcast_author
+  SELECT e.*, p.image_url, p.kind AS podcast_kind, p.author AS podcast_author,
+         (SELECT COUNT(*) FROM EpisodeBooks b WHERE b.episode_id = e.id) AS books_count
   FROM Episodes e
   LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
 `;
@@ -364,6 +365,19 @@ export const replaceEpisodeBooks = async (episodeId, books, indexedAt = Date.now
     }
     await db.runAsync(`UPDATE Episodes SET books_indexed_at = ? WHERE id = ?`, [indexedAt, episodeId]);
   });
+};
+
+/** Ids of transcribed episodes never scanned for books (services/bookIndex.js
+ *  backlog), the ones listened to most recently first; radio sessions excluded. */
+export const getEpisodesNeedingBookScan = async () => {
+  const db = await openDatabaseContext();
+  const rows = await db.getAllAsync(
+    `SELECT e.id FROM Episodes e
+     LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
+     WHERE e.has_transcript = 1 AND e.books_indexed_at IS NULL AND ${NOT_RADIO}
+     ORDER BY COALESCE(e.last_played_at, 0) DESC, COALESCE(e.downloaded_at, 0) DESC`
+  );
+  return rows.map(r => r.id).filter(Boolean);
 };
 
 export const clearEpisodeBooks = async (episodeId) => {

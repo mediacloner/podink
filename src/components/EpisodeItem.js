@@ -171,6 +171,16 @@ const EpisodeItem = ({
                                 {!!episode.has_transcript && (
                                     <Icon name="align-left" size={11} color={colors.success} />
                                 )}
+                                {/* Books the transcript mentions (bookIndex.js) — count of titles */}
+                                {!!episode.has_transcript && episode.books_count > 0 && (
+                                    <View
+                                        style={styles.stateTag}
+                                        accessibilityLabel={`${episode.books_count} ${episode.books_count === 1 ? 'book' : 'books'} mentioned`}
+                                    >
+                                        <Icon name="book" size={11} color={colors.success} />
+                                        <Text style={styles.playedText}>{episode.books_count}</Text>
+                                    </View>
+                                )}
                             </>
                         )}
                         {episode.is_played ? (

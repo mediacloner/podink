@@ -627,7 +627,7 @@ const _process = async (entry) => {
         _startFg('Transcribing podcasts', 'Complete!', 0);
         // Books the episode talks about: scanned from the finished text
         // (force — a continued transcript has more text than its last scan).
-        indexEpisodeBooks(entry.id, { force: true }).catch(() => {});
+        indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
 
         log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length });
         entry.resolve(segments);

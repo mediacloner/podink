@@ -294,7 +294,7 @@ const PlayerScreen = ({ route, navigation }) => {
     useEffect(() => {
         // Not while the text is still growing: the finished job scans it.
         if (!ep || !segments.length || ep.books_indexed_at || isRadio || transcribing || isQueued) return;
-        indexEpisodeBooks(epId).catch(() => {});
+        indexEpisodeBooks(epId, { front: true }).catch(() => {});
     }, [epId, ep?.books_indexed_at, segments.length, isRadio, transcribing, isQueued]);
 
     useEffect(() => {
