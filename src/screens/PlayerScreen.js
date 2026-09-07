@@ -387,6 +387,11 @@ const PlayerScreen = ({ route, navigation }) => {
 
     const hasTranscript = !!ep?.has_transcript || segments.length > 0;
     const canTranscribe = !!ep?.local_audio_path && !isRadio;
+    // Rows saved by a job that never finished (cancelled from a list, failed
+    // part-way, the process killed): the text shows, so the no-transcript
+    // card with its Transcribe button does not — offer to continue instead.
+    // has_transcript is only set when the whole file has been decoded.
+    const transcriptIncomplete = canTranscribe && !ep?.has_transcript && segments.length > 0 && !transcribing && !isQueued;
 
     // Live radio: what the empty transcript pane says while the first window
     // records + transcribes, and the controls' LIVE state.
@@ -504,6 +509,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         transcribing={transcribing}
                         isQueued={isQueued}
                         transcribeProgress={transcribeProgress}
+                        transcriptIncomplete={transcriptIncomplete}
                         emptyStatus={radioEmptyStatus}
                         playbackRate={playbackRate}
                         episodeId={epId}

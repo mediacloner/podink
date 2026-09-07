@@ -16,9 +16,10 @@ import {
     getPodcasts,
     getNewEpisodesCountForPodcast, getLatestEpisodesForPodcast,
     markPodcastEpisodesAsSeen, capNewEpisodes,
-    pruneOldEpisodesForPodcast, LOCAL_KIND,
+    pruneOldEpisodesForPodcast, LOCAL_KIND, YOUTUBE_KIND,
 } from '../database/queries';
 import { deleteCollection, isImportSupported, pickAudioFiles, pickFolder } from '../services/importService';
+import { isYouTubeImportSupported } from '../services/youtubeService';
 import { artworkSource } from '../api/userAgent';
 import { dequeueTranscription } from '../services/whisperService';
 import {
@@ -54,10 +55,15 @@ const PodcastRow = React.memo(({
     // a 60-chapter book does not fit the 5-episode accordion — and no feed
     // to unsubscribe from: the swipe deletes it, files included.
     const isLocal = podcast.kind === LOCAL_KIND;
+    // A YouTube channel (4.1.0) holds the videos imported from it, one
+    // episode each; it expands like a feed and is removed like one.
+    const isYouTube = podcast.kind === YOUTUBE_KIND;
     const count = podcast.episode_count ?? 0;
     const subtitle = isLocal
         ? [podcast.author, `${count} ${count === 1 ? 'file' : 'files'}`].filter(Boolean).join(' · ')
-        : showNotesPlainText(podcast.description, 160);
+        : isYouTube
+            ? `YouTube · ${count} imported ${count === 1 ? 'video' : 'videos'}`
+            : showNotesPlainText(podcast.description, 160);
     return (
     <View>
         <SwipeableRow
@@ -66,7 +72,7 @@ const PodcastRow = React.memo(({
                 color: colors.danger,
                 dismiss: 'close',
                 onPress: () => onUnsubscribe(podcast),
-                accessibilityLabel: isLocal ? `Delete ${podcast.title}` : `Unsubscribe from ${podcast.title}`,
+                accessibilityLabel: isLocal || isYouTube ? `Delete ${podcast.title}` : `Unsubscribe from ${podcast.title}`,
             }}
         >
             <TouchableOpacity
@@ -82,7 +88,7 @@ const PodcastRow = React.memo(({
                     <Image source={artworkSource(podcast.image_url)} style={styles.artwork} />
                 ) : (
                     <View style={[styles.artwork, styles.artworkPlaceholder]}>
-                        <Icon name="headphones" size={22} color={colors.textFaint} />
+                        <Icon name={isYouTube ? 'youtube' : 'headphones'} size={22} color={colors.textFaint} />
                     </View>
                 )}
 
@@ -90,6 +96,7 @@ const PodcastRow = React.memo(({
                     <Text style={styles.podcastTitle} numberOfLines={1}>{podcast.title}</Text>
                     <View style={styles.subtitleRow}>
                         {isLocal && <Icon name="book-open" size={11} color={colors.textMuted} />}
+                        {isYouTube && <Icon name="youtube" size={11} color={colors.textMuted} />}
                         <Text style={styles.podcastDesc} numberOfLines={1}>{subtitle}</Text>
                     </View>
                 </View>
@@ -177,8 +184,12 @@ const PodcastsScreen = ({ navigation }) => {
             navigation.navigate('CollectionEditor', { mode: 'import', entries, folderName });
         showAlert(
             'Import audio',
-            'Audiobooks or any audio files, kept apart from your podcast feeds. Google Drive appears in the file picker; for a Drive folder, open it there and select all its files.',
+            'Audiobooks or any audio files, kept apart from your podcast feeds — or a YouTube video, whose audio is filed under its channel. Google Drive appears in the file picker; for a Drive folder, open it there and select all its files.',
             [
+                ...(isYouTubeImportSupported() ? [{
+                    text: 'From a YouTube link…',
+                    onPress: () => navigation.navigate('YouTubeImport'),
+                }] : []),
                 {
                     text: 'Choose files…',
                     onPress: async () => {
@@ -238,8 +249,9 @@ const PodcastsScreen = ({ navigation }) => {
             setPodcasts(data);
             const counts = {};
             await Promise.all(data.map(async p => {
-                // Imported collections keep every chapter and are never "new".
-                if (p.kind === LOCAL_KIND) { counts[p.feed_url] = 0; return; }
+                // Imported audio (collections, YouTube channels) keeps every
+                // row and is never "new" — nothing to cap or prune.
+                if (p.kind === LOCAL_KIND || p.kind === YOUTUBE_KIND) { counts[p.feed_url] = 0; return; }
                 await capNewEpisodes(p.feed_url, MAX_NEW);
                 await pruneOldEpisodesForPodcast(p.feed_url, 50);
                 counts[p.feed_url] = await getNewEpisodesCountForPodcast(p.feed_url);
@@ -354,13 +366,17 @@ const PodcastsScreen = ({ navigation }) => {
             );
             return;
         }
+        const isYouTube = podcast.kind === YOUTUBE_KIND;
+        const n = podcast.episode_count ?? 0;
         showAlert(
-            'Unsubscribe',
-            `Remove "${podcast.title}" and its episode list from your podcasts?`,
+            isYouTube ? 'Remove channel' : 'Unsubscribe',
+            isYouTube
+                ? `Remove "${podcast.title}" and its ${n} imported ${n === 1 ? 'video' : 'videos'} from this device? Their audio and transcripts go too; saved vocabulary stays.`
+                : `Remove "${podcast.title}" and its episode list from your podcasts?`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
-                    text: 'Unsubscribe',
+                    text: isYouTube ? 'Remove' : 'Unsubscribe',
                     style: 'destructive',
                     onPress: async () => {
                         if (expandedRef.current === podcast.feed_url) setExpanded(null);
@@ -485,7 +501,7 @@ const PodcastsScreen = ({ navigation }) => {
                         icon="headphones"
                         title="No podcasts yet"
                         subtitle={isImportSupported()
-                            ? 'Add an RSS feed from the Feed tab, or import audiobooks and audio files with the folder button above'
+                            ? 'Add an RSS feed from the Feed tab, or use the folder button above to import audiobooks, audio files or a YouTube video'
                             : 'Add an RSS feed from the Feed tab to subscribe'}
                     />
                 }

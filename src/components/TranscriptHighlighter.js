@@ -155,6 +155,10 @@ const TranscriptHighlighter = forwardRef(({
     transcribing = false,
     isQueued = false,
     transcribeProgress = 0,
+    // Text exists but the job never finished (cancelled, failed, killed): a
+    // "Continue" badge over the text, since the no-transcript card — the only
+    // other place with a Transcribe button — is not shown once there is text.
+    transcriptIncomplete = false,
     // Live radio: what to show instead of the CTA card while the recording's
     // first window is still on its way (spinner + this text).
     emptyStatus = null,
@@ -1109,9 +1113,24 @@ const TranscriptHighlighter = forwardRef(({
                             <View style={styles.progressBadge}>
                                 <ActivityIndicator size='small' color={colors.accent} />
                                 <Text style={styles.progressBadgeText}>
-                                    Transcribing… {clampPercent(transcribeProgress)}%
+                                    {isQueued ? 'Queued for transcription' : `Transcribing… ${clampPercent(transcribeProgress)}%`}
                                 </Text>
                             </View>
+                        </View>
+                    )}
+
+                    {!transcribing && transcriptIncomplete && canTranscribe && (
+                        <View style={styles.progressBadgeWrap} pointerEvents='box-none'>
+                            <Pressable
+                                onPress={onTranscribe}
+                                style={({ pressed }) => [styles.progressBadge, styles.resumeBadge, pressed && styles.pressedChunk]}
+                                accessibilityRole='button'
+                                accessibilityLabel='Transcript incomplete, continue transcribing'
+                            >
+                                <Icon name='zap' size={14} color={colors.accent} />
+                                <Text style={styles.progressBadgeText}>Transcript incomplete</Text>
+                                <Text style={styles.resumeBadgeAction}>Continue</Text>
+                            </Pressable>
                         </View>
                     )}
 
@@ -1392,6 +1411,12 @@ const makeStyles = (colors) => StyleSheet.create({
         borderColor: colors.hairline,
     },
     progressBadgeText: { fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
+    resumeBadge: { borderColor: withAlpha(colors.accent, 0.5), paddingRight: 10 },
+    resumeBadgeAction: {
+        fontSize: 12, fontWeight: '700', color: colors.onAccent,
+        backgroundColor: colors.accent, borderRadius: radii.pill,
+        paddingHorizontal: 10, paddingVertical: 3, marginLeft: 2,
+    },
 
     ctaCard: {
         alignItems: 'center',

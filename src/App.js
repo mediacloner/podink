@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, AppState, LogBox, StyleSheet, ActivityIndicator, StatusBar } from 'react-native';
-import { NavigationContainer, DarkTheme, DefaultTheme, useIsFocused } from '@react-navigation/native';
+import { NavigationContainer, DarkTheme, DefaultTheme, useIsFocused, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,13 +8,16 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Feather as Icon } from '@expo/vector-icons';
 
 import { initDB } from './database/db';
-import AppAlert from './components/AppAlert';
+import AppAlert, { showAlert } from './components/AppAlert';
 import { setupPlayer, ensurePlayerAlive, onUserPlay, onUserStop } from './services/trackPlayer';
 import { restoreQueue, initializeWhisper } from './services/whisperService';
 import { cleanupOldWhisperModels } from './services/downloadService';
 import { restoreLogs } from './services/logService';
 import { sweepOrphanFiles, sweepStaleFinishedDownloads } from './services/episodeService';
 import { sweepRadioSessions } from './services/radioService';
+import { getInitialSharedText, onSharedText } from './services/shareIntent';
+import { isYouTubeUrl } from './services/youtubeService';
+import { log } from './services/logService';
 import { getTotalNewEpisodesCount } from './database/queries';
 import { onLibraryChange } from './services/libraryEvents';
 import { ThemeProvider, useTheme, useStyles, type } from './theme';
@@ -34,6 +37,7 @@ import CollectionScreen from './screens/CollectionScreen';
 import CollectionEditorScreen from './screens/CollectionEditorScreen';
 import RadioScreen from './screens/RadioScreen';
 import RadioStationScreen from './screens/RadioStationScreen';
+import YouTubeImportScreen from './screens/YouTubeImportScreen';
 
 LogBox.ignoreLogs(['Attempted to import the module']);
 
@@ -180,8 +184,39 @@ const AppRoot = () => {
     const { colors, isDark } = useTheme();
     const styles = useStyles(makeStyles);
     const navTheme = useNavigationTheme();
+    const navRef = useNavigationContainerRef();
     // Screens query SQLite on mount; don't render them until migrations finish.
     const [dbReady, setDbReady] = useState(false);
+
+    // Text shared to the app (4.1.0): a YouTube link opens the import screen
+    // and starts the import; anything else gets a hint. Shares that land
+    // before the navigator is ready (cold start) wait for onReady.
+    const pendingShareRef = useRef(null);
+    const openShared = useCallback((text) => {
+        const t = String(text || '').trim();
+        if (!t) return;
+        if (!navRef.isReady()) { pendingShareRef.current = t; return; }
+        if (isYouTubeUrl(t)) {
+            log('UI', 'Shared link received', { youtube: true });
+            navRef.navigate('YouTubeImport', { url: t, autoStart: true, nonce: Date.now() });
+        } else {
+            log('UI', 'Shared text ignored', { length: t.length });
+            showAlert(
+                'Not a YouTube link',
+                'Podink can import YouTube videos: share one from the YouTube app or a browser. Podcast feeds are added from the Feed tab.',
+            );
+        }
+    }, [navRef]);
+    useEffect(() => {
+        if (!dbReady) return undefined;
+        getInitialSharedText().then(openShared).catch(() => {});
+        return onSharedText(openShared);
+    }, [dbReady, openShared]);
+    const flushPendingShare = useCallback(() => {
+        const t = pendingShareRef.current;
+        pendingShareRef.current = null;
+        if (t) openShared(t);
+    }, [openShared]);
 
     useEffect(() => {
         restoreLogs();
@@ -241,7 +276,7 @@ const AppRoot = () => {
             {statusBar}
             <AppAlert />
             <FinishedEpisodePrompt />
-            <NavigationContainer theme={navTheme}>
+            <NavigationContainer theme={navTheme} ref={navRef} onReady={flushPendingShare}>
                 <Stack.Navigator screenOptions={{ headerShown: false }}>
                     <Stack.Screen
                         name="MainTabs"
@@ -282,6 +317,15 @@ const AppRoot = () => {
                         name="RadioStation"
                         component={RadioStationScreen}
                         options={{ headerShown: true, title: '' }}
+                    />
+                    {/* YouTube (4.1.0): a video link → downloaded audio +
+                        transcript, filed under its channel in My Podcasts.
+                        Opened from My Podcasts' folder button, the Feed's add
+                        box, or a share from the YouTube app. */}
+                    <Stack.Screen
+                        name="YouTubeImport"
+                        component={YouTubeImportScreen}
+                        options={{ headerShown: true, title: 'Import from YouTube' }}
                     />
                     <Stack.Screen
                         name="DebugLog"

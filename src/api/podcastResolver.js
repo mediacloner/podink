@@ -33,6 +33,17 @@ const resolveSpotify = async () => {
     throw new Error('Spotify does not provide public RSS feeds. Try finding the podcast on Apple Podcasts or the show\'s website.');
 };
 
+// ─── YouTube ──────────────────────────────────────────────────────────────────
+// A video link is not a feed: the Feed's add box hands it to the YouTube
+// import (services/youtubeService), which downloads the audio and transcribes
+// it. Channel / playlist links are not supported.
+
+const isYouTube = (url) => /(^|\/\/|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)(\/|$)/i.test(url);
+
+const resolveYouTube = async () => {
+    throw new Error('This is a YouTube link. Use "Import from YouTube" (My Podcasts → folder button) to add the video\'s audio with a transcript.');
+};
+
 // ─── Public resolver ──────────────────────────────────────────────────────────
 
 /**
@@ -46,6 +57,7 @@ export const resolveToRssUrl = async (input) => {
     const url = input.trim();
 
     if (isSpotify(url))       return resolveSpotify(url);
+    if (isYouTube(url))       return resolveYouTube(url);
     if (isApplePodcasts(url)) return resolveApplePodcasts(url);
 
     // Assume it's already an RSS/Atom feed URL
@@ -58,6 +70,7 @@ export const resolveToRssUrl = async (input) => {
 export const detectService = (input) => {
     const url = input.trim();
     if (isSpotify(url))       return 'Spotify';
+    if (isYouTube(url))       return 'YouTube';
     if (isApplePodcasts(url)) return 'Apple Podcasts';
     return 'RSS';
 };

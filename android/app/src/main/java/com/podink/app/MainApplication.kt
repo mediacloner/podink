@@ -24,6 +24,8 @@ class MainApplication : Application(), ReactApplication {
           add(TranscriptionServicePackage())
           add(AudioImportPackage())
           add(LiveRadioPackage())
+          add(YouTubePackage())
+          add(ShareIntentPackage())
         }
     )
   }

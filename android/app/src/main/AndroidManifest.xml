@@ -41,6 +41,12 @@
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="exp+podink"/>
       </intent-filter>
+      <!-- Share target (4.1.0): a YouTube link shared from any app opens the import screen -->
+      <intent-filter>
+        <action android:name="android.intent.action.SEND"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <data android:mimeType="text/plain"/>
+      </intent-filter>
     </activity>
     <service
         android:name=".TranscriptionService"

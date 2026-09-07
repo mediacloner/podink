@@ -25,6 +25,16 @@ export const isLocalFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feedUr
 export const RADIO_KIND = 'radio';
 export const isRadioFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feedUrl.startsWith('radio://');
 
+/** Podcasts.kind for a YouTube channel whose videos were imported one at a
+ *  time (4.1.0). feed_url is `youtube://channel/<channelId>`; each episode is
+ *  one video's audio, downloaded at import — id `youtube://<videoId>`,
+ *  audio_url the watch page (nothing streams it: like a chapter of an imported
+ *  collection, the file *is* the episode). Unlike collections the rows live in
+ *  the Feed, the accordion and every Listening segment: one video is one
+ *  episode, not sixty chapters. */
+export const YOUTUBE_KIND = 'youtube';
+export const isYouTubeFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feedUrl.startsWith('youtube://');
+
 // Every episode row carries its collection's kind and author, so screens can
 // tell a chapter of an imported book (no feed, no re-download, its file *is*
 // the episode) from a podcast episode without a second query.
@@ -34,6 +44,8 @@ const EPISODE_WITH_IMAGE = `
   LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
 `;
 const NOT_LOCAL = `COALESCE(p.kind, 'rss') != '${LOCAL_KIND}'`;
+// Imported audio of either kind: the file is the episode, nothing re-fetches it.
+const NOT_IMPORTED = `COALESCE(p.kind, 'rss') NOT IN ('${LOCAL_KIND}', '${YOUTUBE_KIND}')`;
 const NOT_RADIO = `COALESCE(p.kind, 'rss') != '${RADIO_KIND}'`;
 
 export const getDownloadedEpisodes = async () => {
@@ -424,15 +436,16 @@ export const markEpisodeFinished = async (id) => {
  *  A NULL downloaded_at (never expected on a downloaded row) is left alone. */
 export const getStaleFinishedDownloads = async (cutoffMs) => {
   const db = await openDatabaseContext();
-  // Imported collections are excluded: their file is the episode, with no
-  // feed to stream it from again — the sweep would destroy the book.
+  // Imported audio is excluded — collections and YouTube videos alike: their
+  // file is the episode, with no feed to stream it from again; the sweep
+  // would destroy the book or the video's only copy.
   return db.getAllAsync(
     `${EPISODE_WITH_IMAGE}
      WHERE e.is_played = 1
        AND e.is_downloaded = 1 AND e.local_audio_path IS NOT NULL
        AND COALESCE(e.last_played_at, 0) < ?
        AND e.downloaded_at IS NOT NULL AND e.downloaded_at < ?
-       AND ${NOT_LOCAL}
+       AND ${NOT_IMPORTED}
      ORDER BY e.last_played_at ASC`,
     [cutoffMs, cutoffMs]
   );
@@ -569,6 +582,55 @@ export const getAllLocalAudioPaths = async () => {
 export const getLocalCollectionFeedUrls = async () => {
   const db = await openDatabaseContext();
   return db.getAllAsync('SELECT feed_url FROM Podcasts WHERE kind = ?', [LOCAL_KIND]);
+};
+
+// ─── YouTube imports (4.1.0) ─────────────────────────────────────────────────
+
+/** A channel row (kind 'youtube'), created by the first video imported from
+ *  it. Upsert: the channel's name and avatar follow the latest import; a
+ *  description is only written once (the user may have edited nothing, but
+ *  the text is ours either way). */
+export const saveYouTubeChannel = async ({ feed_url, title, description, image_url, author }) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `INSERT INTO Podcasts (title, description, feed_url, image_url, subscribed_at, kind, author)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(feed_url) DO UPDATE SET
+       title = excluded.title,
+       author = excluded.author,
+       image_url = CASE WHEN excluded.image_url != '' THEN excluded.image_url ELSE Podcasts.image_url END`,
+    [title, description || '', feed_url, image_url || '', new Date().toISOString(), YOUTUBE_KIND, author || '']
+  );
+};
+
+/** One imported video: born downloaded (the file is the episode), never
+ *  "new" (the user just chose it). Importing a video again — after its file
+ *  was deleted, say — refreshes the file, title, notes and length but keeps
+ *  the listening state (position, played, last heard). */
+export const insertYouTubeEpisode = async (r) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `INSERT INTO Episodes
+       (id, title, description, podcast_title, podcast_feed_url, release_date, audio_url,
+        local_audio_path, is_downloaded, downloaded_at, is_new, duration, track_number)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, 0)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       description = excluded.description,
+       podcast_title = excluded.podcast_title,
+       podcast_feed_url = excluded.podcast_feed_url,
+       release_date = excluded.release_date,
+       audio_url = excluded.audio_url,
+       local_audio_path = excluded.local_audio_path,
+       is_downloaded = 1,
+       downloaded_at = excluded.downloaded_at,
+       has_transcript = 0,
+       duration = excluded.duration`,
+    [
+      r.id, r.title, r.description || '', r.podcast_title, r.podcast_feed_url, r.release_date,
+      r.audio_url, r.local_audio_path, Date.now(), r.duration || 0,
+    ]
+  );
 };
 
 // ─── Live radio (4.0.0) ──────────────────────────────────────────────────────

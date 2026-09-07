@@ -18,7 +18,7 @@ import LoadingBar from '../components/LoadingBar';
 import SettingsGearButton from '../components/SettingsGearButton';
 import {
     getSubscribedEpisodes, saveEpisodesBatch, savePodcast, updatePodcastImage,
-    getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes, LOCAL_KIND,
+    getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes, LOCAL_KIND, YOUTUBE_KIND,
 } from '../database/queries';
 import {
     downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
@@ -28,6 +28,7 @@ import { useTranscriptionQueue } from '../hooks/useTranscriptionQueue';
 import { fetchPodcastFeed } from '../api/rssParser';
 import { artworkSource } from '../api/userAgent';
 import { resolveToRssUrl, detectService } from '../api/podcastResolver';
+import { isYouTubeImportSupported, isYouTubeUrl } from '../services/youtubeService';
 import { isUrlLike, searchPodcasts } from '../api/podcastSearch';
 import { notifyLibraryChange, onLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
@@ -214,8 +215,8 @@ const SubscribedTimeline = ({ navigation }) => {
         }
         setIsRefreshing(true);
         try {
-            // Imported collections have no feed — nothing to fetch.
-            const podcasts = (await getPodcasts()).filter(p => p.kind !== LOCAL_KIND);
+            // Imported audio (collections, YouTube channels) has no feed — nothing to fetch.
+            const podcasts = (await getPodcasts()).filter(p => p.kind !== LOCAL_KIND && p.kind !== YOUTUBE_KIND);
             const results = await Promise.allSettled(podcasts.map(async (podcast) => {
                 const feedData = await fetchPodcastFeed(podcast.feed_url, { maxItems: MAX_EPISODES_PER_PODCAST });
                 // Covers subscribed without one (itunes:image-only feeds
@@ -363,6 +364,13 @@ const SubscribedTimeline = ({ navigation }) => {
         }
         const trimmed = rssUrl.trim();
         if (!trimmed) return;
+        if (isYouTubeUrl(trimmed) && isYouTubeImportSupported()) {
+            // A video, not a feed: the YouTube import (4.1.0) takes it from here.
+            setRssUrl('');
+            togglePanel();
+            navigation.navigate('YouTubeImport', { url: trimmed, autoStart: true, nonce: Date.now() });
+            return;
+        }
         if (isUrlLike(rssUrl)) {
             subscribeToFeed(rssUrl);
         } else {
@@ -461,11 +469,11 @@ const SubscribedTimeline = ({ navigation }) => {
                         onPress={handleAddFeed}
                         disabled={isFetching || !isConnected}
                         accessibilityRole="button"
-                        accessibilityLabel={rssUrl.trim() && !isUrlLike(rssUrl) ? 'Search podcasts' : 'Add podcast feed'}
+                        accessibilityLabel={isYouTubeUrl(rssUrl) ? 'Import YouTube video' : rssUrl.trim() && !isUrlLike(rssUrl) ? 'Search podcasts' : 'Add podcast feed'}
                     >
                         {isFetching
                             ? <ActivityIndicator color={colors.onAccent} size="small" />
-                            : <Text style={styles.addBtnText}>{rssUrl.trim() && !isUrlLike(rssUrl) ? 'Search' : 'Add'}</Text>
+                            : <Text style={styles.addBtnText}>{isYouTubeUrl(rssUrl) ? 'Import' : rssUrl.trim() && !isUrlLike(rssUrl) ? 'Search' : 'Add'}</Text>
                         }
                     </TouchableOpacity>
                 </View>
