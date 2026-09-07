@@ -14,7 +14,13 @@
  * carries the description, rating and cover. A candidate with no author said
  * ("her novel is called Permafrost") is accepted only when its title is
  * unmistakable or the author is one already confirmed in this episode.
+ *
+ * Authors the episode points at (its title, notes) and authors confirmed by
+ * a mention get their bibliography pulled from Open Library, and every one
+ * of those titles the transcript says — "back in Yellowface days" — becomes
+ * a candidate with its author known.
  */
+import { bibliographyCandidates } from './bookText.js';
 
 // ─── Text similarity ─────────────────────────────────────────────────────────
 
@@ -118,6 +124,35 @@ export const pickMatch = (docs, cand, ctx = {}) => {
     return best;
 };
 
+// ─── Bibliographies ──────────────────────────────────────────────────────────
+
+const MAX_BIBLIO_AUTHORS = 6;
+const SKIP_WORK = /collector|omnibus|box set|boxed set|\/|trilogy|collection|sampler|excerpt|preview/i;
+
+// The titles of an author's works worth looking for in the transcript: her
+// own (not anthologies she contributed to), no omnibus editions.
+const MIN_WORKS = 2;   // a name with a single "work" is usually not a writer (a conductor, a city)
+
+const worksOf = (docs, author) => {
+    const out = [];
+    const seen = new Set();
+    const surname = normName(author).split(' ').pop();
+    for (const doc of docs || []) {
+        const first = (doc.authors || [])[0] || '';
+        if (nameSim(first, author) < 0.7) continue;
+        if (SKIP_WORK.test(doc.title || '')) continue;
+        const key = normTitle(doc.title);
+        if (!key || seen.has(key)) continue;
+        // A work carrying the person's own name is a biography or a
+        // collection about them ("Leonard Bernstein"), and their name said
+        // in the episode is not a book.
+        if (surname && key.split(' ').includes(surname)) continue;
+        seen.add(key);
+        out.push({ title: doc.title, author: first });
+    }
+    return out.length >= MIN_WORKS ? out : [];
+};
+
 // ─── Resolution ──────────────────────────────────────────────────────────────
 
 const OL_GAP_MS = 1200;   // openlibrary.org resets connections above ~1 req/s
@@ -132,8 +167,8 @@ const cacheKey = (title) => normTitle(title).replace(/\s+/g, '');
  * @returns books: [{ title, author, description, rating, ratingsCount, coverUrl,
  *   year, pages, openlibraryUrl, goodreadsUrl, source, heardAs: [], firstMs }]
  */
-export const resolveCandidates = async (cands, fetchers, { signal, hintAuthors = [] } = {}) => {
-    const { searchOpenLibrary, searchGoodreads, fetchOpenLibraryDescription, sleep } = fetchers;
+export const resolveCandidates = async (cands, fetchers, { signal, hintAuthors = [], rows = null } = {}) => {
+    const { searchOpenLibrary, searchGoodreads, fetchOpenLibraryDescription, searchAuthorWorks, sleep } = fetchers;
     const log = fetchers.log || (() => {});
     const confirmedAuthors = new Set();
     const cache = new Map();      // cacheKey(title) → resolved book | null
@@ -191,9 +226,8 @@ export const resolveCandidates = async (cands, fetchers, { signal, hintAuthors =
         return book;
     };
 
-    for (const cand of cands || []) {
-        if (signal?.aborted) break;
-        if (cand.site != null && doneSites.has(cand.site)) continue;
+    const take = async (cand) => {
+        if (cand.site != null && doneSites.has(cand.site)) return;
         const key = cacheKey(cand.title);
         let book;
         if (cache.has(key)) {
@@ -202,7 +236,7 @@ export const resolveCandidates = async (cands, fetchers, { signal, hintAuthors =
             book = await resolveOne(cand);
             cache.set(key, book);
         }
-        if (!book) continue;
+        if (!book) return;
         if (cand.site != null) doneSites.add(cand.site);
         if (book.author) confirmedAuthors.add(book.author);
         const prev = books.get(book.identity);
@@ -213,7 +247,35 @@ export const resolveCandidates = async (cands, fetchers, { signal, hintAuthors =
         } else {
             books.set(book.identity, { ...book, heardAs: [cand.heard], firstMs: ms });
         }
+    };
+
+    // Bibliography pass: the author's other titles the transcript says.
+    const biblioDone = new Set();
+    let biblioSite = 5000;
+    const biblioRound = async (authors) => {
+        if (!rows || !searchAuthorWorks) return;
+        for (const author of authors) {
+            if (signal?.aborted) return;
+            if (biblioDone.size >= MAX_BIBLIO_AUTHORS) return;
+            const k = normName(author).split(' ').pop();      // one fetch per surname
+            if (!k || biblioDone.has(k)) continue;
+            biblioDone.add(k);
+            const docs = await paced('ol', () => searchAuthorWorks(author, signal));
+            const works = worksOf(docs, author);
+            if (!works.length) continue;
+            const found = bibliographyCandidates(rows, works.map(w => w.title), works[0].author, biblioSite);
+            biblioSite += found.length;
+            log('bibliography', { author, works: works.length, said: found.map(f => f.heard) });
+            for (const cand of found) { if (signal?.aborted) return; await take(cand); }
+        }
+    };
+
+    for (const cand of cands || []) {
+        if (signal?.aborted) break;
+        await take(cand);
     }
+    await biblioRound(hintAuthors);
+    await biblioRound([...confirmedAuthors]);
     // Spellings that did not resolve on their own but name a confirmed book
     // ("The Guilt Kid" next to "The Gilt Kid by James Curtis") are attached
     // as heard forms, so those mentions are marked too.

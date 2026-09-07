@@ -1353,19 +1353,26 @@ const Chunk = React.memo(({
                 // card instead of seeking (a nested Text with onPress takes
                 // the touch; long-press still translates the sentence).
                 <Text style={baseStyle}>
-                    {runs.map((run, i) => (run.bookId ? (
-                        <Text
-                            key={run.key}
-                            style={styles.bookTitle}
-                            suppressHighlighting
-                            onPress={() => onBookPress(run.bookId, run.startMs)}
-                            onLongPress={handleLongPress}
-                        >
-                            {i === 0 ? run.text.replace(/^\s+/, '') : run.text}
-                        </Text>
-                    ) : (
-                        <Text key={run.key}>{i === 0 ? run.text.replace(/^\s+/, '') : run.text}</Text>
-                    )))}
+                    {runs.map((run, i) => {
+                        const text = i === 0 ? run.text.replace(/^\s+/, '') : run.text;
+                        if (!run.bookId) return <Text key={run.key}>{text}</Text>;
+                        // The space after the title stays outside the styled
+                        // span, so the underline ends with the last letter.
+                        const m = /^([\s\S]*?)(\s*)$/.exec(text);
+                        return (
+                            <Text key={run.key}>
+                                <Text
+                                    style={styles.bookTitle}
+                                    suppressHighlighting
+                                    onPress={() => onBookPress(run.bookId, run.startMs)}
+                                    onLongPress={handleLongPress}
+                                >
+                                    {m ? m[1] : text}
+                                </Text>
+                                {m ? m[2] : ''}
+                            </Text>
+                        );
+                    })}
                 </Text>
             ) : (
                 <Text style={baseStyle}>{text}</Text>
@@ -1452,7 +1459,15 @@ const Word = React.memo(({
             onLongPress={onWordLongPress}
         >
             {lead}
-            <Animated.Text style={[{ fontSize, lineHeight, fontWeight: bookId ? '700' : '500' }, animStyle]}>
+            <Animated.Text
+                style={[
+                    { fontSize, lineHeight, fontWeight: bookId ? '700' : '500' },
+                    animStyle,
+                    // A book title keeps its colour whether spoken or not; the
+                    // active-word band/glow still shows through.
+                    bookId ? { color: colors.purple, textDecorationLine: 'underline', textShadowRadius: 0 } : null,
+                ]}
+            >
                 {core}
             </Animated.Text>
             {trail}
@@ -1473,9 +1488,9 @@ const makeStyles = (colors) => StyleSheet.create({
 
     sentenceWrap: { marginBottom: CHUNK_MARGIN },
     pressedChunk: { opacity: 0.65 },
-    // A book title inside a sentence: weight only — colour and size are the
-    // sentence's, so the past/future dimming still reads.
-    bookTitle: { fontWeight: '700' },
+    // A book title inside a sentence: the palette's purple, bold, underlined —
+    // bold alone vanished in the dimmed past/future text of both themes.
+    bookTitle: { color: colors.purple, fontWeight: '700', textDecorationLine: 'underline' },
 
     keypointRow: {
         flexDirection: 'row',

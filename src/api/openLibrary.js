@@ -48,6 +48,28 @@ export const searchOpenLibraryByTitle = async (title, signal, limit = 20) => {
     }));
 };
 
+/**
+ * An author's works, most published first — the bibliography the indexer
+ * searches the transcript for ("Yellowface" said bare in an interview with
+ * its writer). Same doc shape as searchOpenLibraryByTitle.
+ */
+export const searchOpenLibraryByAuthor = async (author, signal, limit = 40) => {
+    const url = `https://openlibrary.org/search.json?author=${encodeURIComponent(author)}&limit=${limit}&fields=${FIELDS}`;
+    const d = await getJson(url, signal);
+    return (d?.docs || []).filter(doc => doc.key && doc.title).map(doc => ({
+        key: doc.key,
+        title: doc.title,
+        authors: doc.author_name || [],
+        year: doc.first_publish_year || null,
+        coverUrl: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg` : null,
+        rating: typeof doc.ratings_average === 'number' ? Math.round(doc.ratings_average * 100) / 100 : null,
+        ratingsCount: doc.ratings_count || 0,
+        pages: doc.number_of_pages_median || null,
+        editions: doc.edition_count || 0,
+        url: `https://openlibrary.org${doc.key}`,
+    })).sort((a, b) => b.editions - a.editions);
+};
+
 /** A work's description (plain text), or '' when it has none. */
 export const fetchOpenLibraryDescription = async (key, signal) => {
     if (!key) return '';

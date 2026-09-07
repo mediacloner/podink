@@ -298,28 +298,89 @@ export const bookVariants = (book) => {
 };
 
 /**
- * The start time (ms) of the first place the transcript says the book's
- * title in any of its spellings, or null when it never does — used for a
- * book that came from the show notes.
+ * Where a variant (normalised tokens) occurs in the transcript's tokens: the
+ * same tokens in a row, or the same letters split differently — the
+ * recognizer writes "Yellow Face" for Yellowface and "Palmhouse" for The Palm
+ * House. Returns the end index (exclusive) of a match starting at `i`, or -1.
+ * A one-word title, or a title split into pieces, must be capitalised in the
+ * transcript, so "carrying a flashlight" stays plain.
  */
-export const findFirstMention = (rows, book) => {
-    const toks = [], caps = [], ms = [];
+const matchAt = (toks, caps, i, variant, joined, requireCap = false) => {
+    const L = variant.length;
+    if (variant[0].length < 4 && L === 1) return -1;
+    const anyCap = (a, b) => { for (let k = a; k < b; k++) if (caps[k]) return true; return false; };
+    let same = i + L <= toks.length;
+    for (let k = 0; same && k < L; k++) if (toks[i + k] !== variant[k]) same = false;
+    if (same) {
+        if (L === 1 && !caps[i]) return -1;
+        if (requireCap && !anyCap(i, i + L)) return -1;
+        return i + L;
+    }
+    // Different split, same letters — a proper noun somewhere in the span.
+    let acc = '';
+    for (let k = i; k < toks.length && acc.length < joined.length; k++) {
+        acc += toks[k];
+        if (acc === joined) return anyCap(i, k + 1) ? k + 1 : -1;
+        if (!joined.startsWith(acc)) return -1;
+    }
+    return -1;
+};
+
+const tokenize = (rows) => {
+    const toks = [], caps = [], ms = [], orig = [];
     for (const r of rows || []) {
         const t = r.start_time ?? r.start ?? 0;
         for (const w of String(r.text || '').split(/\s+/)) {
             if (!w) continue;
-            toks.push(normTok(w)); caps.push(/^[^\p{L}\p{N}]*[A-Z]/u.test(w) ? 1 : 0); ms.push(t);
+            toks.push(normTok(w)); caps.push(/^[^\p{L}\p{N}]*[A-Z]/u.test(w) ? 1 : 0); ms.push(t); orig.push(w);
         }
     }
+    return { toks, caps, ms, orig };
+};
+
+/**
+ * The start time (ms) of the first place the transcript says the book's
+ * title in any of its spellings, or null when it never does — used for a
+ * book that came from the show notes or an author's bibliography.
+ */
+export const findFirstMention = (rows, book) => {
+    const { toks, caps, ms } = tokenize(rows);
     for (const variant of bookVariants(book)) {
-        const L = variant.length;
-        outer: for (let i = 0; i + L <= toks.length; i++) {
-            for (let k = 0; k < L; k++) if (toks[i + k] !== variant[k]) continue outer;
-            if (L === 1 && (!caps[i] || variant[0].length < 4)) continue;
-            return ms[i];
-        }
+        const joined = variant.join('');
+        for (let i = 0; i < toks.length; i++) if (matchAt(toks, caps, i, variant, joined) > 0) return ms[i];
     }
     return null;
+};
+
+/**
+ * Candidates for the titles of a known author's other books that the
+ * transcript says without naming her — "back in Yellowface days". Titles are
+ * matched as tokens (any split), capitalised when a single word.
+ * @returns {Array<{ title, author, heard, ms, pattern: 'bibliography', site }>}
+ */
+export const bibliographyCandidates = (rows, titles, author, siteBase = 5000) => {
+    const { toks, caps, ms, orig } = tokenize(rows);
+    const out = [];
+    const seen = new Set();
+    let site = siteBase;
+    for (const title of titles || []) {
+        const variant = tokensOf(title);
+        if (!variant.length) continue;
+        if (variant.length === 1 && variant[0].length < 5) continue;     // "Cold" alone would be noise
+        const joined = variant.join('');
+        for (let i = 0; i < toks.length; i++) {
+            const end = matchAt(toks, caps, i, variant, joined, true);
+            if (end < 0) continue;
+            const heard = orig.slice(i, end).join(' ').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+            const key = joined;
+            if (seen.has(key)) break;
+            seen.add(key);
+            // Looked up under the catalogue's spelling, marked under the transcript's.
+            out.push({ title, author, heard, ms: ms[i], index: -1, pattern: 'bibliography', site: site++ });
+            break;
+        }
+    }
+    return out;
 };
 
 /**
@@ -349,12 +410,13 @@ export const buildBookMarks = (chunks, books) => {
         const id = Number(book.id) || 0;
         if (!id) continue;
         for (const variant of bookVariants(book)) {
-            const L = variant.length;
-            outer: for (let i = 0; i + L <= total; i++) {
+            const joined = variant.join('');
+            for (let i = 0; i < total; i++) {
                 if (marks[i]) continue;
-                for (let k = 0; k < L; k++) if (toks[i + k] !== variant[k]) continue outer;
-                if (L === 1 && (!caps[i] || variant[0].length < 4)) continue;
-                for (let k = 0; k < L; k++) if (!marks[i + k]) marks[i + k] = id;
+                const end = matchAt(toks, caps, i, variant, joined);
+                if (end < 0) continue;
+                for (let k = i; k < end; k++) if (!marks[k]) marks[k] = id;
+                i = end - 1;
             }
         }
     }

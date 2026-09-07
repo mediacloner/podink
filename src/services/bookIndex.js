@@ -26,7 +26,7 @@ import NetInfo from '@react-native-community/netinfo';
 import {
     getEpisodeById, getEpisodesNeedingBookScan, getTranscriptsForEpisode, replaceEpisodeBooks,
 } from '../database/queries';
-import { searchOpenLibraryByTitle, fetchOpenLibraryDescription } from '../api/openLibrary';
+import { searchOpenLibraryByTitle, searchOpenLibraryByAuthor, fetchOpenLibraryDescription } from '../api/openLibrary';
 import { searchGoodreads } from '../api/goodreads';
 import { extractBookCandidates, extractNames, extractNotesCandidates, findFirstMention, joinSegments } from './bookText';
 import { resolveCandidates } from './bookResolve';
@@ -38,7 +38,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // When the detector last changed in a way that finds more: episodes scanned
 // before this are scanned again by the launch backlog.
-export const BOOK_SCAN_SINCE = Date.UTC(2026, 8, 7, 17, 30);
+export const BOOK_SCAN_SINCE = Date.UTC(2026, 8, 7, 18, 1);
 
 const isOnline = async () => {
     try {
@@ -152,9 +152,10 @@ const scanOne = async (episodeId, force) => {
         searchOpenLibrary: searchOpenLibraryByTitle,
         searchGoodreads,
         fetchOpenLibraryDescription,
+        searchAuthorWorks: searchOpenLibraryByAuthor,
         sleep,
         log: (msg, data) => log('SYSTEM', `Book scan: ${msg}`, data),
-    }, { hintAuthors });
+    }, { hintAuthors, rows });
     // A book that came from the notes is placed where the transcript first
     // says it; one the transcript never says stays without a position (it is
     // not bold and does not count on the Listening row).
