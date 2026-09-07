@@ -69,10 +69,13 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 // Header tint bands. The hue of the cover is kept; saturation is capped and
 // lightness pinned to a narrow band so the header is always a calm surface
 // the text sits on — never the cover's raw colour (a pure yellow or magenta
-// filling the top of the screen reads as a warning banner).
+// filling the top of the screen reads as a warning banner). The caps were
+// 0.45 with lightness 0.16–0.30 on the dark theme: a yellow cover came out
+// as grey-olive (user: "has a grey tone"; the paper tint was liked as it
+// was). More saturation keeps the hue recognisable — gold, not olive.
 const HEADER_BAND = {
-    dark:  { maxS: 0.45, minL: 0.16, maxL: 0.30 },
-    paper: { maxS: 0.40, minL: 0.74, maxL: 0.86 },
+    dark:  { maxS: 0.65, minL: 0.20, maxL: 0.34 },
+    paper: { maxS: 0.40, minL: 0.74, maxL: 0.86 },   // unchanged — the user likes this one
 };
 
 /** Cover colour → header background for the given theme. Returns

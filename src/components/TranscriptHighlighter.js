@@ -1331,6 +1331,7 @@ const Chunk = React.memo(({
                             onWordPress={onWordPress}
                             onWordLongPress={handleLongPress}
                             bookId={w.globalIndex < wordBook.length ? wordBook[w.globalIndex] : 0}
+                            bookJoinsNext={w.globalIndex + 1 < wordBook.length && wordBook[w.globalIndex] !== 0 && wordBook[w.globalIndex + 1] === wordBook[w.globalIndex]}
                             onBookPress={onBookPress}
                         />
                     ))}
@@ -1388,7 +1389,7 @@ const Chunk = React.memo(({
 const Word = React.memo(({
     word, chunkIndex, fontSize, lineHeight,
     activeIndexSV, isPlayingSV, onWordPress, onWordLongPress,
-    bookId = 0, onBookPress,
+    bookId = 0, bookJoinsNext = false, onBookPress,
 }) => {
     const { colors } = useTheme();
     const colorState = useSharedValue(0); // 0 future · 1 spoken · 2 active
@@ -1420,7 +1421,22 @@ const Word = React.memo(({
     const hasHighlight = transcriptHighlightAlpha > 0;
     const highlightOn  = withAlpha(transcriptHighlight, transcriptHighlightAlpha);
     const highlightOff = withAlpha(transcriptHighlight, 0);
+    // A book title: a purple band with the primary text colour, spoken or
+    // not. Decided inside the animated style — an animated colour applied
+    // natively wins over any static style in the array.
+    const isBook = !!bookId;
+    const bookBand = withAlpha(colors.purple, 0.26);
+    const bookText = colors.textPrimary;
     const animStyle = useAnimatedStyle(() => {
+        if (isBook) {
+            return {
+                color: bookText,
+                backgroundColor: bookBand,
+                textShadowColor: 'transparent',
+                textShadowOffset: { width: 0, height: 0 },
+                textShadowRadius: 0,
+            };
+        }
         const style = {
             color: interpolateColor(colorState.value, [0, 1, 2], [transcriptFuture, transcriptSpoken, transcriptActive]),
             textShadowColor: interpolateColor(colorState.value, [1, 2], ['transparent', transcriptGlow]),
@@ -1432,7 +1448,7 @@ const Word = React.memo(({
             style.backgroundColor = interpolateColor(colorState.value, [1, 2], [highlightOff, highlightOn]);
         }
         return style;
-    }, [colors]);
+    }, [colors, isBook, bookBand, bookText]);
 
     // Tokens carry their own spacing (" word"). Keep the whitespace outside the
     // animated span so the highlight band hugs the glyphs, not the gap before them.
@@ -1459,18 +1475,12 @@ const Word = React.memo(({
             onLongPress={onWordLongPress}
         >
             {lead}
-            <Animated.Text
-                style={[
-                    { fontSize, lineHeight, fontWeight: bookId ? '700' : '500' },
-                    animStyle,
-                    // A book title keeps its colour whether spoken or not; the
-                    // active-word band/glow still shows through.
-                    bookId ? { color: colors.purple, textDecorationLine: 'underline', textShadowRadius: 0 } : null,
-                ]}
-            >
-                {core}
+            {/* The band runs on under the space when the next word belongs to
+                the same title. */}
+            <Animated.Text style={[{ fontSize, lineHeight, fontWeight: bookId ? '600' : '500' }, animStyle]}>
+                {core}{bookId && bookJoinsNext ? trail : ''}
             </Animated.Text>
-            {trail}
+            {bookId && bookJoinsNext ? '' : trail}
         </Text>
     );
 });
@@ -1488,9 +1498,10 @@ const makeStyles = (colors) => StyleSheet.create({
 
     sentenceWrap: { marginBottom: CHUNK_MARGIN },
     pressedChunk: { opacity: 0.65 },
-    // A book title inside a sentence: the palette's purple, bold, underlined —
-    // bold alone vanished in the dimmed past/future text of both themes.
-    bookTitle: { color: colors.purple, fontWeight: '700', textDecorationLine: 'underline' },
+    // A book title inside a sentence: a highlighter band in the palette's
+    // purple behind the words, text in the primary colour — bold alone
+    // vanished in the dimmed past/future text of both themes.
+    bookTitle: { backgroundColor: withAlpha(colors.purple, 0.26), color: colors.textPrimary, fontWeight: '600' },
 
     keypointRow: {
         flexDirection: 'row',
