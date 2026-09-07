@@ -328,7 +328,49 @@ export const deleteEpisodeTranscript = async (id) => {
   const db = await openDatabaseContext();
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
-    await db.runAsync(`UPDATE Episodes SET has_transcript = 0 WHERE id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
+    await db.runAsync(`UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL WHERE id = ?`, [id]);
+  });
+};
+
+// ─── Books mentioned in an episode (services/bookIndex.js) ───────────────────
+
+export const getEpisodeBooks = async (episodeId) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT * FROM EpisodeBooks WHERE episode_id = ? ORDER BY first_ms ASC, id ASC`,
+    [episodeId]
+  );
+};
+
+/** Replaces the episode's books and stamps the scan time in one transaction. */
+export const replaceEpisodeBooks = async (episodeId, books, indexedAt = Date.now()) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [episodeId]);
+    for (const b of books || []) {
+      await db.runAsync(
+        `INSERT INTO EpisodeBooks
+           (episode_id, title, author, description, rating, ratings_count, cover_url, year, pages,
+            openlibrary_url, goodreads_url, source, heard_as, first_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          episodeId, b.title, b.author || null, b.description || null,
+          b.rating ?? null, b.ratingsCount || 0, b.coverUrl || null, b.year || null, b.pages || null,
+          b.openlibraryUrl || null, b.goodreadsUrl || null, b.source || null,
+          JSON.stringify(b.heardAs || []), b.firstMs ?? null,
+        ]
+      );
+    }
+    await db.runAsync(`UPDATE Episodes SET books_indexed_at = ? WHERE id = ?`, [indexedAt, episodeId]);
+  });
+};
+
+export const clearEpisodeBooks = async (episodeId) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [episodeId]);
+    await db.runAsync(`UPDATE Episodes SET books_indexed_at = NULL WHERE id = ?`, [episodeId]);
   });
 };
 
@@ -340,8 +382,10 @@ export const deleteEpisodeLocalData = async (id) => {
   // UI says has no transcript. Delete Transcripts first (FTS delete trigger).
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
     await db.runAsync(
-      `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0, downloaded_at = NULL
+      `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0, downloaded_at = NULL,
+              books_indexed_at = NULL
        WHERE id = ?`,
       [id]
     );

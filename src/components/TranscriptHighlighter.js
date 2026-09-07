@@ -29,6 +29,8 @@ import { useTheme, useStyles, radii, withAlpha } from '../theme';
 import PositionFeeder from './transcript/PositionFeeder';
 import TranslationModal from './transcript/TranslationModal';
 import WordPopover from './transcript/WordPopover';
+import BookSheet from './transcript/BookSheet';
+import { buildBookMarks } from '../services/bookText';
 
 // Unicode-aware edge-trim so accented loanwords ('café', 'résumé') keep
 // their letters instead of being clipped to 'caf' / 'r' before lookup.
@@ -138,6 +140,8 @@ const EMPTY_COMPUTED = Object.freeze({
 });
 
 const keyExtractor = (item) => item.id;
+const EMPTY_BOOKS = Object.freeze([]);
+const NO_MARKS = new Int32Array(0);
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -165,6 +169,9 @@ const TranscriptHighlighter = forwardRef(({
     playbackRate = 1,
     episodeId,
     episodeTitle,
+    // EpisodeBooks rows (services/bookIndex.js): their titles are set in
+    // bold wherever the transcript says them, and a tap opens the book card.
+    books = EMPTY_BOOKS,
 }, ref) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -794,6 +801,16 @@ const TranscriptHighlighter = forwardRef(({
     const chunksRef = useRef(EMPTY_COMPUTED.chunks);
     useEffect(() => { chunksRef.current = computed.chunks; }, [computed]);
 
+    // ── Book marks: word globalIndex → EpisodeBooks id (0 = plain word) ──────
+    // One typed array for the whole transcript, rebuilt when the text or the
+    // book list changes; every Chunk reads its own words from it.
+    const wordBook = useMemo(
+        () => (books?.length && computed.chunks.length ? buildBookMarks(computed.chunks, books) : NO_MARKS),
+        [computed, books],
+    );
+    const booksRef = useRef(books);
+    useEffect(() => { booksRef.current = books; }, [books]);
+
     // ── Pause while looking up (Settings toggle) ─────────────────────────────
     // Opening a word or sentence card pauses playback; closing it resumes —
     // but only when this card is what paused it, so a podcast the user had
@@ -906,6 +923,24 @@ const TranscriptHighlighter = forwardRef(({
         resumeAfterLookup();
     }, [doSeek, resumeAfterLookup]);
 
+    // ── Book card (tap on a bold title) ──────────────────────────────────────
+    const [bookSheet, setBookSheet] = useState(null);
+    const onBookPress = useCallback((bookId, startMs) => {
+        const book = (booksRef.current || []).find(b => Number(b.id) === Number(bookId));
+        if (!book) return;
+        setBookSheet({ book, startMs: Math.round(startMs || 0) });
+        pauseForLookup();
+    }, [pauseForLookup]);
+    const closeBookSheet = useCallback(() => {
+        setBookSheet(null);
+        resumeAfterLookup();
+    }, [resumeAfterLookup]);
+    const onBookReplay = useCallback((ms) => {
+        setBookSheet(null);
+        doSeek(ms);
+        resumeAfterLookup();
+    }, [doSeek, resumeAfterLookup]);
+
     // ── Imperative API (PlayerScreen) ─────────────────────────────────────────
     const replayAnchorRef = useRef({ t: 0, chunk: -1 });
     useImperativeHandle(ref, () => ({
@@ -944,12 +979,14 @@ const TranscriptHighlighter = forwardRef(({
                 onPress={onChunkPress}
                 onLongPress={onLongPress}
                 onWordPress={onWordPress}
+                onBookPress={onBookPress}
+                wordBook={wordBook}
                 onCellLayout={onCellLayout}
             />
         );
     }, [
         fontSize, lineHeight, activeChunkSV, activeIndexSV, isPlayingSV,
-        onChunkPress, onLongPress, onWordPress, onCellLayout, onKeypointPress,
+        onChunkPress, onLongPress, onWordPress, onBookPress, wordBook, onCellLayout, onKeypointPress,
     ]);
 
     let statusPane = null;
@@ -1079,6 +1116,7 @@ const TranscriptHighlighter = forwardRef(({
                 onClose={closeWordPopover}
                 onReplay={onWordReplay}
             />
+            <BookSheet data={bookSheet} onClose={closeBookSheet} onReplay={onBookReplay} />
 
             {statusPane ?? (
                 <>
@@ -1194,18 +1232,39 @@ const chunkEqual = (p, n) =>
     p.item === n.item && p.index === n.index &&
     p.fontSize === n.fontSize && p.lineHeight === n.lineHeight &&
     p.onPress === n.onPress && p.onLongPress === n.onLongPress &&
-    p.onWordPress === n.onWordPress && p.onCellLayout === n.onCellLayout;
+    p.onWordPress === n.onWordPress && p.onCellLayout === n.onCellLayout &&
+    p.onBookPress === n.onBookPress && p.wordBook === n.wordBook;
+
+// The chunk's words grouped into runs of plain text and book titles, so the
+// sentence view can set a title in bold and give it its own tap.
+const bookRuns = (words, wordBook) => {
+    const runs = [];
+    for (const w of words) {
+        const id = w.globalIndex < wordBook.length ? wordBook[w.globalIndex] : 0;
+        const last = runs[runs.length - 1];
+        if (last && last.bookId === id) { last.text += w.text; continue; }
+        runs.push({ bookId: id, text: w.text, startMs: w.startMs, key: w.globalIndex });
+    }
+    return runs;
+};
 
 const Chunk = React.memo(({
     item, index, fontSize, lineHeight,
     activeChunkSV, activeIndexSV, isPlayingSV,
-    onPress, onLongPress, onWordPress, onCellLayout,
+    onPress, onLongPress, onWordPress, onBookPress, wordBook, onCellLayout,
 }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
     const CHUNK_RIPPLE = useStyles(rippleFor);
     const chunkIndex = item.chunkIndex;
     const text = useMemo(() => item.words.map(w => w.text).join('').trim(), [item]);
+    // Only chunks that hold a title pay for the run split; the rest render
+    // their text in one span as before.
+    const runs = useMemo(() => {
+        if (!wordBook.length) return null;
+        const r = bookRuns(item.words, wordBook);
+        return r.some(x => x.bookId) ? r : null;
+    }, [item, wordBook]);
 
     const [isWordLevel, setIsWordLevel] = useState(false);
     const [isPast, setIsPast] = useState(false);
@@ -1271,6 +1330,8 @@ const Chunk = React.memo(({
                             isPlayingSV={isPlayingSV}
                             onWordPress={onWordPress}
                             onWordLongPress={handleLongPress}
+                            bookId={w.globalIndex < wordBook.length ? wordBook[w.globalIndex] : 0}
+                            onBookPress={onBookPress}
                         />
                     ))}
                 </Text>
@@ -1287,7 +1348,28 @@ const Chunk = React.memo(({
             android_ripple={CHUNK_RIPPLE}
             style={({ pressed }) => [styles.sentenceWrap, pressed && styles.pressedChunk]}
         >
-            <Text style={baseStyle}>{text}</Text>
+            {runs ? (
+                // A title is its own span: bold, and its tap opens the book
+                // card instead of seeking (a nested Text with onPress takes
+                // the touch; long-press still translates the sentence).
+                <Text style={baseStyle}>
+                    {runs.map((run, i) => (run.bookId ? (
+                        <Text
+                            key={run.key}
+                            style={styles.bookTitle}
+                            suppressHighlighting
+                            onPress={() => onBookPress(run.bookId, run.startMs)}
+                            onLongPress={handleLongPress}
+                        >
+                            {i === 0 ? run.text.replace(/^\s+/, '') : run.text}
+                        </Text>
+                    ) : (
+                        <Text key={run.key}>{i === 0 ? run.text.replace(/^\s+/, '') : run.text}</Text>
+                    )))}
+                </Text>
+            ) : (
+                <Text style={baseStyle}>{text}</Text>
+            )}
         </Pressable>
     );
 }, chunkEqual);
@@ -1299,6 +1381,7 @@ const Chunk = React.memo(({
 const Word = React.memo(({
     word, chunkIndex, fontSize, lineHeight,
     activeIndexSV, isPlayingSV, onWordPress, onWordLongPress,
+    bookId = 0, onBookPress,
 }) => {
     const { colors } = useTheme();
     const colorState = useSharedValue(0); // 0 future · 1 spoken · 2 active
@@ -1351,7 +1434,11 @@ const Word = React.memo(({
         return m ? [m[1], m[2], m[3]] : ['', word.text, ''];
     }, [word.text]);
 
-    const handlePress = useCallback(() => onWordPress(word, chunkIndex), [onWordPress, word, chunkIndex]);
+    // A word of a book title opens the book card, not the dictionary.
+    const handlePress = useCallback(() => {
+        if (bookId && onBookPress) onBookPress(bookId, word.startMs);
+        else onWordPress(word, chunkIndex);
+    }, [bookId, onBookPress, onWordPress, word, chunkIndex]);
 
     // Press lives on a PLAIN Text — onPress on a nested Animated.Text does not
     // fire inside a parent Text (RN press hit-testing only routes to real Text
@@ -1365,7 +1452,7 @@ const Word = React.memo(({
             onLongPress={onWordLongPress}
         >
             {lead}
-            <Animated.Text style={[{ fontSize, lineHeight, fontWeight: '500' }, animStyle]}>
+            <Animated.Text style={[{ fontSize, lineHeight, fontWeight: bookId ? '700' : '500' }, animStyle]}>
                 {core}
             </Animated.Text>
             {trail}
@@ -1386,6 +1473,9 @@ const makeStyles = (colors) => StyleSheet.create({
 
     sentenceWrap: { marginBottom: CHUNK_MARGIN },
     pressedChunk: { opacity: 0.65 },
+    // A book title inside a sentence: weight only — colour and size are the
+    // sentence's, so the past/future dimming still reads.
+    bookTitle: { fontWeight: '700' },
 
     keypointRow: {
         flexDirection: 'row',
