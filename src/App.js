@@ -118,6 +118,7 @@ const TabNavigator = ({ navigation }) => {
     return (
         <View style={{ flex: 1 }}>
             <Tab.Navigator
+                initialRouteName="Timeline"
                 screenOptions={({ route }) => ({
                     headerStyle:         { backgroundColor: colors.bg },
                     headerTintColor:     colors.textPrimary,
@@ -151,6 +152,10 @@ const TabNavigator = ({ navigation }) => {
                     headerRight: () => <SettingsGearButton style={{ marginRight: 16, marginTop: 3 }} />,
                 })}
             >
+                {/* Live radio (4.0.0): stations, on-air guide, listen with or
+                    without a transcript. First tab since 2026-09-07 on the
+                    user's ask; the app still opens on the Feed. */}
+                <Tab.Screen name="Radio" component={RadioScreen} options={{ title: 'Live Radio' }} />
                 <Tab.Screen name="Timeline" component={SubscribedTimeline} options={{ title: 'Feed' }} />
                 <Tab.Screen
                     name="Podcasts"
@@ -162,9 +167,6 @@ const TabNavigator = ({ navigation }) => {
                 />
                 <Tab.Screen name="Library"  component={DownloadedTimeline}  options={{ title: 'Library' }} />
                 <Tab.Screen name="Listening" component={ListeningScreen} options={{ title: 'Listening' }} />
-                {/* Live radio (4.0.0): stations, on-air guide, listen with or
-                    without a transcript. */}
-                <Tab.Screen name="Radio" component={RadioScreen} options={{ title: 'Live Radio' }} />
             </Tab.Navigator>
 
             {showMiniPlayer && (

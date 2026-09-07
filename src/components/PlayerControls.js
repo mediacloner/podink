@@ -28,15 +28,17 @@ const formatRate = (rate) => `${String(Number(rate.toFixed(2)))}x`;
  *   { mode: 'live' }                       the station's stream itself: no
  *                                          past to seek into, so the slider,
  *                                          skips and times give way to LIVE
- *   { mode: 'transcript', read, onGoLive } a recording that grows while it
- *                                          plays. `read()` returns the live
- *                                          state { followSec, airSec, edgeSec }:
+ *   { mode: 'recording', read, onGoLive }  a recording that grows while it
+ *                                          plays (with a transcript, or live
+ *                                          radio kept for pause / rewind).
+ *                                          `read()` returns the live state
+ *                                          { followSec, airSec, edgeSec }:
  *                                          followSec is where playback sits when
  *                                          it simply follows the broadcast (a
- *                                          constant ~30 s delay), edgeSec the
- *                                          last moment that has text. The
- *                                          slider and skips stop at the text
- *                                          edge; the right pill reads LIVE when
+ *                                          constant delay), edgeSec the newest
+ *                                          moment the player may go to. The
+ *                                          slider and skips stop at that edge;
+ *                                          the right pill reads LIVE when
  *                                          following, else how far behind and
  *                                          taps back to live; the middle shows
  *                                          the delay behind the broadcast.
@@ -182,7 +184,7 @@ const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange, li
     const remaining = Math.max(0, duration - displayPosition);
 
     const liveDirect = live?.mode === 'live';
-    const liveRecording = live?.mode === 'transcript';
+    const liveRecording = live?.mode === 'recording';
     // Re-read on every progress tick: the follow position and the air time
     // move with the clock, not with React state.
     const liveState = liveRecording && typeof live.read === 'function' ? live.read() : null;

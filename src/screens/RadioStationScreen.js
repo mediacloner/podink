@@ -8,7 +8,7 @@ import { getEpisodeById } from '../database/queries';
 import { getStation } from '../services/radioStations';
 import { fetchGuide, stationLocalTime } from '../services/radioSchedule';
 import {
-    currentProgramme, FOLLOW_DELAY_SEC, isRadioAvailable, startSession, stopSession, useRadioSession,
+    currentProgramme, FOLLOW_DELAY_SEC, LIVE_BUFFER_SEC, isRadioAvailable, startSession, stopSession, useRadioSession,
 } from '../services/radioService';
 import { radii, type, useStyles, useTheme, withAlpha } from '../theme';
 
@@ -121,16 +121,23 @@ const RadioStationScreen = ({ route, navigation }) => {
     if (mine) {
         switch (session.status) {
             case 'starting': statusLine = 'Starting…'; break;
-            case 'buffering':
+            case 'buffering': {
+                const need = session.mode === 'transcript' ? FOLLOW_DELAY_SEC : LIVE_BUFFER_SEC;
+                const sofar = formatSec(Math.min(need, session.totalSec));
                 statusLine = session.totalSec > 0
-                    ? `Buffering ${FOLLOW_DELAY_SEC} s so the text stays ahead of the sound — ${formatSec(Math.min(FOLLOW_DELAY_SEC, session.totalSec))} so far.`
+                    ? (session.mode === 'transcript'
+                        ? `Buffering ${need} s so the text stays ahead of the sound — ${sofar} so far.`
+                        : `Buffering ${need} s of the stream — ${sofar} so far.`)
                     : 'Connecting to the stream…';
                 break;
+            }
             case 'loading': statusLine = 'Starting playback…'; break;
             case 'playing':
                 statusLine = session.mode === 'transcript'
                     ? `Playing with transcript — ${formatSec(session.totalSec)} recorded, text up to ${formatSec(session.frontierSec)}.`
-                    : 'Playing live.';
+                    : session.buffered
+                        ? `Playing live — ${formatSec(session.totalSec)} kept since you tuned in; pause, skip back or catch up any time.`
+                        : 'Playing live.';
                 break;
             case 'ended': statusLine = session.statusMessage || 'The stream ended.'; break;
             case 'error': statusLine = session.statusMessage || 'Something went wrong.'; break;
@@ -226,9 +233,9 @@ const RadioStationScreen = ({ route, navigation }) => {
             )}
             {!mine && (
                 <Text style={styles.hint}>
-                    With transcript, the stream is recorded and transcribed on the device as it plays,
-                    about {FOLLOW_DELAY_SEC} seconds behind the air so the words are on screen before you hear them.
-                    You can rewind, replay a sentence, look words up, and jump back to live at any time.
+                    {canTranscribe
+                        ? `Listen live keeps what has aired since you tuned in (about ${LIVE_BUFFER_SEC} seconds behind the air), so you can pause, skip back and forth and catch up. With transcript, the stream is also transcribed on the device as it plays, about ${FOLLOW_DELAY_SEC} seconds behind the air so the words are on screen before you hear them — rewind, replay a sentence, look words up, and jump back to live at any time.`
+                        : `With transcript, the stream is recorded and transcribed on the device as it plays, about ${FOLLOW_DELAY_SEC} seconds behind the air so the words are on screen before you hear them. You can rewind, replay a sentence, look words up, and jump back to live at any time.`}
                 </Text>
             )}
 
