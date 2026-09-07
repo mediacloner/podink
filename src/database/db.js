@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -302,6 +302,7 @@ export const initDB = async () => {
         if (cur < 5) await migrateToV5(db);
         if (cur < 6) await migrateToV6(db);
         if (cur < 7) await migrateToV7(db);
+        if (cur < 8) await migrateToV8(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {
