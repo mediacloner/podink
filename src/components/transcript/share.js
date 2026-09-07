@@ -23,23 +23,39 @@ export const copyText = async (text) => {
     }
 };
 
-// Whole request in one share, so the assistant answers directly instead of
-// asking what to do with a pasted paragraph.
-export const askAssistantAboutText = (text, lang) => {
-    const target = langEnglishName(lang);
-    const ask = target === 'English'
-        ? 'Explain this English text in simpler English and point out any tricky words or expressions:'
-        : `Translate this English text to ${target} and briefly explain any tricky words or expressions:`;
-    return shareText(`${ask}\n\n"${text}"`, 'Ask an assistant');
+// Every request opens with where the text comes from and, when the caller
+// has them, the lines spoken just before it: an assistant reading one
+// paragraph cold guesses at the pronouns, the joke, the half-sentence that
+// the previous lines make obvious. The context is labelled as such so the
+// answer is about the passage, not about the context.
+const sourceLine = (source) => {
+    const s = (source || '').trim();
+    return s ? `From an English podcast / radio transcript ("${s}").` : 'From an English podcast / radio transcript.';
+};
+const contextBlock = (before) => {
+    const ctx = (before || '').trim();
+    return ctx ? `\n\nWhat was said just before, for context only (no need to explain it):\n"${ctx}"` : '';
 };
 
-export const askAssistantAboutWord = (word, sentence, lang) => {
+// Whole request in one share, so the assistant answers directly instead of
+// asking what to do with a pasted paragraph. `before` is the transcript
+// text preceding the passage, `source` the episode / programme title.
+export const askAssistantAboutText = (text, lang, { before = '', source = '' } = {}) => {
+    const target = langEnglishName(lang);
+    const ask = target === 'English'
+        ? 'Explain this passage in simpler English and point out any tricky words or expressions:'
+        : `Translate this passage to ${target} and briefly explain any tricky words or expressions:`;
+    return shareText(`${sourceLine(source)}${contextBlock(before)}\n\n${ask}\n\n"${text}"`, 'Ask an assistant');
+};
+
+export const askAssistantAboutWord = (word, sentence, lang, { before = '', source = '' } = {}) => {
     const target = langEnglishName(lang);
     const inLang = target === 'English' ? '' : `, and how would you say it in ${target}`;
     const hasSentence = !!sentence && sentence.trim().toLowerCase() !== word.trim().toLowerCase();
-    const ctx = hasSentence ? `\n\nIt appears in this sentence:\n"${sentence.trim()}"` : '';
+    const where = hasSentence ? `\n\nThe sentence:\n"${sentence.trim()}"\n\nWhat does the English word "${word}" mean in this sentence${inLang}?`
+        : `\n\nWhat does the English word "${word}" mean${inLang}?`;
     return shareText(
-        `What does the English word "${word}" mean${inLang}? Include a short example sentence.${ctx}`,
+        `${sourceLine(source)}${contextBlock(hasSentence ? before : '')}${where} Include a short example sentence.`,
         'Ask an assistant',
     );
 };

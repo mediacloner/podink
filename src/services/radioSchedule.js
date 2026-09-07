@@ -15,11 +15,19 @@
  *   rnz   The RNZ National schedule page: wall-clock times in NZ; each entry
  *         is placed relative to "now" in Pacific/Auckland.
  *   wnyc  WNYC's whats_on JSON: the show on air, plus the next ones when listed.
- *   none  RTÉ, NPR and LBC publish no machine-readable guide the app can reach;
- *         the stream's ICY title, when it carries one, stands in.
+ *   rte   The JSON behind the live-stations strip on rte.ie/radio: the programme
+ *         on air (Dublin wall clock) with its description — "now" only; RTÉ
+ *         publishes no day schedule the app can reach.
+ *   lbc   LBC's schedule page: the week's programmes travel in the page's Astro
+ *         island props as JSON with ISO times.
+ *   npr   NPR publishes no timetable for its Program Stream; a fixed weekly
+ *         line-up (Eastern time) is built in, marked as such under the guide.
+ *   none  No guide; the stream's ICY title, when it carries one, stands in.
  *
- * Results are cached for a minute per station; a failed fetch resolves to an
- * empty guide (never throws) and is retried after 20 s.
+ * A guide may carry a `note` (shown under the list) saying where it comes
+ * from when that matters. Results are cached for a minute per station; a
+ * failed fetch resolves to an empty guide (never throws) and is retried
+ * after 20 s.
  */
 import { USER_AGENT } from '../api/userAgent';
 import { showNotesPlainText } from './showNotes';
@@ -66,6 +74,16 @@ const zoneParts = (tz, date = new Date()) => {
     }
 };
 const pad2 = (n) => String(n).padStart(2, '0');
+
+/** Epoch ms of a wall-clock moment in an IANA zone (`h` may be 24 for the
+ *  end of a day). One DST-aware pass: the UTC guess is corrected by the
+ *  zone's offset at that moment — exact except inside a shifted hour. */
+const zonedToMs = (tz, y, m, d, h, min) => {
+    const guess = Date.UTC(y, m - 1, d, h, min);
+    const p = zoneParts(tz, new Date(guess));
+    const seen = Date.UTC(p.y, p.m - 1, p.d, p.h, p.min);
+    return guess - (seen - guess);
+};
 
 /** now = the programme containing `nowMs`; next = the two after it. */
 const nowAndNext = (items, nowMs = Date.now()) => {
@@ -222,6 +240,164 @@ const fetchWnyc = async (slug) => {
     return { ...nowAndNext(items), source: 'guide' };
 };
 
+// ─── RTÉ Radio 1 ─────────────────────────────────────────────────────────────
+
+// The JSON the "live stations" strip on rte.ie/radio reads: every RTÉ station
+// with the programme on air — title, description, Dublin wall-clock start and
+// end. That is all RTÉ publishes in a form the app can read (its listings
+// page carries TV feeds only), so the guide is "now" without a "coming up".
+const fetchRte = async (slug, tz) => {
+    const res = await fetchWithTimeout('https://www.rte.ie/radio/live_stations/json');
+    const json = await res.json();
+    const station = (json?.stations || []).find(st => st?.slug === slug);
+    const l = station?.liveListing || {};
+    const title = text(l.showTitle || l.showName);
+    const note = 'RTÉ publishes only the programme on air.';
+    if (!title) return { now: null, next: [], source: 'guide', note };
+    const wall = (iso) => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''));
+        return m ? zonedToMs(tz, +m[1], +m[2], +m[3], +m[4], +m[5]) : 0;
+    };
+    const start = wall(l.showDate);
+    let end = wall(l.showEndDate);
+    if (!(end > start) && Number(l.duration) > 0) end = start + Number(l.duration);
+    const programme = { title, subtitle: '', description: text(l.showDescription || l.description), start, end: end > start ? end : 0 };
+    // Whatever the clock says, this is the listing RTÉ calls live.
+    const nn = start > 0 && end > start ? nowAndNext([programme]) : { now: null, next: [] };
+    return { now: nn.now || programme, next: [], source: 'guide', note };
+};
+
+// ─── LBC (Global) ────────────────────────────────────────────────────────────
+
+// The schedule page is rendered by Astro: the week's programmes — every day,
+// ISO start and end with the London offset — travel in the RadioSchedule
+// island's `props` attribute, the JSON the page itself renders from. Astro
+// wraps each value as [kind, value]: 0 a plain value (an object's fields are
+// wrapped in turn), 1 an array of wrapped values.
+const NAMED_ENTITIES = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'", nbsp: ' ' };
+const unescapeAttr = (s) => String(s || '').replace(/&(?:#x([0-9a-f]+)|#(\d+)|([a-z]+));/gi, (m, hex, dec, name) => {
+    if (hex) return String.fromCodePoint(parseInt(hex, 16));
+    if (dec) return String.fromCodePoint(Number(dec));
+    return NAMED_ENTITIES[name.toLowerCase()] ?? m;
+});
+const astroValue = (v) => {
+    if (Array.isArray(v) && v.length === 2 && typeof v[0] === 'number') {
+        return v[0] === 1 ? (Array.isArray(v[1]) ? v[1].map(astroValue) : []) : astroValue(v[1]);
+    }
+    if (Array.isArray(v)) return v.map(astroValue);
+    if (v && typeof v === 'object') {
+        const out = {};
+        for (const k of Object.keys(v)) out[k] = astroValue(v[k]);
+        return out;
+    }
+    return v;
+};
+
+const fetchLbc = async (slug) => {
+    const html = await (await fetchWithTimeout(`https://www.lbc.co.uk/radio/schedule/${encodeURIComponent(slug)}/`)).text();
+    const island = (html.match(/<astro-island\b[^>]*component-url="[^"]*RadioSchedule[^"]*"[^>]*>/i) || [])[0];
+    const raw = island ? (/\sprops="([^"]*)"/.exec(island) || [])[1] : null;
+    if (!raw) throw new Error('Schedule data not found in the page');
+    const props = astroValue(JSON.parse(unescapeAttr(raw)));
+    const items = [];
+    for (const day of props?.days || []) {
+        for (const ep of day?.episodes || []) {
+            const start = Date.parse(ep?.start_date);
+            const end = Date.parse(ep?.end_date);
+            const title = text(ep?.title);
+            if (title && start > 0 && end > start) items.push({ title, subtitle: '', description: text(ep?.description), start, end });
+        }
+    }
+    if (!items.length) throw new Error('Schedule data empty');
+    return { ...nowAndNext(items), source: 'guide' };
+};
+
+// ─── NPR Program Stream ──────────────────────────────────────────────────────
+
+// NPR publishes no timetable for the stream — only that it "airs recordings
+// of recent NPR programs after they air live on NPR Member stations" and may
+// be interrupted for news — and the stream's ICY title is blank. This is the
+// stream's regular weekly line-up as PublicRadioFan lists it (read
+// 2026-09-07), in Eastern wall-clock time; the hours it leaves unlisted are
+// gaps here too. Rows: [days (0 Sunday … 6 Saturday), from, to, title].
+const NPR_TZ = 'America/New_York';
+const NPR_WEEK = [
+    ['1', '00:00', '02:00', 'Weekend Edition Sunday'],
+    ['23456', '00:00', '02:00', 'Morning Edition'],
+    ['0', '00:00', '02:00', 'Weekend Edition Saturday'],
+    ['01', '02:00', '04:00', 'Weekend All Things Considered'],
+    ['23456', '02:00', '04:00', 'All Things Considered'],
+    ['123456', '04:00', '05:00', 'On Point'],
+    ['0', '04:00', '05:00', '1A'],
+    ['01', '06:00', '08:00', 'Weekend All Things Considered'],
+    ['23456', '06:00', '08:00', 'All Things Considered'],
+    ['01', '08:00', '09:00', 'Fresh Air Weekend'],
+    ['23456', '08:00', '09:00', 'Fresh Air'],
+    ['12345', '09:00', '10:00', '1A'],
+    ['6', '09:00', '10:00', 'Bullseye'],
+    ['0', '09:00', '10:00', 'TED Radio Hour'],
+    ['12345', '10:00', '11:00', 'On Point'],
+    ['6', '10:00', '11:00', 'Tech Nation'],
+    ['0', '11:00', '12:00', 'Snap Judgment'],
+    ['06', '12:00', '13:00', 'Fresh Air Weekend'],
+    ['12345', '12:00', '14:00', 'Morning Edition'],
+    ['06', '13:00', '14:00', 'Wait Wait… Don’t Tell Me!'],
+    ['12345', '14:00', '16:00', '1A'],
+    ['6', '14:00', '16:00', 'Weekend Edition Saturday'],
+    ['0', '14:00', '16:00', 'Weekend Edition Sunday'],
+    ['12345', '16:00', '17:00', 'On Point'],
+    ['6', '16:00', '17:00', 'Bullseye'],
+    ['0', '16:00', '17:00', 'Snap Judgment'],
+    ['6', '17:00', '18:00', 'Tech Nation'],
+    ['12345', '18:00', '19:00', 'Fresh Air'],
+    ['06', '18:00', '19:00', 'TED Radio Hour'],
+    ['12345', '19:00', '20:00', '1A'],
+    ['06', '19:00', '20:00', 'Fresh Air Weekend'],
+    ['12345', '20:00', '21:00', 'On Point'],
+    ['06', '20:00', '21:00', 'Weekend All Things Considered'],
+    ['06', '21:00', '22:00', 'Wait Wait… Don’t Tell Me!'],
+    ['06', '22:00', '24:00', 'Weekend All Things Considered'],
+    ['12345', '22:00', '24:00', 'All Things Considered'],
+];
+const NPR_ABOUT = {
+    'Morning Edition': 'NPR’s morning news magazine: the day’s news, interviews and reported features (a replay of the live broadcast).',
+    'All Things Considered': 'NPR’s afternoon news magazine: news, analysis, interviews, science and the arts (a replay of the live broadcast).',
+    'Weekend Edition Saturday': 'NPR’s Saturday morning news magazine: the week’s news, conversation and features.',
+    'Weekend Edition Sunday': 'NPR’s Sunday morning news magazine: news, interviews and the Sunday puzzle.',
+    'Weekend All Things Considered': 'The weekend edition of NPR’s afternoon news magazine.',
+    'Fresh Air': 'Long-form interviews about books, film, music and ideas, from WHYY in Philadelphia.',
+    'Fresh Air Weekend': 'The week’s best Fresh Air interviews.',
+    '1A': 'A daily hour of conversation about the news and the ideas behind it, from WAMU in Washington.',
+    'On Point': 'One topic a day, examined in depth with experts and callers, from WBUR in Boston.',
+    'TED Radio Hour': 'Ideas from TED talks, explored with the people who gave them.',
+    'Wait Wait… Don’t Tell Me!': 'NPR’s weekly news quiz, with panellists, guests and callers.',
+    'Snap Judgment': 'True stories told with a beat, from KQED in San Francisco.',
+    'Bullseye': 'Interviews with the people who make culture — comedy, music, film, books.',
+    'Tech Nation': 'Conversations about science, technology and their place in daily life.',
+};
+const NPR_NOTE = 'Regular weekly line-up of the NPR Program Stream, which replays NPR programmes after their live broadcast; NPR may interrupt it for news. Hours not in the line-up are left blank.';
+
+const nprItems = (nowMs) => {
+    const items = [];
+    for (const offset of [-1, 0, 1]) {
+        const p = zoneParts(NPR_TZ, new Date(nowMs + offset * 86400 * 1000));
+        const weekday = String(new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay());
+        for (const [days, from, to, title] of NPR_WEEK) {
+            if (!days.includes(weekday)) continue;
+            const [fh, fm] = from.split(':').map(Number);
+            const [th, tm] = to.split(':').map(Number);
+            items.push({
+                title, subtitle: '', description: NPR_ABOUT[title] || '',
+                start: zonedToMs(NPR_TZ, p.y, p.m, p.d, fh, fm),
+                end: zonedToMs(NPR_TZ, p.y, p.m, p.d, th, tm),
+            });
+        }
+    }
+    return items;
+};
+
+const fetchNpr = async () => ({ ...nowAndNext(nprItems(Date.now())), source: 'guide', note: NPR_NOTE });
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 const fetchFresh = async (station) => {
@@ -232,6 +408,9 @@ const fetchFresh = async (station) => {
         case 'cbc': return fetchCbc(g.service, g.tz || 'America/Toronto');
         case 'rnz': return fetchRnz(g.tz || 'Pacific/Auckland');
         case 'wnyc': return fetchWnyc(g.service || 'wnyc-fm939');
+        case 'rte': return fetchRte(g.service || 'radio1', g.tz || 'Europe/Dublin');
+        case 'lbc': return fetchLbc(g.service || 'lbc');
+        case 'npr': return fetchNpr();
         default: return EMPTY('none');
     }
 };

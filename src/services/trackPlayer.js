@@ -12,6 +12,60 @@ import { persistProgress } from './playbackService';
 import { USER_AGENT } from '../api/userAgent';
 import { getStation, stationIdFromFeedUrl } from './radioStations';
 
+// Notification / lock-screen / headset controls. Android replaces the whole
+// option set on every updateOptions call, so the full set is built here.
+// A station's own live stream (live radio without a transcript) has no past
+// to seek into: its controls are play, pause and stop only — no ±10 s
+// buttons, no seek bar. Everything else (episodes, the live-radio recording)
+// gets the full set. Re-applied by loadEpisodeTrack when the kind changes.
+const playerOptions = (liveStream) => ({
+    capabilities: liveStream
+        ? [Capability.Play, Capability.Pause, Capability.Stop]
+        : [
+            Capability.Play,
+            Capability.Pause,
+            Capability.JumpForward,
+            Capability.JumpBackward,
+            Capability.SeekTo,
+            Capability.Stop,
+        ],
+    // Explicit lock screen / notification buttons
+    notificationCapabilities: liveStream
+        ? [Capability.Play, Capability.Pause]
+        : [
+            Capability.Play,
+            Capability.Pause,
+            Capability.JumpForward,
+            Capability.JumpBackward,
+            Capability.SeekTo,
+        ],
+    compactCapabilities: liveStream
+        ? [Capability.Play, Capability.Pause]
+        : [
+            Capability.Play,
+            Capability.Pause,
+            Capability.JumpBackward,
+            Capability.JumpForward,
+        ],
+    forwardJumpInterval: 10,
+    backwardJumpInterval: 10,
+    progressUpdateEventInterval: 1,
+    // Keep playing when user force-closes the app from the recent apps tray
+    android: {
+        appKilledPlaybackBehavior: AppKilledPlaybackBehavior.ContinuePlayback,
+        // Pause (not just duck volume) on transient interruptions for
+        // speech content. Only takes effect with autoHandleInterruptions.
+        alwaysPauseOnInterruption: true,
+    },
+});
+
+let _liveStreamOptions = false;
+const applyControlOptions = async (liveStream) => {
+    if (liveStream === _liveStreamOptions) return;
+    _liveStreamOptions = liveStream;
+    try { await TrackPlayer.updateOptions(playerOptions(liveStream)); } catch (_) {}
+};
+
 export const setupPlayer = async () => {
     try {
         await TrackPlayer.setupPlayer({
@@ -28,40 +82,7 @@ export const setupPlayer = async () => {
             iosCategoryMode: IOSCategoryMode.Default,
             iosCategoryOptions: [IOSCategoryOptions.AllowBluetooth, IOSCategoryOptions.AllowAirPlay],
         });
-        await TrackPlayer.updateOptions({
-            capabilities: [
-                Capability.Play,
-                Capability.Pause,
-                Capability.JumpForward,
-                Capability.JumpBackward,
-                Capability.SeekTo,
-                Capability.Stop,
-            ],
-            // Explicit lock screen / notification buttons
-            notificationCapabilities: [
-                Capability.Play,
-                Capability.Pause,
-                Capability.JumpForward,
-                Capability.JumpBackward,
-                Capability.SeekTo,
-            ],
-            compactCapabilities: [
-                Capability.Play,
-                Capability.Pause,
-                Capability.JumpBackward,
-                Capability.JumpForward,
-            ],
-            forwardJumpInterval: 10,
-            backwardJumpInterval: 10,
-            progressUpdateEventInterval: 1,
-            // Keep playing when user force-closes the app from the recent apps tray
-            android: {
-                appKilledPlaybackBehavior: AppKilledPlaybackBehavior.ContinuePlayback,
-                // Pause (not just duck volume) on transient interruptions for
-                // speech content. Only takes effect with autoHandleInterruptions.
-                alwaysPauseOnInterruption: true,
-            },
-        });
+        await TrackPlayer.updateOptions(playerOptions(false));
         console.log('Player initialized');
     } catch (e) {
         // On Android the player survives JS reloads, so setupPlayer throws
@@ -221,6 +242,7 @@ export const loadEpisodeTrack = async (episode, autoPlay = true) => {
 
     _notifyUserPlay();
     await TrackPlayer.reset();
+    await applyControlOptions(!!track.isLiveStream);
     await TrackPlayer.add(track);
 
     // reset() reverts the player to 1x, so re-apply the saved playback rate

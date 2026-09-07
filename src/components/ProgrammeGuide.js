@@ -10,6 +10,7 @@ import { radii, type, useStyles, useTheme, withAlpha } from '../theme';
  * and by the Player when a station plays without a transcript.
  *
  *   guide     radioSchedule.fetchGuide() result, or null while loading
+ *             (its optional `note` is printed under the list)
  *   icyTitle  the stream's own "now playing" text, for stations without a guide
  *   compact   tighter spacing (inside the Player)
  */
@@ -93,6 +94,7 @@ const ProgrammeGuide = ({ guide, icyTitle, compact = false, accent }) => {
                     ))}
                 </>
             )}
+            {!!guide?.note && <Text style={styles.note}>{guide.note}</Text>}
         </View>
     );
 };
@@ -133,6 +135,8 @@ const makeStyles = (colors) => StyleSheet.create({
     nextTitle: { ...type.title, color: colors.textPrimary },
     nextSubtitle: { ...type.bodyStrong, color: colors.textSecondary },
     nextDesc: { ...type.body, fontSize: 13.5, color: colors.textMuted, lineHeight: 19 },
+    // Where a guide comes from when that matters (a fixed weekly line-up).
+    note: { ...type.caption, letterSpacing: 0, textTransform: 'none', color: colors.textFaint, lineHeight: 16, marginTop: 14 },
 });
 
 export default ProgrammeGuide;

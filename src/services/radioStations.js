@@ -75,7 +75,7 @@ const RAW_STATIONS = [
         streams: [
             { url: 'https://playerservices.streamtheworld.com/api/livestream-redirect/RTE_1_INT.mp3', kind: 'progressive' },
         ],
-        guide: { provider: 'none' },
+        guide: { provider: 'rte', service: 'radio1', tz: 'Europe/Dublin' },
         homepage: 'https://www.rte.ie/radio/radio1/',
     },
     {
@@ -147,7 +147,7 @@ const RAW_STATIONS = [
         streams: [
             { url: 'https://npr-ice.streamguys1.com/live.mp3', kind: 'progressive' },
         ],
-        guide: { provider: 'none' },
+        guide: { provider: 'npr', tz: 'America/New_York' },
         homepage: 'https://www.npr.org/',
     },
     // ── Added on the user's ask for five more (2026-09-06) ──────────────────
@@ -191,7 +191,7 @@ const RAW_STATIONS = [
             { url: 'https://media-ssl.musicradio.com/LBCLondon', kind: 'progressive' },
             { url: 'https://media-ssl.musicradio.com/LBCLondonMP3', kind: 'progressive' },
         ],
-        guide: { provider: 'none' },
+        guide: { provider: 'lbc', service: 'lbc' },
         homepage: 'https://www.lbc.co.uk/',
     },
     {

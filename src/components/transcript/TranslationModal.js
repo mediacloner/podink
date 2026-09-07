@@ -34,7 +34,11 @@ const TappableParagraph = ({ text, style, onWordPress, paragraphOffset = 0, tran
 
 // `onWordPress({ token, index, tokens, paragraphOffset, translation })`,
 // optional, makes the English words tappable (see TappableParagraph).
-const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose, onWordPress }) => {
+// `precedingText` (the transcript just before the paragraph) and
+// `episodeTitle` go along with the "ask an assistant" request as context.
+const TranslationModal = ({
+    visible, text, contextText, precedingText = '', episodeTitle = '', lang = 'es', onClose, onWordPress,
+}) => {
     const { colors } = useTheme();
     const ms = useStyles(makeStyles);
     const [translationParts, setTranslationParts] = useState([]);
@@ -122,7 +126,10 @@ const TranslationModal = ({ visible, text, contextText, lang = 'es', onClose, on
 
     const onCopy = useCallback(async () => { if (await copyText(text)) setCopied(true); }, [text]);
     const onShare = useCallback(() => shareText(text, 'Share English text'), [text]);
-    const onAsk = useCallback(() => askAssistantAboutText(text, lang), [text, lang]);
+    const onAsk = useCallback(
+        () => askAssistantAboutText(text, lang, { before: precedingText, source: episodeTitle }),
+        [text, lang, precedingText, episodeTitle],
+    );
 
     const lastTranslation = translationParts[translationParts.length - 1] ?? '';
     const translatedCtx = translationParts.slice(0, -1);
