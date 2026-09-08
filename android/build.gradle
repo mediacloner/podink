@@ -20,7 +20,12 @@ allprojects {
   }
   configurations.all {
     resolutionStrategy {
-      // ffmpeg-kit resolution removed
+      // react-native-track-player pulls KotlinAudio as a prebuilt AAR from JitPack.
+      // Build it from android/kotlinaudio instead: ExoPlayer there seeks local MP3s
+      // sample-exactly, so the transcript stays in sync after a seek (see its README).
+      dependencySubstitution {
+        substitute module('com.github.doublesymmetry:kotlinaudio') using project(':kotlinaudio')
+      }
     }
   }
 }

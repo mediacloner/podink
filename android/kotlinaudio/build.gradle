@@ -1,0 +1,33 @@
+// KotlinAudio v2.1.0 built from source (see README.md). react-native-track-player
+// declares it as a prebuilt AAR from JitPack; android/build.gradle substitutes this
+// module so ExoPlayer's seeking of local MP3s can be changed.
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+def safeExtGet(name, fallback) {
+    rootProject.ext.has(name) ? rootProject.ext.get(name) : fallback
+}
+
+android {
+    namespace 'com.doublesymmetry.kotlinaudio'
+    compileSdkVersion safeExtGet('compileSdkVersion', 36)
+
+    defaultConfig {
+        minSdkVersion safeExtGet('minSdkVersion', 24)
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+// Same runtime dependencies as the published AAR (its test-only entries dropped).
+dependencies {
+    implementation 'io.coil-kt:coil:2.2.0'
+    implementation 'androidx.media:media:1.6.0'
+    api 'com.google.android.exoplayer:exoplayer:2.19.0'
+    api 'com.google.android.exoplayer:extension-mediasession:2.19.0'
+    api 'com.jakewharton.timber:timber:5.0.1'
+}
