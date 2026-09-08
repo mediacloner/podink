@@ -21,6 +21,7 @@ ios/DerivedData/
 # Android
 android/app/build/
 android/build/
+android/kotlinaudio/build/
 android/.gradle/
 android/local.properties
 android/captures/

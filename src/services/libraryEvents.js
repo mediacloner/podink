@@ -9,6 +9,8 @@
  * 'transcript-complete' | 'transcript-error' | 'transcript-delete' |
  * 'subscribe' | 'unsubscribe' | 'playback-complete' | 'playback-progress' |
  * 'playback-reset' (an episode marked not-played again from Listening).
+ * 'books-indexed' (services/bookIndex.js scanned an episode's transcript for
+ * books; payload carries `count`) — the Player reloads its EpisodeBooks rows.
  * Subscribers must tolerate an undefined payload.
  *
  * 'playback-progress' fires on every persisted play position (~5s while

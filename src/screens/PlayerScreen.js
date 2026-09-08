@@ -18,7 +18,8 @@ import {
 import {
     downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
 } from '../services/episodeService';
-import { getEpisodeById, getTranscriptsForEpisode } from '../database/queries';
+import { getEpisodeById, getEpisodeBooks, getTranscriptsForEpisode } from '../database/queries';
+import { indexEpisodeBooks } from '../services/bookIndex';
 import ProgrammeGuide from '../components/ProgrammeGuide';
 import {
     attachPlayer as attachRadioPlayer, FOLLOW_DELAY_SEC, goLive as radioGoLive, isRadioEpisode, readLiveState,
@@ -63,6 +64,8 @@ const PlayerScreen = ({ route, navigation }) => {
     const radioStation = isRadio ? getStation(stationIdFromFeedUrl(ep.podcast_feed_url)) : null;
 
     const [segments, setSegments] = useState([]);
+    // Books the transcript mentions (EpisodeBooks rows) — bold titles + book card.
+    const [books, setBooks] = useState([]);
     const [transcriptLoading, setTranscriptLoading] = useState(false);
     const [audioStatus, setAudioStatus] = useState('');
     const [audioError, setAudioError] = useState(false);
@@ -272,6 +275,28 @@ const PlayerScreen = ({ route, navigation }) => {
         return () => { alive = false; };
     }, [epId]);
 
+    // ── Books mentioned ──────────────────────────────────────────────────────
+    // Rows come from the last scan; an episode with text that was never
+    // scanned (transcribed before this existed, or scanned offline) is scanned
+    // now, and 'books-indexed' below refreshes the list when it lands.
+    const refetchBooks = useCallback(async () => {
+        try {
+            const rows = await getEpisodeBooks(epId);
+            setBooks(rows);
+        } catch (_) {}
+    }, [epId]);
+    useEffect(() => {
+        let alive = true;
+        setBooks([]);
+        getEpisodeBooks(epId).then(rows => { if (alive) setBooks(rows); }).catch(() => {});
+        return () => { alive = false; };
+    }, [epId]);
+    useEffect(() => {
+        // Not while the text is still growing: the finished job scans it.
+        if (!ep || !segments.length || ep.books_indexed_at || isRadio || transcribing || isQueued) return;
+        indexEpisodeBooks(epId, { front: true }).catch(() => {});
+    }, [epId, ep?.books_indexed_at, segments.length, isRadio, transcribing, isQueued]);
+
     useEffect(() => {
         const st = { timer: null, last: 0 };
         const fetchNow = () => {
@@ -299,6 +324,9 @@ const PlayerScreen = ({ route, navigation }) => {
                 schedule(false);
             } else if (payload.type === 'transcript-complete') {
                 schedule(true);
+                getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
+            } else if (payload.type === 'books-indexed') {
+                refetchBooks();
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
             } else if (payload.type === 'transcript-error') {
                 setTranscribing(false);
@@ -514,6 +542,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         playbackRate={playbackRate}
                         episodeId={epId}
                         episodeTitle={ep.title}
+                        books={books}
                     />
                 )}
 

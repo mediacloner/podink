@@ -32,6 +32,7 @@ import {
     getEpisodeById,
 } from '../database/queries';
 import { notifyLibraryChange } from './libraryEvents';
+import { indexEpisodeBooks } from './bookIndex';
 import { log } from './logService';
 
 const DEFAULT_TIMEOUT_MS    = 10 * 60 * 1000; // 10 minutes for short/unknown episodes
@@ -624,6 +625,9 @@ const _process = async (entry) => {
         if (entry.onProgress) { try { entry.onProgress(100); } catch (_) {} }
         try { notifyLibraryChange({ type: 'transcript-complete', episodeId: entry.id }); } catch (_) {}
         _startFg('Transcribing podcasts', 'Complete!', 0);
+        // Books the episode talks about: scanned from the finished text
+        // (force — a continued transcript has more text than its last scan).
+        indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
 
         log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length });
         entry.resolve(segments);

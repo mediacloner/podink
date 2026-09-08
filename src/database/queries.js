@@ -39,7 +39,8 @@ export const isYouTubeFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feed
 // tell a chapter of an imported book (no feed, no re-download, its file *is*
 // the episode) from a podcast episode without a second query.
 const EPISODE_WITH_IMAGE = `
-  SELECT e.*, p.image_url, p.kind AS podcast_kind, p.author AS podcast_author
+  SELECT e.*, p.image_url, p.kind AS podcast_kind, p.author AS podcast_author,
+         (SELECT COUNT(*) FROM EpisodeBooks b WHERE b.episode_id = e.id AND b.first_ms IS NOT NULL) AS books_count
   FROM Episodes e
   LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
 `;
@@ -328,7 +329,64 @@ export const deleteEpisodeTranscript = async (id) => {
   const db = await openDatabaseContext();
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
-    await db.runAsync(`UPDATE Episodes SET has_transcript = 0 WHERE id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
+    await db.runAsync(`UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL WHERE id = ?`, [id]);
+  });
+};
+
+// ─── Books mentioned in an episode (services/bookIndex.js) ───────────────────
+
+export const getEpisodeBooks = async (episodeId) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT * FROM EpisodeBooks WHERE episode_id = ? ORDER BY first_ms ASC, id ASC`,
+    [episodeId]
+  );
+};
+
+/** Replaces the episode's books and stamps the scan time in one transaction. */
+export const replaceEpisodeBooks = async (episodeId, books, indexedAt = Date.now()) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [episodeId]);
+    for (const b of books || []) {
+      await db.runAsync(
+        `INSERT INTO EpisodeBooks
+           (episode_id, title, author, description, rating, ratings_count, cover_url, year, pages,
+            openlibrary_url, goodreads_url, source, heard_as, first_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          episodeId, b.title, b.author || null, b.description || null,
+          b.rating ?? null, b.ratingsCount || 0, b.coverUrl || null, b.year || null, b.pages || null,
+          b.openlibraryUrl || null, b.goodreadsUrl || null, b.source || null,
+          JSON.stringify(b.heardAs || []), b.firstMs ?? null,
+        ]
+      );
+    }
+    await db.runAsync(`UPDATE Episodes SET books_indexed_at = ? WHERE id = ?`, [indexedAt, episodeId]);
+  });
+};
+
+/** Ids of transcribed episodes never scanned for books, or scanned before
+ *  `staleBefore` (epoch ms — an older detector), the ones listened to most
+ *  recently first; radio sessions excluded. (services/bookIndex.js backlog) */
+export const getEpisodesNeedingBookScan = async (staleBefore = 0) => {
+  const db = await openDatabaseContext();
+  const rows = await db.getAllAsync(
+    `SELECT e.id FROM Episodes e
+     LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
+     WHERE e.has_transcript = 1 AND (e.books_indexed_at IS NULL OR e.books_indexed_at < ?) AND ${NOT_RADIO}
+     ORDER BY COALESCE(e.last_played_at, 0) DESC, COALESCE(e.downloaded_at, 0) DESC`,
+    [staleBefore]
+  );
+  return rows.map(r => r.id).filter(Boolean);
+};
+
+export const clearEpisodeBooks = async (episodeId) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [episodeId]);
+    await db.runAsync(`UPDATE Episodes SET books_indexed_at = NULL WHERE id = ?`, [episodeId]);
   });
 };
 
@@ -340,8 +398,10 @@ export const deleteEpisodeLocalData = async (id) => {
   // UI says has no transcript. Delete Transcripts first (FTS delete trigger).
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
     await db.runAsync(
-      `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0, downloaded_at = NULL
+      `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0, downloaded_at = NULL,
+              books_indexed_at = NULL
        WHERE id = ?`,
       [id]
     );

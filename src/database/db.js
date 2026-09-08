@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -244,6 +244,42 @@ const migrateToV7 = async (txn) => {
     await txn.execAsync(`CREATE INDEX IF NOT EXISTS idx_episodes_feed ON Episodes(podcast_feed_url)`);
 };
 
+const migrateToV8 = async (txn) => {
+    // Books an episode talks about (4.2.0): found in the transcript by
+    // services/bookIndex.js and confirmed against Open Library / Goodreads.
+    // One row per book per episode; heard_as is a JSON array of the
+    // spellings the transcript used ("Sider with Rosie"), which the Player
+    // matches to put the mentions in bold. Episodes.books_indexed_at says
+    // the transcript was scanned (epoch ms); NULL means not yet — a
+    // transcript that arrives offline is scanned when the Player next opens
+    // it online. Deleting a transcript clears both.
+    await txn.execAsync(
+        `CREATE TABLE IF NOT EXISTS EpisodeBooks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            episode_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            author TEXT,
+            description TEXT,
+            rating REAL,
+            ratings_count INTEGER DEFAULT 0,
+            cover_url TEXT,
+            year INTEGER,
+            pages INTEGER,
+            openlibrary_url TEXT,
+            goodreads_url TEXT,
+            source TEXT,
+            heard_as TEXT,
+            first_ms INTEGER,
+            FOREIGN KEY (episode_id) REFERENCES Episodes(id) ON DELETE CASCADE
+        );`
+    );
+    await txn.execAsync(`CREATE INDEX IF NOT EXISTS idx_episode_books_episode ON EpisodeBooks(episode_id)`);
+    const cols = await txn.getAllAsync(`PRAGMA table_info(Episodes)`);
+    if (!cols.some(c => c.name === 'books_indexed_at')) {
+        await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN books_indexed_at INTEGER`);
+    }
+};
+
 export const initDB = async () => {
     const db = await openDatabaseContext();
 
@@ -266,6 +302,7 @@ export const initDB = async () => {
         if (cur < 5) await migrateToV5(db);
         if (cur < 6) await migrateToV6(db);
         if (cur < 7) await migrateToV7(db);
+        if (cur < 8) await migrateToV8(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {
