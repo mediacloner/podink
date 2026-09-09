@@ -1,13 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useTheme, useStyles } from '../../theme';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Feather as Icon } from '@expo/vector-icons';
+import { radii, withAlpha, useTheme, useStyles } from '../../theme';
 import { fetchTranslation, langLabel, translateErrorMessage } from './translate';
 import { askAssistantAboutText, copyText, shareText } from './share';
 import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
+import { showAlert } from '../AppAlert';
+import {
+    getNotebookEntry, removeNotebookEntry, saveNotebookEntry, updateNotebookNote, updateNotebookTranslation,
+} from '../../services/notebookService';
 
 // In-memory cache, keyed by language + chunk context so repeat long-presses
 // on the same paragraph never re-hit the network within a session.
 const _cache = new Map();
+
+// A note is written to the row this long after the last keystroke; the
+// close of the card flushes whatever is still pending.
+const NOTE_SAVE_DELAY_MS = 500;
 
 // An English paragraph where every word opens the word card. Split on
 // whitespace — the same cut the transcript makes — so the tapped token's
@@ -36,8 +45,12 @@ const TappableParagraph = ({ text, style, onWordPress, paragraphOffset = 0, tran
 // optional, makes the English words tappable (see TappableParagraph).
 // `precedingText` (the transcript just before the paragraph) and
 // `episodeTitle` go along with the "ask an assistant" request as context.
+// `episodeId` + `startMs` (the chunk's first-word time) name the sentence in
+// the notebook (services/notebookService.js): the pencil in the header keeps
+// it there, and a note field opens under the English text.
 const TranslationModal = ({
-    visible, text, contextText, precedingText = '', episodeTitle = '', lang = 'es', onClose, onWordPress,
+    visible, text, contextText, precedingText = '', startMs = 0,
+    episodeId, episodeTitle = '', podcastTitle = '', lang = 'es', onClose, onWordPress,
 }) => {
     const { colors } = useTheme();
     const ms = useStyles(makeStyles);
@@ -136,12 +149,116 @@ const TranslationModal = ({
     const englishCtx = englishParagraphs.slice(0, -1);
     const hasContext = translatedCtx.length > 0;
 
+    // ── Notebook ─────────────────────────────────────────────────────────────
+    // `entry` is the Notebook row for this sentence (null: not kept). The
+    // note is edited locally and written NOTE_SAVE_DELAY_MS after the last
+    // keystroke; closing the card writes whatever is still pending. Refs
+    // mirror the state so the flush can run from effects and unmount.
+    const [entry, setEntry] = useState(null);
+    const [note, setNote] = useState('');
+    const [focusNote, setFocusNote] = useState(false);
+    const [notebookBusy, setNotebookBusy] = useState(false);
+    const entryRef = useRef(null);
+    const pendingNoteRef = useRef(null);
+    const saveTimerRef = useRef(null);
+    useEffect(() => { entryRef.current = entry; }, [entry]);
+
+    const flushNote = useCallback(() => {
+        if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+        const pending = pendingNoteRef.current;
+        const row = entryRef.current;
+        pendingNoteRef.current = null;
+        if (pending == null || !row) return;
+        updateNotebookNote(row.id, pending).catch(() => {});
+    }, []);
+
+    useEffect(() => {
+        if (!visible) { flushNote(); return undefined; }
+        setEntry(null);
+        setNote('');
+        setFocusNote(false);
+        if (episodeId == null) return undefined;
+        let stale = false;
+        getNotebookEntry(episodeId, startMs)
+            .then((row) => {
+                if (stale) return;
+                setEntry(row);
+                setNote(row?.note ?? '');
+            })
+            .catch(() => {});
+        return () => { stale = true; };
+    }, [visible, episodeId, startMs, flushNote]);
+    useEffect(() => () => flushNote(), [flushNote]);
+
+    // The translation arrives after the sentence was kept: fill it in.
+    useEffect(() => {
+        if (!entry || entry.translation || !lastTranslation) return;
+        updateNotebookTranslation(entry.id, lastTranslation).catch(() => {});
+    }, [entry, lastTranslation]);
+
+    const onChangeNote = useCallback((t) => {
+        setNote(t);
+        pendingNoteRef.current = t;
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(flushNote, NOTE_SAVE_DELAY_MS);
+    }, [flushNote]);
+
+    const toggleNotebook = useCallback(async () => {
+        if (notebookBusy || episodeId == null) return;
+        if (entry) {
+            const remove = async () => {
+                setNotebookBusy(true);
+                try {
+                    pendingNoteRef.current = null;
+                    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+                    await removeNotebookEntry(entry.id);
+                    setEntry(null);
+                    setNote('');
+                } catch (_) {}
+                setNotebookBusy(false);
+            };
+            // A note typed in is the listener's own work: ask before losing it.
+            if ((pendingNoteRef.current ?? note).trim()) {
+                showAlert('Remove from notebook?', 'The sentence and the note you wrote will be deleted.', [
+                    { text: 'Keep', style: 'cancel' },
+                    { text: 'Remove', style: 'destructive', onPress: () => { remove(); } },
+                ]);
+            } else {
+                await remove();
+            }
+            return;
+        }
+        setNotebookBusy(true);
+        try {
+            const row = await saveNotebookEntry({
+                episode_id: episodeId,
+                episode_title: episodeTitle,
+                podcast_title: podcastTitle,
+                sentence: text,
+                translation: lastTranslation,
+                start_ms: startMs,
+            });
+            setEntry(row);
+            setNote(row?.note ?? '');
+            setFocusNote(true);
+        } catch (_) {}
+        setNotebookBusy(false);
+    }, [notebookBusy, episodeId, entry, note, episodeTitle, podcastTitle, text, lastTranslation, startMs]);
+
     const header = (
         <View style={ms.langRow}>
             <Text style={ms.lang}>English</Text>
             <Text style={ms.arrow}>→</Text>
             <Text style={ms.lang}>{langLabel(lang)}</Text>
             <View style={ms.headerActions}>
+                {episodeId != null && (
+                    <SheetIconButton
+                        icon={entry ? 'check' : 'edit-3'}
+                        label={entry ? 'Remove from notebook' : 'Save to notebook'}
+                        onPress={toggleNotebook}
+                        active={!!entry}
+                    />
+                )}
                 <SheetIconButton icon={copied ? 'check' : 'copy'} label='Copy English text' onPress={onCopy} active={copied} />
                 <SheetIconButton icon='share-2' label='Share English text' onPress={onShare} />
             </View>
@@ -178,6 +295,30 @@ const TranslationModal = ({
                 onWordPress={onWordPress}
                 translation={lastTranslation}
             />
+
+            {/* The sentence is in the notebook: its note, saved as it is typed */}
+            {!!entry && (
+                <View style={ms.noteBox}>
+                    <View style={ms.noteHead}>
+                        <Icon name='edit-3' size={12} color={colors.accent} />
+                        <Text style={ms.noteLabel}>IN YOUR NOTEBOOK</Text>
+                    </View>
+                    <TextInput
+                        style={ms.noteInput}
+                        value={note}
+                        onChangeText={onChangeNote}
+                        onBlur={flushNote}
+                        placeholder='Your note — the idea, why it matters, how you would put it…'
+                        placeholderTextColor={colors.textMuted}
+                        multiline
+                        autoFocus={focusNote}
+                        textAlignVertical='top'
+                        scrollEnabled={false}
+                        accessibilityLabel='Note for this sentence'
+                    />
+                </View>
+            )}
+
             <View style={ms.divider} />
             {loading ? <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} />
             : error ? (
@@ -218,6 +359,28 @@ const makeStyles = (colors) => StyleSheet.create({
     // Current paragraph
     // Larger than before and a step up from muted: this is the text to tap.
     originalText: { color: colors.textSecondary, fontSize: 18, lineHeight: 27, marginBottom: 16 },
+    // Notebook: a ruled card under the sentence, accent-tinted like the
+    // "ask" button so it reads as the listener's own layer on the text.
+    noteBox: {
+        marginBottom: 16,
+        padding: 12,
+        paddingTop: 10,
+        borderRadius: radii.s,
+        backgroundColor: withAlpha(colors.accent, 0.07),
+        borderWidth: 0.5,
+        borderColor: withAlpha(colors.accent, 0.3),
+        gap: 6,
+    },
+    noteHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    noteLabel: { color: colors.accent, fontSize: 11, fontWeight: '700', letterSpacing: 0.7 },
+    noteInput: {
+        color: colors.textPrimary,
+        fontSize: 15,
+        lineHeight: 22,
+        minHeight: 66,
+        padding: 0,
+        paddingTop: 0,
+    },
     divider: { height: 0.5, backgroundColor: colors.hairline, marginBottom: 16 },
     translatedText: { color: colors.textPrimary, fontSize: 19, lineHeight: 28, fontWeight: '600', marginBottom: 12, letterSpacing: -0.2 },
     linkRow: { flexDirection: 'row', alignItems: 'center', gap: 18, marginBottom: 20 },
