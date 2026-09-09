@@ -162,7 +162,7 @@ const cacheKey = (title) => normTitle(title).replace(/\s+/g, '');
 
 /**
  * @param cands     extractBookCandidates() output, each optionally with `ms`
- * @param fetchers  { searchOpenLibrary(title), searchGoodreads(title),
+ * @param fetchers  { searchOpenLibrary(title, signal, { author }?), searchGoodreads(title),
  *                    fetchOpenLibraryDescription(key), sleep(ms), log?(msg, data) }
  * @returns books: [{ title, author, description, rating, ratingsCount, coverUrl,
  *   year, pages, openlibraryUrl, goodreadsUrl, source, heardAs: [], firstMs }]
@@ -191,16 +191,31 @@ export const resolveCandidates = async (cands, fetchers, { signal, hintAuthors =
         }
     };
 
-    const resolveOne = async (cand) => {
-        const ctx = { confirmedAuthors, hintAuthors };
-        const olDocs = await paced('ol', () => searchOpenLibrary(cand.title, signal));
+    // One round of questions — Open Library, then Goodreads — by the title
+    // alone or, with `author`, narrowed to that writer's books.
+    const lookup = async (cand, ctx, author = '') => {
+        const olDocs = await paced('ol', () => searchOpenLibrary(cand.title, signal, author ? { author } : undefined));
         const ol = pickMatch(olDocs, cand, ctx);
         // Goodreads: the fallback when Open Library has nothing, and the
         // source of description / rating / cover when it has.
-        const grDocs = await paced('gr', () => searchGoodreads(cand.title, signal));
+        const grDocs = await paced('gr', () => searchGoodreads(author ? `${cand.title} ${author}` : cand.title, signal));
         const grCand = ol ? { title: ol.doc.title, author: ol.doc.authors[0] || cand.author } : cand;
         let gr = pickMatch(grDocs, grCand, ctx);
         if (!gr && ol && cand.author) gr = pickMatch(grDocs, cand, ctx);
+        return { ol, gr };
+    };
+
+    const resolveOne = async (cand) => {
+        const ctx = { confirmedAuthors, hintAuthors };
+        let { ol, gr } = await lookup(cand, ctx);
+        // A title that is an ordinary word ("Enough", "Heat") has thousands
+        // of namesakes, and the first page of hits seldom holds the one
+        // meant. When the transcript said who wrote it, ask again for that
+        // writer's — the same thresholds decide, so nothing new gets in.
+        if (!ol && !gr && cand.author) {
+            log('retry with author', { title: cand.title, author: cand.author });
+            ({ ol, gr } = await lookup(cand, ctx, cand.author));
+        }
         if (!ol && !gr) return null;
 
         const book = {

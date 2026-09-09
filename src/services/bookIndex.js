@@ -39,7 +39,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // When the detector last changed in a way that finds more: episodes scanned
 // before this are scanned again by the launch backlog.
-export const BOOK_SCAN_SINCE = Date.UTC(2026, 8, 7, 18, 1);
+export const BOOK_SCAN_SINCE = Date.UTC(2026, 8, 9, 14, 0);
 
 const isOnline = async () => {
     try {

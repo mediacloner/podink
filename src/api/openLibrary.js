@@ -27,12 +27,15 @@ const getJson = async (url, signal) => {
 };
 
 /**
- * Works whose title matches, most relevant first.
+ * Works whose title matches, most relevant first. With `author`, that
+ * writer's only — the way to a book whose title is a common word ("Enough"
+ * by Dawn French sits behind six thousand other works called Enough).
  * @returns {Promise<Array<{ key, title, authors: string[], year, coverUrl, rating,
  *   ratingsCount, pages, editions, url }>>}
  */
-export const searchOpenLibraryByTitle = async (title, signal, limit = 20) => {
-    const url = `https://openlibrary.org/search.json?title=${encodeURIComponent(title)}&limit=${limit}&fields=${FIELDS}`;
+export const searchOpenLibraryByTitle = async (title, signal, { limit = 20, author = '' } = {}) => {
+    const by = author ? `&author=${encodeURIComponent(author)}` : '';
+    const url = `https://openlibrary.org/search.json?title=${encodeURIComponent(title)}${by}&limit=${limit}&fields=${FIELDS}`;
     const d = await getJson(url, signal);
     return (d?.docs || []).filter(doc => doc.key && doc.title).map(doc => ({
         key: doc.key,                                   // "/works/OL123W"
