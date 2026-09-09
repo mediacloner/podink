@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -306,6 +306,31 @@ const migrateToV9 = async (txn) => {
     }
 };
 
+const migrateToV10 = async (txn) => {
+    // The notebook (4.5.0): sentences the listener kept from a transcript,
+    // each with a note in their own words — the main ideas of an episode,
+    // the way VocabWords keeps the words. A sentence is the chunk the Player
+    // shows (episode + the chunk's first-word time), so saving it twice
+    // reopens the same note. No FOREIGN KEY on purpose: the note is the
+    // listener's writing and outlives the episode row, its audio and its
+    // transcript (the Notebook screen then says the episode is gone).
+    await txn.execAsync(
+        `CREATE TABLE IF NOT EXISTS Notebook (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            episode_id TEXT,
+            episode_title TEXT,
+            podcast_title TEXT,
+            sentence TEXT NOT NULL,
+            translation TEXT,
+            note TEXT NOT NULL DEFAULT '',
+            start_ms INTEGER,
+            created_at TEXT,
+            updated_at TEXT
+        );`
+    );
+    await txn.execAsync(`CREATE UNIQUE INDEX IF NOT EXISTS idx_notebook_place ON Notebook(episode_id, start_ms)`);
+};
+
 export const initDB = async () => {
     const db = await openDatabaseContext();
 
@@ -330,6 +355,7 @@ export const initDB = async () => {
         if (cur < 7) await migrateToV7(db);
         if (cur < 8) await migrateToV8(db);
         if (cur < 9) await migrateToV9(db);
+        if (cur < 10) await migrateToV10(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

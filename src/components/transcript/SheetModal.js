@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Dimensions, Keyboard, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
     Easing, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming,
@@ -43,8 +43,31 @@ const FOOTER_GAP = 20;
 // its content into view (the word card jumps to a phrasal verb's definition).
 const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '85%', scrollRef }) => {
     const st = useStyles(makeStyles);
-    const { bottom } = useSafeAreaInsets();
+    const { bottom, top } = useSafeAreaInsets();
     const [mounted, setMounted] = useState(visible);
+
+    // Keyboard (the note typed in the sentence card): the Modal's window is
+    // edge-to-edge on Android, where adjustResize no longer shrinks it, so
+    // the sheet lifts itself by the keyboard's height. The lift is measured
+    // against the root's own layout — where the window did shrink (iOS,
+    // older Android) the shrink is subtracted, so the sheet never lifts
+    // twice — and the card is capped to the space left above the keyboard.
+    const [kbHeight, setKbHeight] = useState(0);
+    const [rootHeight, setRootHeight] = useState(0);
+    const fullHeightRef = useRef(0);
+    useEffect(() => {
+        const show = Keyboard.addListener('keyboardDidShow', (e) => setKbHeight(e?.endCoordinates?.height ?? 0));
+        const hide = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0));
+        return () => { show.remove(); hide.remove(); };
+    }, []);
+    const onRootLayout = useCallback((e) => {
+        const h = e.nativeEvent.layout.height;
+        if (!kbHeight) fullHeightRef.current = Math.max(fullHeightRef.current, h);
+        setRootHeight(h);
+    }, [kbHeight]);
+    const shrink = Math.max(0, fullHeightRef.current - rootHeight);
+    const lift = Math.max(0, kbHeight - shrink);
+    const liftedMaxHeight = lift ? Math.max(240, rootHeight - lift - top - 12) : maxHeight;
 
     const translateY = useSharedValue(OFFSCREEN);
     const backdrop = useSharedValue(0);
@@ -83,6 +106,7 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
                 setMounted(true);
             }
         } else if (mounted) {
+            Keyboard.dismiss();
             backdrop.value = withTiming(0, FADE);
             translateY.value = withTiming(sheetHeight.value || OFFSCREEN, EXIT, () => {
                 runOnJS(unmount)();
@@ -147,7 +171,11 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
             {/* A Modal is its own native window, so gesture handlers need
                 their own root inside it. Touches are cut while the card
                 slides out so nothing can strand it half-closed. */}
-            <GestureHandlerRootView style={st.root} pointerEvents={visible ? 'auto' : 'none'}>
+            <GestureHandlerRootView
+                style={[st.root, lift > 0 && { paddingBottom: lift }]}
+                pointerEvents={visible ? 'auto' : 'none'}
+                onLayout={onRootLayout}
+            >
                 <Animated.View style={[st.backdrop, backdropStyle]}>
                     <Pressable
                         style={StyleSheet.absoluteFill}
@@ -157,7 +185,7 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
                     />
                 </Animated.View>
                 <GestureDetector gesture={pan}>
-                    <Animated.View style={[st.sheet, { maxHeight }, sheetStyle]} onLayout={onSheetLayout}>
+                    <Animated.View style={[st.sheet, { maxHeight: liftedMaxHeight }, sheetStyle]} onLayout={onSheetLayout}>
                         <View style={st.handle} />
                         {shown.header}
                         <GestureDetector gesture={nativeScroll}>
@@ -175,7 +203,7 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
                             </ScrollView>
                         </GestureDetector>
                         {shown.footer != null && (
-                            <View style={{ paddingBottom: bottom + FOOTER_GAP }}>{shown.footer}</View>
+                            <View style={{ paddingBottom: (lift ? 0 : bottom) + FOOTER_GAP }}>{shown.footer}</View>
                         )}
                     </Animated.View>
                 </GestureDetector>

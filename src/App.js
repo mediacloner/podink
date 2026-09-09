@@ -32,6 +32,7 @@ import SettingsScreen from './screens/SettingsScreen';
 import PodcastsScreen from './screens/PodcastsScreen';
 import LogScreen from './screens/LogScreen';
 import VocabularyScreen from './screens/VocabularyScreen';
+import NotebookScreen from './screens/NotebookScreen';
 import MiniPlayer from './components/MiniPlayer';
 import FinishedEpisodePrompt from './components/FinishedEpisodePrompt';
 import SettingsGearButton from './components/SettingsGearButton';
@@ -308,6 +309,13 @@ const AppRoot = () => {
                     <Stack.Screen
                         name="Vocabulary"
                         component={VocabularyScreen}
+                        options={{ headerShown: true }}
+                    />
+                    {/* Notebook (4.5.0): sentences kept from transcripts with
+                        the listener's notes, filed by episode. */}
+                    <Stack.Screen
+                        name="Notebook"
+                        component={NotebookScreen}
                         options={{ headerShown: true }}
                     />
                     {/* Imported audio (3.5.0): a collection's chapter list, and

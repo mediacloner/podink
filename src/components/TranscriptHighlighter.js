@@ -58,7 +58,7 @@ const clauseContext = (tokens, at) => {
     return { prevWords, nextWords };
 };
 
-const CLOSED_TRANSLATE = { visible: false, text: '', contextText: '', precedingText: '', chunkIndex: null };
+const CLOSED_TRANSLATE = { visible: false, text: '', contextText: '', precedingText: '', chunkIndex: null, startMs: 0 };
 
 // The transcript just before a chunk, for the "ask an assistant" requests
 // (share.js): up to ASK_CONTEXT_CHUNKS chunks, the oldest dropped when the
@@ -179,6 +179,9 @@ const TranscriptHighlighter = forwardRef(({
     playbackRate = 1,
     episodeId,
     episodeTitle,
+    // The show's name, kept with a sentence saved to the notebook so the
+    // Notebook screen can file it under its podcast.
+    podcastTitle,
     // EpisodeBooks rows (services/bookIndex.js): their titles are set in
     // bold wherever the transcript says them, and a tap opens the book card.
     books = EMPTY_BOOKS,
@@ -867,7 +870,9 @@ const TranscriptHighlighter = forwardRef(({
         if (chunkIndex >= 2 && ch[chunkIndex - 2]) prevTexts.push(chunkText(ch[chunkIndex - 2]));
         if (chunkIndex >= 1 && ch[chunkIndex - 1]) prevTexts.push(chunkText(ch[chunkIndex - 1]));
         const contextText = [...prevTexts, text].join('\n\n');
-        setTranslateModal({ visible: true, text, contextText, precedingText: precedingText(ch, chunkIndex), chunkIndex });
+        // The chunk's first-word time names the sentence in the notebook.
+        const startMs = Math.round(ch[chunkIndex]?.startMs ?? 0);
+        setTranslateModal({ visible: true, text, contextText, precedingText: precedingText(ch, chunkIndex), chunkIndex, startMs });
         pauseForLookup();
     }, [pauseForLookup]);
     const closeModal = useCallback(() => {
@@ -1116,7 +1121,10 @@ const TranscriptHighlighter = forwardRef(({
                 text={translateModal.text}
                 contextText={translateModal.contextText}
                 precedingText={translateModal.precedingText}
+                startMs={translateModal.startMs}
+                episodeId={episodeId}
                 episodeTitle={episodeTitle}
+                podcastTitle={podcastTitle}
                 lang={translationLang}
                 onClose={closeModal}
                 onWordPress={onTranslationWordPress}

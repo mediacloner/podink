@@ -570,6 +570,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         playbackRate={playbackRate}
                         episodeId={epId}
                         episodeTitle={ep.title}
+                        podcastTitle={ep.podcast_title}
                         books={books}
                     />
                 )}

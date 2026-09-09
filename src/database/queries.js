@@ -49,10 +49,14 @@ const NOT_LOCAL = `COALESCE(p.kind, 'rss') != '${LOCAL_KIND}'`;
 const NOT_IMPORTED = `COALESCE(p.kind, 'rss') NOT IN ('${LOCAL_KIND}', '${YOUTUBE_KIND}')`;
 const NOT_RADIO = `COALESCE(p.kind, 'rss') != '${RADIO_KIND}'`;
 
+/** The Library: downloads still to hear. A finished episode leaves it (user,
+ *  4.5.0: "if an episode is completely played it should not appear in the
+ *  Library") and lives in Listening → Finished until its file goes; replaying
+ *  it clears is_played and brings it back. */
 export const getDownloadedEpisodes = async () => {
   const db = await openDatabaseContext();
   return db.getAllAsync(
-    `${EPISODE_WITH_IMAGE} WHERE e.is_downloaded = 1 ORDER BY e.release_date DESC`
+    `${EPISODE_WITH_IMAGE} WHERE e.is_downloaded = 1 AND COALESCE(e.is_played, 0) = 0 ORDER BY e.release_date DESC`
   );
 };
 
