@@ -409,7 +409,7 @@ const DownloadedTimeline = ({ navigation }) => {
                     <EmptyState
                         icon="archive"
                         title="Library is empty"
-                        subtitle="Downloaded episodes appear here for offline listening"
+                        subtitle="Downloaded episodes wait here until you finish them; finished ones are under Listening"
                     />
                 }
             />
