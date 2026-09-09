@@ -330,7 +330,8 @@ export const deleteEpisodeTranscript = async (id) => {
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
-    await db.runAsync(`UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL WHERE id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
+    await db.runAsync(`UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL, names_indexed_at = NULL WHERE id = ?`, [id]);
   });
 };
 
@@ -382,6 +383,43 @@ export const getEpisodesNeedingBookScan = async (staleBefore = 0) => {
   return rows.map(r => r.id).filter(Boolean);
 };
 
+// ─── People's names corrected in an episode (services/nameIndex.js) ─────────
+
+/** [{ heard, canonical, count, first_ms }] for the episode, most frequent first. */
+export const getEpisodeNames = async (episodeId) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT heard, canonical, count, first_ms FROM EpisodeNames WHERE episode_id = ? ORDER BY count DESC, heard ASC`,
+    [episodeId]
+  );
+};
+
+export const replaceEpisodeNames = async (episodeId, names, indexedAt = Date.now()) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [episodeId]);
+    for (const n of names || []) {
+      await db.runAsync(
+        `INSERT OR REPLACE INTO EpisodeNames (episode_id, heard, canonical, count, first_ms) VALUES (?, ?, ?, ?, ?)`,
+        [episodeId, n.heard, n.canonical, n.count || 0, n.firstMs ?? null]
+      );
+    }
+    await db.runAsync(`UPDATE Episodes SET names_indexed_at = ? WHERE id = ?`, [indexedAt, episodeId]);
+  });
+};
+
+/** Transcribed episodes never scanned for names, most recently listened first. */
+export const getEpisodesNeedingNameScan = async () => {
+  const db = await openDatabaseContext();
+  const rows = await db.getAllAsync(
+    `SELECT e.id FROM Episodes e
+     LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
+     WHERE e.has_transcript = 1 AND e.names_indexed_at IS NULL AND ${NOT_RADIO}
+     ORDER BY COALESCE(e.last_played_at, 0) DESC, COALESCE(e.downloaded_at, 0) DESC`
+  );
+  return rows.map(r => r.id).filter(Boolean);
+};
+
 export const clearEpisodeBooks = async (episodeId) => {
   const db = await openDatabaseContext();
   await runInTxn(db, async () => {
@@ -399,9 +437,10 @@ export const deleteEpisodeLocalData = async (id) => {
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
     await db.runAsync(
       `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0, downloaded_at = NULL,
-              books_indexed_at = NULL
+              books_indexed_at = NULL, names_indexed_at = NULL
        WHERE id = ?`,
       [id]
     );

@@ -9,6 +9,8 @@
  * 'transcript-complete' | 'transcript-error' | 'transcript-delete' |
  * 'subscribe' | 'unsubscribe' | 'playback-complete' | 'playback-progress' |
  * 'playback-reset' (an episode marked not-played again from Listening).
+ * 'names-indexed' (services/nameIndex.js wrote an episode's name corrections;
+ *   count = how many spellings were corrected — the Player reloads the text).
  * 'books-indexed' (services/bookIndex.js scanned an episode's transcript for
  * books; payload carries `count`) — the Player reloads its EpisodeBooks rows.
  * Subscribers must tolerate an undefined payload.

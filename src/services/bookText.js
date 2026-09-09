@@ -21,15 +21,15 @@
  */
 
 // A capitalised word, apostrophes and hyphens included (O'Brien, Prawer-Jhabvala).
-const CAP = "[A-Z][\\p{L}\\p{N}'’\\-]*";
+const CAP = "\\p{Lu}[\\p{L}\\p{N}'’\\-]*";   // any script's capital: Çetin, İnanç, Éric
 // Words a title may carry in lower case ("As I Walked Out One Midsummer
 // Morning", "Heat and Dust", "Emil and the Detectives", "The Great When").
 const SMALL_WORDS = 'of|the|and|a|an|in|on|to|for|with|from|at|as|or|one|out|my|our|your|his|her|their|its|vs\\.?|versus|de|la|le|du|des|del|von|van|not|no|is|are|was|be|all|that|this|who|what|when|where|how|why|it|you|we|i|up|down|over|under|into';
 const SMALL = `(?:${SMALL_WORDS})`;
 const END = '(?![\\p{L}\\p{N}])';   // a whole word — "on" must not match inside "one"
 const TITLE = `${CAP}${END}(?:\\s+(?:${CAP}|${SMALL})${END})*`;
-const NAME_PART = `(?:${CAP}|[A-Z]\\.|de|van|von|da|di|du|le|la|del|della|der|den|bin|ibn|al)`;
-const AUTHOR = `(?:[A-Z]\\.|${CAP})(?:\\s+${NAME_PART}${END}){0,3}`;   // "D. Rothon", "J. B. Priestley"
+const NAME_PART = `(?:${CAP}|\\p{Lu}\\.|de|van|von|da|di|du|le|la|del|della|der|den|bin|ibn|al)`;
+const AUTHOR = `(?:\\p{Lu}\\.|${CAP})(?:\\s+${NAME_PART}${END}){0,3}`;   // "D. Rothon", "J. B. Priestley"
 
 const RE_BY = new RegExp(`\\bby\\s+(${AUTHOR})`, 'gu');
 const RE_CALLED = new RegExp(`\\b(?:called|titled|entitled|named)\\s+(${TITLE})`, 'gu');
@@ -55,7 +55,7 @@ const STARTERS = new Set(('So|And|But|Then|Now|Well|Okay|OK|Right|Yes|Yeah|No|It
 // dropped the full stop: "…by James Curtis As I walked out…".
 const AUTHOR_TAIL = new Set('As|At|In|On|For|To|With|From|Of|The|A|An|By|After|Before|During|While|Since|Until|Once|Although|Though|Even|Whether|Either|Neither|Both|Each|Every|Any|Some|Many|Much|Most|More|Less|Few|Several|Such|Other|Another|Same|Own|Only|Than|I'.split('|'));
 
-const isCap = (tok) => /^[A-Z]/u.test(tok);
+const isCap = (tok) => /^\p{Lu}/u.test(tok);
 const trimEdges = (t) => String(t || '').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'’.!?]+$/gu, '').replace(/[.!?,;:]+$/u, '');
 const alpha = (t) => t.replace(/[^\p{L}]/gu, '');
 
@@ -219,8 +219,10 @@ export const extractNotesCandidates = (notes) => {
 
 // A person's name as written in a title or in notes: two to four parts,
 // initials allowed ("Rebecca F. Kuang", "R.F. Kuang", "Samantha Shannon").
-const NAME_PART_RE = `(?:(?:[A-Z]\\.){1,3}|${CAP})`;   // initials first: "F." must not stop at "F"
-const NAME_RE = new RegExp(`\\b(${NAME_PART_RE}(?:\\s+${NAME_PART_RE}){1,3})(?![\\p{L}\\p{N}])`, 'gu');
+const NAME_PART_RE = `(?:(?:\\p{Lu}\\.){1,3}|${CAP})`;   // initials first: "F." must not stop at "F"
+// Not \b: JavaScript's word boundary is ASCII-only, so "\bÇetin" never
+// matches and a name with a non-ASCII initial ("Çetin İnanç", "Éric") is lost.
+const NAME_RE = new RegExp(`(?<![\\p{L}\\p{N}])(${NAME_PART_RE}(?:\\s+${NAME_PART_RE}){1,3})(?![\\p{L}\\p{N}])`, 'gu');
 const NOUN_WORD = new RegExp(`^${BOOK_NOUN}$`, 'iu');
 
 /**
@@ -236,7 +238,7 @@ export const extractNames = (text) => {
         const parts = m[1].split(/\s+/);
         if (parts.some(w => STARTERS.has(w) || AUTHOR_TAIL.has(w) || NOUN_WORD.test(w) || SMALL_RE.test(w.toLowerCase()))) continue;
         if (NOT_A_TITLE.test(m[1])) continue;
-        if (!parts.some(w => /^[A-Z][\p{L}]{2,}/u.test(w))) continue;   // at least one real word, not all initials
+        if (!parts.some(w => /^\p{Lu}[\p{L}]{2,}/u.test(w))) continue;   // at least one real word, not all initials
         out.add(m[1].replace(/\s+/g, ' '));
     }
     return [...out];
@@ -332,7 +334,7 @@ const tokenize = (rows) => {
         const t = r.start_time ?? r.start ?? 0;
         for (const w of String(r.text || '').split(/\s+/)) {
             if (!w) continue;
-            toks.push(normTok(w)); caps.push(/^[^\p{L}\p{N}]*[A-Z]/u.test(w) ? 1 : 0); ms.push(t); orig.push(w);
+            toks.push(normTok(w)); caps.push(/^[^\p{L}\p{N}]*\p{Lu}/u.test(w) ? 1 : 0); ms.push(t); orig.push(w);
         }
     }
     return { toks, caps, ms, orig };
@@ -402,7 +404,7 @@ export const buildBookMarks = (chunks, books) => {
     for (const ch of chunks) {
         for (const w of ch.words) {
             toks[w.globalIndex] = normTok(w.text);
-            caps[w.globalIndex] = /^\s*[^\p{L}\p{N}]*[A-Z]/u.test(w.text) ? 1 : 0;
+            caps[w.globalIndex] = /^\s*[^\p{L}\p{N}]*\p{Lu}/u.test(w.text) ? 1 : 0;
         }
     }
 

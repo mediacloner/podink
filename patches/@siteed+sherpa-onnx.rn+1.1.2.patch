@@ -44,7 +44,7 @@ index c8532cf..2405030 100644
 +    @ReactMethod fun removeListeners(count: Double) {}
  }
 diff --git a/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt b/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
-index f5700be..8bda940 100644
+index f5700be..68fe0ba 100644
 --- a/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
 +++ b/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
 @@ -15,6 +15,7 @@ import net.siteed.sherpaonnx.utils.AssetUtils
@@ -74,7 +74,7 @@ index f5700be..8bda940 100644
      // Keep track of ASR configuration
      private var asrModelConfig: ReadableMap? = null
      
-@@ -68,7 +81,6 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -68,11 +81,19 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          private const val DEFAULT_FEATURE_DIM = 80
          private const val DEFAULT_DEBUG = false
          private const val DEFAULT_PROVIDER = "cpu"
@@ -82,7 +82,20 @@ index f5700be..8bda940 100644
          private const val DEFAULT_DECODING_METHOD = "greedy_search"
          private const val DEFAULT_MAX_ACTIVE_PATHS = 4
          private const val DEFAULT_CHUNK_SIZE_MS = 50
-@@ -96,7 +108,10 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+         private const val OFFLINE_WHISPER_MAX_WINDOW_SECONDS = 29
++        // Windowed file decoding cuts each full window at the quietest 200 ms of
++        // its last SEAM_SEARCH_SECONDS rather than at a fixed sample count, never
++        // leaving a window shorter than SEAM_MIN_WINDOW_SECONDS. A cut inside a
++        // word makes the recognizer hear half of it in each window and return it
++        // twice ("get your." / "your BBC") or truncated ("wide." for "widely").
++        private const val SEAM_SEARCH_SECONDS = 4
++        private const val SEAM_MIN_WINDOW_SECONDS = 20
++        private const val SEAM_HOP_MS = 10
++        private const val SEAM_QUIET_MS = 200
+     }
+     
+     /**
+@@ -96,7 +117,10 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
                  val modelDir = AssetUtils.cleanFilePath(modelConfig.getString("modelDir") ?: "")
                  val modelType = modelConfig.getString("modelType") ?: "transducer"
                  val streaming = if (modelConfig.hasKey("streaming")) modelConfig.getBoolean("streaming") else false
@@ -94,7 +107,7 @@ index f5700be..8bda940 100644
                  val sampleRate = if (modelConfig.hasKey("sampleRate")) modelConfig.getInt("sampleRate") else DEFAULT_SAMPLE_RATE
                  val featureDim = if (modelConfig.hasKey("featureDim")) modelConfig.getInt("featureDim") else DEFAULT_FEATURE_DIM
                  val decodingMethod = modelConfig.getString("decodingMethod") ?: DEFAULT_DECODING_METHOD
-@@ -412,11 +427,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -412,11 +436,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
                  whisperConfig.decoder = decoderPath
                  whisperConfig.language = "en"
                  whisperConfig.task = "transcribe"
@@ -110,7 +123,7 @@ index f5700be..8bda940 100644
                  val modelFile = modelFiles["model"] ?: "model.onnx"
                  val modelPath = File(modelDir, modelFile).absolutePath
                  
-@@ -427,6 +444,28 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -427,6 +453,28 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
                  
                  modelConfig.nemo = nemoConfig
              }
@@ -139,7 +152,7 @@ index f5700be..8bda940 100644
              "moonshine" -> {
                  Log.i(TAG, "Setting up Moonshine model")
                  val preprocessorFile = modelFiles["preprocessor"] ?: "preprocess.onnx"
-@@ -512,9 +551,14 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -512,9 +560,14 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
                  files.add(modelConfig.whisper.encoder)
                  files.add(modelConfig.whisper.decoder)
              }
@@ -155,7 +168,7 @@ index f5700be..8bda940 100644
              "moonshine" -> {
                  files.add(modelConfig.moonshine.preprocessor)
                  files.add(modelConfig.moonshine.encoder)
-@@ -798,7 +842,7 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -798,7 +851,7 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
  
          val modelType = asrModelConfig?.getString("modelType") ?: return false
@@ -164,7 +177,7 @@ index f5700be..8bda940 100644
              return false
          }
  
-@@ -809,7 +853,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -809,7 +862,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          if (isStreaming) {
              return false
          }
@@ -179,7 +192,7 @@ index f5700be..8bda940 100644
      }
  
      private fun recognizeSingleOfflineWindow(sampleRate: Int, samples: FloatArray): WritableMap {
-@@ -856,6 +906,17 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -856,6 +915,17 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
              resultMap.putString("text", result?.text ?: "")
              resultMap.putInt("samplesLength", samples.size)
              resultMap.putInt("sampleRate", sampleRate)
@@ -197,7 +210,7 @@ index f5700be..8bda940 100644
              return resultMap
          } catch (e: Exception) {
              Log.e(TAG, "Error recognizing from samples (offline): ${e.message}")
-@@ -870,7 +931,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -870,7 +940,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
       * Whisper's offline recognizer only handles windows shorter than 30 seconds.
       * For longer buffers, decode sequential sub-30s windows and join the text.
       */
@@ -210,7 +223,7 @@ index f5700be..8bda940 100644
          if (!shouldChunkOfflineWhisper(samples.size, sampleRate)) {
              return recognizeSingleOfflineWindow(sampleRate, samples)
          }
-@@ -886,8 +951,16 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -886,8 +960,16 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          val transcriptParts = mutableListOf<String>()
          var offset = 0
          var windowIndex = 0
@@ -227,7 +240,7 @@ index f5700be..8bda940 100644
              val end = minOf(offset + samplesPerWindow, samples.size)
              val windowSamples = samples.copyOfRange(offset, end)
              windowIndex += 1
-@@ -908,10 +981,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -908,10 +990,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
  
          val fullText = transcriptParts.joinToString(" ").trim()
@@ -241,7 +254,49 @@ index f5700be..8bda940 100644
          resultMap.putString("text", fullText)
          resultMap.putInt("samplesLength", samples.size)
          resultMap.putInt("sampleRate", sampleRate)
-@@ -922,60 +996,165 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -919,63 +1002,221 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+         return resultMap
+     }
+ 
++    /**
++     * Sample index at which a full decoding window should end: the middle of the
++     * quietest [SEAM_QUIET_MS] stretch inside its last [SEAM_SEARCH_SECONDS],
++     * measured as summed energy over [SEAM_HOP_MS] hops. Returns `samples.size`
++     * when the window is too short to move the boundary.
++     */
++    private fun seamCutIndex(samples: FloatArray, sampleRate: Int): Int {
++        val n = samples.size
++        val hop = sampleRate * SEAM_HOP_MS / 1000
++        val quietHops = SEAM_QUIET_MS / SEAM_HOP_MS
++        val searchStart = maxOf(sampleRate * SEAM_MIN_WINDOW_SECONDS, n - sampleRate * SEAM_SEARCH_SECONDS)
++        val hops = (n - searchStart) / hop
++        if (hop <= 0 || hops <= quietHops) return n
++
++        val energy = DoubleArray(hops)
++        for (h in 0 until hops) {
++            var acc = 0.0
++            val base = searchStart + h * hop
++            for (i in base until base + hop) {
++                val v = samples[i].toDouble()
++                acc += v * v
++            }
++            energy[h] = acc
++        }
++        var sum = 0.0
++        var bestSum = Double.MAX_VALUE
++        var bestStart = -1
++        for (h in 0 until hops) {
++            sum += energy[h]
++            if (h >= quietHops) sum -= energy[h - quietHops]
++            if (h >= quietHops - 1 && sum < bestSum) {
++                bestSum = sum
++                bestStart = h - quietHops + 1
++            }
++        }
++        if (bestStart < 0) return n
++        return searchStart + bestStart * hop + (quietHops * hop) / 2
++    }
++
      private fun recognizeOfflineWhisperFileInWindows(
          file: File,
          durationUs: Long,
@@ -297,8 +352,8 @@ index f5700be..8bda940 100644
 -            if (audioData.samples.isEmpty()) {
 -                throw Exception("Extracted empty audio window starting at ${offsetUs}us")
 -            }
-+                val windowSamples = reader.readNextWindow(samplesPerWindow)
-+                if (windowSamples == null || windowSamples.isEmpty()) {
++                val rawWindow = reader.readNextWindow(samplesPerWindow)
++                if (rawWindow == null || rawWindow.isEmpty()) {
 +                    // Metadata duration can overestimate the real audio length; an
 +                    // empty read at the tail is normal completion, not an error.
 +                    if (windowIndex == 0 && effectiveStartUs == 0L) {
@@ -311,6 +366,20 @@ index f5700be..8bda940 100644
 -            totalSamples += audioData.samples.size
 -            windowIndex += 1
 +                sampleRate = reader.outputSampleRate
++                // Only a full window has a boundary to move; the tail of the file
++                // ends where the audio ends. The cut-off samples go back to the
++                // reader and open the next window, so windows stay gapless.
++                val windowSamples = if (rawWindow.size == samplesPerWindow) {
++                    val cut = seamCutIndex(rawWindow, sampleRate)
++                    if (cut < rawWindow.size) {
++                        reader.pushBack(rawWindow.copyOfRange(cut, rawWindow.size))
++                        rawWindow.copyOf(cut)
++                    } else {
++                        rawWindow
++                    }
++                } else {
++                    rawWindow
++                }
 +                totalSamples += windowSamples.size
 +                windowIndex += 1
 +                val windowOffsetMs = offsetUs / 1000.0
@@ -390,8 +459,7 @@ index f5700be..8bda940 100644
 +                        segments.pushMap(seg)
 +                    }
 +                }
- 
--            offsetUs += windowDurationUs
++
 +                if (emitWindowEvents) {
 +                    val evSegments = Arguments.createArray()
 +                    for ((segStart, segEnd, segText) in windowSegs) {
@@ -411,7 +479,8 @@ index f5700be..8bda940 100644
 +                    ev.putArray("segments", evSegments)
 +                    reactContext.emitDeviceEvent("SherpaAsrWindowResult", ev)
 +                }
-+
+ 
+-            offsetUs += windowDurationUs
 +                offsetUs += windowActualDurationUs
 +            }
 +        } finally {
@@ -436,7 +505,7 @@ index f5700be..8bda940 100644
          return resultMap
      }
      
-@@ -1121,41 +1300,102 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -1121,41 +1362,102 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
       * Recognize speech from an audio file
       */
      fun recognizeFromFile(filePath: String, promise: Promise) {
@@ -557,7 +626,7 @@ index f5700be..8bda940 100644
                      }
                  }
  
-@@ -1173,6 +1413,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -1173,6 +1475,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
      }
      
@@ -572,7 +641,7 @@ index f5700be..8bda940 100644
       * Create a persistent online stream for live streaming ASR.
       * Matches upstream OnlineRecognizer.createStream().
 diff --git a/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/utils/AudioExtractor.kt b/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/utils/AudioExtractor.kt
-index f3d7907..c18559d 100644
+index f3d7907..7fdfdca 100644
 --- a/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/utils/AudioExtractor.kt
 +++ b/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/utils/AudioExtractor.kt
 @@ -48,12 +48,15 @@ object AudioExtractor {
@@ -649,7 +718,7 @@ index f3d7907..c18559d 100644
                      }
  
                      MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED -> {
-@@ -200,6 +217,262 @@ object AudioExtractor {
+@@ -200,6 +217,273 @@ object AudioExtractor {
          }
      }
  
@@ -900,6 +969,17 @@ index f3d7907..c18559d 100644
 +            return if (count == maxSamples) window else window.copyOf(count)
 +        }
 +
++        /**
++         * Returns decoded samples to the front of the stream, so the next
++         * [readNextWindow] begins with them. The windowed recognizer uses it to
++         * move a window boundary back to a quiet moment: it cuts the window it
++         * was given and hands the tail back here.
++         */
++        fun pushBack(samples: FloatArray) {
++            if (samples.isEmpty()) return
++            carry = if (carry.isEmpty()) samples else samples + carry
++        }
++
 +        fun close() {
 +            if (closed) return
 +            closed = true
@@ -912,7 +992,7 @@ index f3d7907..c18559d 100644
      fun getAudioDurationUs(file: File): Long? {
          var extractor: MediaExtractor? = null
          return try {
-@@ -275,7 +548,7 @@ object AudioExtractor {
+@@ -275,7 +559,7 @@ object AudioExtractor {
          return samples.copyOf(newCapacity)
      }
  

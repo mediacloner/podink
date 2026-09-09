@@ -34,6 +34,7 @@ import {
 import { notifyLibraryChange } from './libraryEvents';
 import { indexEpisodeBooks } from './bookIndex';
 import { log } from './logService';
+import { splitSentences } from './sentenceBoundary';
 
 const DEFAULT_TIMEOUT_MS    = 10 * 60 * 1000; // 10 minutes for short/unknown episodes
 const MIN_AUDIO_SIZE        = 4096;             // 4 KB minimum
@@ -285,25 +286,46 @@ export const stopTranscriptionService = () => { _keeper = false; if (!_running &
 // ─── Text-to-segment conversion ─────────────────────────────────────────────
 
 /** Split full transcript text into segments at sentence boundaries.
- *  Estimates timestamps proportionally from total duration. */
+ *  Estimates timestamps proportionally from total duration. Only used for a
+ *  window without token timestamps; word-level rows are the normal path. */
 const textToSegments = (text, durationMs) => {
     if (!text || !text.trim()) return [];
 
-    const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
-    const totalLen = sentences.reduce((sum, s) => sum + s.length, 0);
+    const words = text.trim().split(/\s+/).filter(Boolean).map((w) => ({ text: w }));
+    const sentences = splitSentences(words).map((ws) => ws.map((w) => w.text).join(' '));
+    const totalLen = sentences.reduce((sum, s) => sum + s.length + 1, 0) || 1;
     const segments = [];
     let offset = 0;
 
     for (const sentence of sentences) {
-        const trimmed = sentence.trim();
-        if (!trimmed) continue;
         const start = Math.round((offset / totalLen) * durationMs);
-        offset += sentence.length;
+        offset += sentence.length + 1;
         const end = Math.round((offset / totalLen) * durationMs);
-        segments.push({ start, end, text: trimmed });
+        segments.push({ start, end, text: sentence });
     }
 
     return segments;
+};
+
+// ─── Window seams ────────────────────────────────────────────────────────────
+// The native reader cuts each window at a quiet moment, but when speech runs
+// through the whole search span the cut can still fall inside a word, and the
+// recognizer then returns that word from both sides ("get your." / "your BBC
+// podcasts"). The second copy is dropped when it is the same word, ignoring
+// case and punctuation, the first ends at the seam and the second starts
+// there. A legitimate repeat ("had had") is spoken away from a seam.
+const SEAM_TOLERANCE_MS = 400;
+const _seamWord = (t) => (t || '').toLowerCase().replace(/[^\p{L}\p{N}']+/gu, '');
+const dropSeamDuplicate = (segs, tail, ev) => {
+    if (!tail || !segs.length) return segs;
+    const seam = Math.round(ev.startMs);
+    if (Math.abs(tail.windowEnd - seam) > SEAM_TOLERANCE_MS) return segs;   // not the window right after
+    const first = segs[0];
+    if (first.text.trim().includes(' ')) return segs;                       // sentence-level row, leave it
+    if (tail.end < seam - SEAM_TOLERANCE_MS || first.start > seam + SEAM_TOLERANCE_MS) return segs;
+    const a = _seamWord(tail.text);
+    if (!a || a !== _seamWord(first.text)) return segs;
+    return segs.slice(1);
 };
 
 // ─── No hallucination filter ─────────────────────────────────────────────────
@@ -496,12 +518,17 @@ const _process = async (entry) => {
         let lastNotifAt = Date.now();
         let saveChain = Promise.resolve();
         const collected = [];
+        let seamTail = null;   // last word of the previous window: { text, end, windowEnd }
 
         windowSub = DeviceEventEmitter.addListener(WINDOW_EVENT, (ev) => {
             if (!ev || ev.jobId !== jobId || myAbort.current) return;
             windowsReceived += 1;
             _lastProgressAt = Date.now();
-            const segs = _windowToSegments(ev);
+            const segs = dropSeamDuplicate(_windowToSegments(ev), seamTail, ev);
+            if (segs.length) {
+                const lastSeg = segs[segs.length - 1];
+                seamTail = { text: lastSeg.text, end: lastSeg.end, windowEnd: Math.round(ev.endMs) };
+            }
             saveChain = saveChain.then(async () => {
                 if (myAbort.current || segs.length === 0) return;
                 await saveTranscriptsIncremental(entry.id, segs);

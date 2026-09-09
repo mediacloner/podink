@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -280,6 +280,32 @@ const migrateToV8 = async (txn) => {
     }
 };
 
+const migrateToV9 = async (txn) => {
+    // People's names corrected from the episode's own text (4.5.0,
+    // services/nameIndex.js): one row per spelling the recognizer used
+    // ("Chetin Inanch") with the name as the show notes write it ("Çetin
+    // İnanç"). Applied when a transcript is read, never written into
+    // Transcripts, so the raw text stays for re-processing and search.
+    // Episodes.names_indexed_at says the transcript was scanned (epoch ms);
+    // NULL means not yet. Deleting a transcript clears both.
+    await txn.execAsync(
+        `CREATE TABLE IF NOT EXISTS EpisodeNames (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            episode_id TEXT NOT NULL,
+            heard TEXT NOT NULL,
+            canonical TEXT NOT NULL,
+            count INTEGER DEFAULT 0,
+            first_ms INTEGER,
+            FOREIGN KEY (episode_id) REFERENCES Episodes(id) ON DELETE CASCADE
+        );`
+    );
+    await txn.execAsync(`CREATE UNIQUE INDEX IF NOT EXISTS idx_episode_names_heard ON EpisodeNames(episode_id, heard)`);
+    const cols = await txn.getAllAsync(`PRAGMA table_info(Episodes)`);
+    if (!cols.some(c => c.name === 'names_indexed_at')) {
+        await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN names_indexed_at INTEGER`);
+    }
+};
+
 export const initDB = async () => {
     const db = await openDatabaseContext();
 
@@ -303,6 +329,7 @@ export const initDB = async () => {
         if (cur < 6) await migrateToV6(db);
         if (cur < 7) await migrateToV7(db);
         if (cur < 8) await migrateToV8(db);
+        if (cur < 9) await migrateToV9(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

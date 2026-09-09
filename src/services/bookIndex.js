@@ -24,7 +24,7 @@
  */
 import NetInfo from '@react-native-community/netinfo';
 import {
-    getEpisodeById, getEpisodesNeedingBookScan, getTranscriptsForEpisode, replaceEpisodeBooks,
+    getEpisodeById, getEpisodesNeedingBookScan, replaceEpisodeBooks,
 } from '../database/queries';
 import { searchOpenLibraryByTitle, searchOpenLibraryByAuthor, fetchOpenLibraryDescription } from '../api/openLibrary';
 import { searchGoodreads } from '../api/goodreads';
@@ -32,6 +32,7 @@ import { extractBookCandidates, extractNames, extractNotesCandidates, findFirstM
 import { resolveCandidates } from './bookResolve';
 import { showNotesPlainText } from './showNotes';
 import { notifyLibraryChange } from './libraryEvents';
+import { getCorrectedTranscript, indexEpisodeNames } from './nameIndex';
 import { log } from './logService';
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -125,8 +126,11 @@ export const isBookIndexRunning = (episodeId) => _running === episodeId || _queu
 const scanOne = async (episodeId, force) => {
     const ep = await getEpisodeById(episodeId);
     if (!ep) return null;
+    // People first: offline and quick, and the book lookup then sees the
+    // author as the notes spell her rather than as the recogniser heard her.
+    await indexEpisodeNames(episodeId, { force });
     if (ep.books_indexed_at && !force) return null;
-    const rows = await getTranscriptsForEpisode(episodeId);
+    const rows = await getCorrectedTranscript(episodeId);
     if (!rows.length) return null;
     if (!(await isOnline())) {
         log('SYSTEM', 'Book scan postponed: offline', { id: episodeId });
