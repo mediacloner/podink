@@ -21,6 +21,7 @@ ios/DerivedData/
 # Android
 android/app/build/
 android/build/
+android/.kotlin/
 android/kotlinaudio/build/
 android/.gradle/
 android/local.properties

@@ -18,8 +18,9 @@ import {
 import {
     downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
 } from '../services/episodeService';
-import { getEpisodeById, getEpisodeBooks, getTranscriptsForEpisode } from '../database/queries';
+import { getEpisodeById, getEpisodeBooks } from '../database/queries';
 import { indexEpisodeBooks } from '../services/bookIndex';
+import { getCorrectedTranscript, indexEpisodeNames } from '../services/nameIndex';
 import ProgrammeGuide from '../components/ProgrammeGuide';
 import {
     attachPlayer as attachRadioPlayer, FOLLOW_DELAY_SEC, goLive as radioGoLive, isRadioEpisode, readLiveState,
@@ -27,6 +28,7 @@ import {
 } from '../services/radioService';
 import { getStation, stationIdFromFeedUrl } from '../services/radioStations';
 import { artworkSource } from '../api/userAgent';
+import { buildTranscriptExport, shareText } from '../components/transcript/share';
 import { extractColor, softenForHeader } from '../services/colorExtractor';
 import { useTheme, useStyles, radii, withAlpha } from '../theme';
 
@@ -260,7 +262,7 @@ const PlayerScreen = ({ route, navigation }) => {
     // ── Transcript fetch + live streaming ─────────────────────────────────────
     const refetchTranscript = useCallback(async () => {
         try {
-            const rows = await getTranscriptsForEpisode(epId);
+            const rows = await getCorrectedTranscript(epId);
             setSegments(rows);
         } catch (_) {}
     }, [epId]);
@@ -268,7 +270,7 @@ const PlayerScreen = ({ route, navigation }) => {
     useEffect(() => {
         let alive = true;
         setTranscriptLoading(true);
-        getTranscriptsForEpisode(epId)
+        getCorrectedTranscript(epId)
             .then(rows => { if (alive) setSegments(rows); })
             .catch(() => {})
             .finally(() => { if (alive) setTranscriptLoading(false); });
@@ -296,6 +298,12 @@ const PlayerScreen = ({ route, navigation }) => {
         if (!ep || !segments.length || ep.books_indexed_at || isRadio || transcribing || isQueued) return;
         indexEpisodeBooks(epId, { front: true }).catch(() => {});
     }, [epId, ep?.books_indexed_at, segments.length, isRadio, transcribing, isQueued]);
+    useEffect(() => {
+        // Names from the notes, for a transcript scanned before this existed;
+        // 'names-indexed' below reloads the text with the corrections in.
+        if (!ep || !segments.length || ep.names_indexed_at || isRadio || transcribing || isQueued) return;
+        indexEpisodeNames(epId).catch(() => {});
+    }, [epId, ep?.names_indexed_at, segments.length, isRadio, transcribing, isQueued]);
 
     useEffect(() => {
         const st = { timer: null, last: 0 };
@@ -327,6 +335,9 @@ const PlayerScreen = ({ route, navigation }) => {
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
             } else if (payload.type === 'books-indexed') {
                 refetchBooks();
+                getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
+            } else if (payload.type === 'names-indexed') {
+                if (payload.count > 0) refetchTranscript();
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
             } else if (payload.type === 'transcript-error') {
                 setTranscribing(false);
@@ -414,6 +425,12 @@ const PlayerScreen = ({ route, navigation }) => {
     }, []);
 
     const hasTranscript = !!ep?.has_transcript || segments.length > 0;
+    // Header share glyph: the whole transcript as text, one timed line per
+    // sentence, through the system share sheet (notes, mail, an assistant).
+    const shareTranscript = useCallback(() => {
+        if (!ep || !segments.length) return;
+        shareText(buildTranscriptExport(ep, segments), 'Share transcript');
+    }, [ep, segments]);
     const canTranscribe = !!ep?.local_audio_path && !isRadio;
     // Rows saved by a job that never finished (cancelled from a list, failed
     // part-way, the process killed): the text shows, so the no-transcript
@@ -493,6 +510,17 @@ const PlayerScreen = ({ route, navigation }) => {
                         {ep.title}
                     </Text>
                 </View>
+                {!isRadio && hasTranscript && segments.length > 0 && (
+                    <TouchableOpacity
+                        onPress={shareTranscript}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        style={styles.radioStop}
+                        accessibilityRole='button'
+                        accessibilityLabel='Share the transcript'
+                    >
+                        <Icon name='share' size={18} color={withAlpha(headerFg, 0.75)} />
+                    </TouchableOpacity>
+                )}
                 {isRadio && (
                     <TouchableOpacity
                         onPress={() => stopRadioSession()}

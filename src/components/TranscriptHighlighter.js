@@ -31,6 +31,7 @@ import TranslationModal from './transcript/TranslationModal';
 import WordPopover from './transcript/WordPopover';
 import BookSheet from './transcript/BookSheet';
 import { buildBookMarks } from '../services/bookText';
+import { isSentenceEnd } from '../services/sentenceBoundary';
 
 // Unicode-aware edge-trim so accented loanwords ('café', 'résumé') keep
 // their letters instead of being clipped to 'caf' / 'r' before lookup.
@@ -119,6 +120,15 @@ function formatTime(ms) {
 
 // Estimate the rendered height of a chunk from its word list. Used as the
 // initial getItemLayout value until the cell reports its real onLayout height.
+/** First word of the next non-empty segment at or after `from`, or '' at the end. */
+function _firstWordFrom(segments, from) {
+    for (let k = from; k < segments.length; k++) {
+        const t = segments[k].text?.trim();
+        if (t) return t.split(/\s+/)[0];
+    }
+    return '';
+}
+
 function estimateChunkHeight(words, charWidth, contentWidth, lineHeight) {
     const chars = words.reduce((n, w) => n + w.text.length, 0);
     const lines = Math.max(1, Math.ceil((chars * charWidth) / contentWidth));
@@ -317,7 +327,10 @@ const TranscriptHighlighter = forwardRef(({
                     cur.push({ text: w + ' ', startMs: wordStartMs, globalIndex: gi++ });
 
                     const last = wi === ws.length - 1;
-                    const sent = w.endsWith('.') || w.endsWith('?') || w.endsWith('!');
+                    // Word-level rows hold one word each, so the word after this
+                    // one usually sits in the next segment.
+                    const nextWord = last ? _firstWordFrom(segments, i + 1) : ws[wi + 1];
+                    const sent = isSentenceEnd(w, nextWord);
                     if (sent || cur.length >= 35 || (i === segments.length - 1 && last)) {
                         builtChunks.push({
                             id: `c${builtChunks.length}`,

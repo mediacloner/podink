@@ -16,6 +16,7 @@ import { restoreLogs } from './services/logService';
 import { sweepOrphanFiles, sweepStaleFinishedDownloads } from './services/episodeService';
 import { sweepRadioSessions } from './services/radioService';
 import { backfillBookIndex } from './services/bookIndex';
+import { backfillNameIndex } from './services/nameIndex';
 import { getInitialSharedText, onSharedText } from './services/shareIntent';
 import { isYouTubeUrl } from './services/youtubeService';
 import { log } from './services/logService';
@@ -235,7 +236,10 @@ const AppRoot = () => {
                 // Transcribed episodes never scanned for the books they
                 // mention (transcribed before 4.2.0, or scanned offline):
                 // one at a time, behind anything the user opens meanwhile.
-                backfillBookIndex();
+                // Names the notes spell right, written into transcripts from
+                // before 4.5.0 (offline, quick) — ahead of the book scans,
+                // which read the corrected text.
+                backfillNameIndex().finally(() => backfillBookIndex());
                 // Finished downloads that went a week without a replay go
                 // (audio + transcript); the rows stay. Also on each resume.
                 sweepStaleFinishedDownloads();
