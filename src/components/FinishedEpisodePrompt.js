@@ -93,6 +93,12 @@ const FinishedEpisodePrompt = () => {
                         },
                     },
                 ],
+                // Answered by a button only. Skipping to the end with the +10
+                // button puts this card under a finger mid-tap; a backdrop tap
+                // used to take it away as "Keep" before it could be read
+                // (user, 2026-09-10: "jump until final, the delete message
+                // doesn't appear").
+                { dismissible: false },
             );
         };
 
