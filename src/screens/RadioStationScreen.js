@@ -8,7 +8,8 @@ import { getEpisodeById } from '../database/queries';
 import { getStation } from '../services/radioStations';
 import { fetchGuide, stationLocalTime } from '../services/radioSchedule';
 import {
-    currentProgramme, FOLLOW_DELAY_SEC, LIVE_BUFFER_SEC, isRadioAvailable, startSession, stopSession, useRadioSession,
+    currentProgramme, FOLLOW_DELAY_SEC, LIVE_BUFFER_SEC, PAUSED_STOP_MIN, isRadioAvailable, startSession, stopSession,
+    useRadioSession,
 } from '../services/radioService';
 import { radii, type, useStyles, useTheme, withAlpha } from '../theme';
 
@@ -142,6 +143,10 @@ const RadioStationScreen = ({ route, navigation }) => {
             case 'ended': statusLine = session.statusMessage || 'The stream ended.'; break;
             case 'error': statusLine = session.statusMessage || 'Something went wrong.'; break;
             default: statusLine = '';
+        }
+        // A paused session ends on its own after PAUSED_STOP_MIN (radioService).
+        if (session.pausedAt && session.status !== 'error' && session.status !== 'ended') {
+            statusLine = `Paused. A session paused for ${PAUSED_STOP_MIN} minutes ends on its own; press play before then to carry on where you stopped.`;
         }
     }
 
