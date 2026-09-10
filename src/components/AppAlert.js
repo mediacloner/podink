@@ -14,6 +14,14 @@
  * Alerts fired while one is visible are queued (not overwritten mid-animation)
  * and presented in order as each one is dismissed.
  *
+ * A tap outside the card counts as the cancel button — except in the first
+ * moments after the card appears, and never for an alert shown with
+ * `{ dismissible: false }` (fourth argument). Both exist for the same case:
+ * an alert that pops up under a finger already tapping (the finished-episode
+ * prompt appearing under the +10 button being pressed towards the end) was
+ * dismissed by the next tap before anyone could read it. The Android back
+ * button still cancels a non-dismissible alert: a back press is deliberate.
+ *
  * Mount once at the root (App.js), no ref or extra wiring needed:
  *
  *   import AppAlert from './components/AppAlert';
@@ -40,10 +48,10 @@ import { radii, useStyles } from '../theme';
 
 let _show = null;
 
-export const showAlert = (title, message, buttons) => {
+export const showAlert = (title, message, buttons, { dismissible = true } = {}) => {
     const btns = buttons?.length ? buttons : [{ text: 'OK' }];
     if (_show) {
-        _show(title ?? '', message ?? '', btns);
+        _show(title ?? '', message ?? '', btns, { dismissible });
         return;
     }
     // The themed card is not mounted (should not happen once the app has
@@ -55,6 +63,9 @@ export const showAlert = (title, message, buttons) => {
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_WIDTH = Math.min(320, SCREEN_W - 56);
+// A backdrop tap this soon after the card appears is a tap that was already
+// on its way, not an answer.
+const BACKDROP_GRACE_MS = 700;
 
 const AppAlert = () => {
     const s = useStyles(makeStyles);
@@ -72,10 +83,12 @@ const AppAlert = () => {
     const queueRef = useRef([]);
     const visibleRef = useRef(false);
     const currentRef = useRef(null);
+    const presentedAtRef = useRef(0);
 
     const present = useCallback((alert) => {
         currentRef.current = alert;
         visibleRef.current = true;
+        presentedAtRef.current = Date.now();
         setTitle(alert.title);
         setMessage(alert.message);
         setButtons(alert.buttons);
@@ -105,8 +118,8 @@ const AppAlert = () => {
     // an explicit launch race), two App trees mount and the dying one's
     // cleanup must not unregister the survivor.
     useEffect(() => {
-        const show = (t, m, btns) => {
-            const alert = { title: t, message: m, buttons: btns };
+        const show = (t, m, btns, { dismissible = true } = {}) => {
+            const alert = { title: t, message: m, buttons: btns, dismissible };
             if (visibleRef.current) {
                 const cur = currentRef.current;
                 const last = queueRef.current[queueRef.current.length - 1];
@@ -143,10 +156,18 @@ const AppAlert = () => {
         });
     }, [backdropAnim, opacityAnim, scaleAnim, present]);
 
-    const handleBackdropPress = useCallback(() => {
+    // The Android back button: always the cancel action (a back press is
+    // deliberate, and a Modal with no way out is not acceptable).
+    const handleRequestClose = useCallback(() => {
         const cancel = buttons.find(b => b.style === 'cancel');
         if (cancel) dismiss(cancel);
     }, [buttons, dismiss]);
+
+    const handleBackdropPress = useCallback(() => {
+        if (currentRef.current && currentRef.current.dismissible === false) return;
+        if (Date.now() - presentedAtRef.current < BACKDROP_GRACE_MS) return;
+        handleRequestClose();
+    }, [handleRequestClose]);
 
     const horizontal = buttons.length <= 2;
 
@@ -156,7 +177,7 @@ const AppAlert = () => {
             visible={visible}
             animationType="none"
             statusBarTranslucent
-            onRequestClose={handleBackdropPress}
+            onRequestClose={handleRequestClose}
         >
             <Animated.View style={[s.backdrop, { opacity: backdropAnim }]} />
             <Pressable style={StyleSheet.absoluteFill} onPress={handleBackdropPress} />

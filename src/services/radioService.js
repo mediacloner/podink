@@ -29,7 +29,7 @@
  */
 import { useEffect, useState } from 'react';
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
-import TrackPlayer, { Event } from 'react-native-track-player';
+import TrackPlayer, { Event, State } from 'react-native-track-player';
 import { Directory, File, Paths } from 'expo-file-system';
 import {
     deleteAllRadioEpisodes, deleteEpisodeRow, finalizeTranscript, getEpisodeById,
@@ -74,6 +74,13 @@ export const LIVE_BUFFER_SEC = 15;
 // Within this many seconds of the follow position the Player shows "LIVE".
 export const LIVE_EDGE_SEC = 6;
 const PROGRAMME_POLL_MS = 60 * 1000;
+// A session left paused this long ends on its own (user, 2026-09-10: "I like
+// 30 minutes of pause"). Until then a pause is just a pause — the recorder
+// keeps the stream so you resume where you stopped and can catch up with
+// LIVE. Past it, the segments on disk and (with a transcript) the speech
+// engine decoding every 24 s are working for a listener who has moved on.
+export const PAUSED_STOP_MS = 30 * 60 * 1000;
+export const PAUSED_STOP_MIN = PAUSED_STOP_MS / 60000;
 const RADIO_DIR = 'radio';
 
 export const isRadioEpisode = (episode) => episode?.podcast_kind === 'radio' || String(episode?.id || '').startsWith('radio:');
@@ -130,6 +137,35 @@ const refreshProgramme = async (force = false) => {
         } catch (_) {}
         notifyLibraryChange({ type: 'radio-programme', episodeId: s.episodeId });
     }
+    _notify();
+};
+
+// ─── Paused-session timeout ──────────────────────────────────────────────────
+// Armed when the player reports Paused / Stopped for this session's track,
+// disarmed by Playing. The timer is the usual path; the elapsed-time check
+// also runs on every state change and programme poll, so a timer that a
+// background-throttled JS clock fires late still ends the session promptly.
+const pausedFor = (s) => (s.pausedAt ? Date.now() - s.pausedAt : 0);
+
+const checkPausedStop = (s) => {
+    if (_session !== s || !s.pausedAt || s.stopping) return false;
+    if (pausedFor(s) < PAUSED_STOP_MS) return false;
+    log('RADIO', 'Paused too long — session ends', { id: s.id, pausedMin: Math.round(pausedFor(s) / 60000) });
+    stopSession();
+    return true;
+};
+
+const armPausedStop = (s) => {
+    if (s.pausedAt) return;
+    s.pausedAt = Date.now();
+    s.pausedTimer = setTimeout(() => { s.pausedTimer = null; checkPausedStop(s); }, PAUSED_STOP_MS + 500);
+    _notify();
+};
+
+const disarmPausedStop = (s) => {
+    if (!s.pausedAt) return;
+    s.pausedAt = null;
+    if (s.pausedTimer) { clearTimeout(s.pausedTimer); s.pausedTimer = null; }
     _notify();
 };
 
@@ -502,6 +538,7 @@ const _startSession = async (stationId, mode) => {
         totalSec: 0, lastSegmentAt: 0, followDelaySec: null,
         frontierSec: 0, windowsSeen: 0, windowsDone: 0, hasText: false, firstWindowDone: false, startTimer: null,
         transcriptError: null, recorderError: null, lastDecodeMs: 0, lastPositionSec: 0,
+        pausedAt: null, pausedTimer: null,
     };
     _session = s;
     _notify();
@@ -530,13 +567,28 @@ const _startSession = async (stationId, mode) => {
             if (_session === s && e?.position > 0) s.lastPositionSec = e.position;
         }));
         _subs.push(TrackPlayer.addEventListener(Event.PlaybackError, onPlaybackError));
+        // Pause / resume of this session's track: see the paused-session
+        // timeout above. Only this track counts — the Stopped that a reset
+        // emits while the station is still loading has no track yet, and a
+        // different episode replacing the station is onTrackLoad's business.
+        _subs.push(TrackPlayer.addEventListener(Event.PlaybackState, async ({ state }) => {
+            if (_session !== s) return;
+            if (state === State.Paused || state === State.Stopped) {
+                let track = null;
+                try { track = await TrackPlayer.getActiveTrack(); } catch (_) {}
+                if (_session === s && track?.id === s.episodeId) armPausedStop(s);
+            } else if (state === State.Playing || state === State.Buffering || state === State.Loading) {
+                disarmPausedStop(s);
+            }
+            checkPausedStop(s);
+        }));
         const onMeta = (e) => {
             const title = e?.metadata?.title ?? e?.title;
             if (_session === s && s.mode === 'live' && typeof title === 'string') setIcyTitle(title.trim());
         };
         _subs.push(TrackPlayer.addEventListener(Event.MetadataCommonReceived, onMeta));
         _subs.push(TrackPlayer.addEventListener(Event.PlaybackMetadataReceived, onMeta));
-        s.programmeTimer = setInterval(() => refreshProgramme(), PROGRAMME_POLL_MS);
+        s.programmeTimer = setInterval(() => { if (!checkPausedStop(s)) refreshProgramme(); }, PROGRAMME_POLL_MS);
         if (!guide) refreshProgramme();
 
         if (!buffered) {
@@ -633,6 +685,7 @@ export const stopSession = async ({ keepPlayer = false } = {}) => {
     log('RADIO', 'Session stop', { id: s.id, totalSec: Math.round(s.totalSec), windows: s.windowsDone });
     if (s.programmeTimer) clearInterval(s.programmeTimer);
     if (s.startTimer) clearTimeout(s.startTimer);
+    if (s.pausedTimer) clearTimeout(s.pausedTimer);
     clearSubs();
 
     if (s.buffered && LiveRadio) {

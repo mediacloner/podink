@@ -45,6 +45,7 @@ const PodcastRow = React.memo(({
     onUnsubscribe,
     onOpenEpisode,
     onOpenCollection,
+    onOpenHistory,
     onDownload,
     onTranscribe,
     onCancel,
@@ -137,6 +138,23 @@ const PodcastRow = React.memo(({
                         isQueued={queuedIds.includes(ep.id) && activeId !== ep.id}
                     />
                 ))}
+                {/* The five above are the latest; the whole back catalogue
+                    (the feed, read page by page) has its own screen. A
+                    channel with more videos than fit here gets the same door. */}
+                {count > MAX_NEW && (
+                    <TouchableOpacity
+                        style={styles.moreRow}
+                        onPress={() => onOpenHistory(podcast)}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel={isYouTube
+                            ? `All ${count} videos of ${podcast.title}`
+                            : `More episodes of ${podcast.title}`}
+                    >
+                        <Text style={styles.moreText}>{isYouTube ? `All ${count} videos` : 'More episodes'}</Text>
+                        <Icon name="chevron-right" size={16} color={colors.accent} />
+                    </TouchableOpacity>
+                )}
             </ReAnimated.View>
         )}
     </View>
@@ -240,6 +258,10 @@ const PodcastsScreen = ({ navigation }) => {
 
     const handleOpenCollection = useCallback((podcast) => {
         navigation.navigate('Collection', { feedUrl: podcast.feed_url });
+    }, [navigation]);
+
+    const handleOpenHistory = useCallback((podcast) => {
+        navigation.navigate('PodcastEpisodes', { feedUrl: podcast.feed_url });
     }, [navigation]);
 
     const loadPodcasts = useCallback(async () => {
@@ -464,14 +486,15 @@ const PodcastsScreen = ({ navigation }) => {
             onUnsubscribe={handleUnsubscribe}
             onOpenEpisode={handleOpenEpisode}
             onOpenCollection={handleOpenCollection}
+            onOpenHistory={handleOpenHistory}
             onDownload={handleDownload}
             onTranscribe={handleTranscribe}
             onCancel={handleCancel}
         />
     ), [
         newCountMap, expandedFeedUrl, episodesMap, downloads, activeId, queuedIds,
-        handleToggleExpand, handleUnsubscribe, handleOpenEpisode, handleOpenCollection, handleDownload,
-        handleTranscribe, handleCancel,
+        handleToggleExpand, handleUnsubscribe, handleOpenEpisode, handleOpenCollection, handleOpenHistory,
+        handleDownload, handleTranscribe, handleCancel,
     ]);
 
     if (isLoading) {
@@ -572,6 +595,18 @@ const makeStyles = (colors) => StyleSheet.create({
     episodeCard: {
         backgroundColor: colors.surfaceElevated,
     },
+    moreRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 2,
+        paddingVertical: 13,
+        paddingHorizontal: 16,
+        backgroundColor: colors.surfaceElevated,
+        borderTopWidth: 0.5,
+        borderTopColor: colors.hairline,
+    },
+    moreText: { ...type.bodyStrong, color: colors.accent },
 
     separator: {
         height: 0.5,

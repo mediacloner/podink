@@ -100,6 +100,31 @@ const LIST_HEADER = <View style={{ height: TOP_PAD }} />;
 // Per-theme; components read it via useStyles(rippleFor).
 const rippleFor = (colors) => ({ color: withAlpha(colors.accent, 0.12), foreground: true });
 
+// ── Android: the list must not swallow presses after a drag ──────────────────
+// RN's ScrollView takes every touch itself while it believes a fling is still
+// decelerating (ScrollView.js: _handleStartShouldSetResponderCapture →
+// _isAnimating). It flags "animating" on the native momentum-begin event —
+// which Android emits at *every* drag release, fling or not — and clears it
+// on momentum-end, emitted once the list has been still for three frames.
+// ReactScrollView.java drops that end event when a finger lands first
+// (cancelPostTouchScrolling on ACTION_DOWN), so the natural "scroll to a
+// sentence, hold it" gesture is taken by the list, and worse, leaves the flag
+// set: from then on every tap and long-press on a sentence is swallowed until
+// a later drag's end event arrives. User (2026-09-10): "long press … doesn't
+// work and I need to move the scroll to work". On Android the native
+// ScrollView already intercepts touches during a real fling, so the JS check
+// adds nothing here; switch it off for this list. Private RN API, hence the
+// guards — if it is ever gone, the list simply keeps RN's behaviour.
+const capturePatched = new WeakSet();
+const disableAnimatingCapture = (list) => {
+    if (Platform.OS !== 'android' || !list) return;
+    let sv = null;
+    try { sv = typeof list.getScrollResponder === 'function' ? list.getScrollResponder() : null; } catch (_) { return; }
+    if (!sv || capturePatched.has(sv) || typeof sv._isAnimating !== 'function') return;
+    capturePatched.add(sv);
+    sv._isAnimating = () => false;
+};
+
 // Animated.FlatList silently overrides CellRendererComponent with its own
 // itemLayoutAnimation wrapper (props spread first, its cell renderer last) —
 // wrap FlatList directly so ours reaches VirtualizedList. scrollTo() +
@@ -219,6 +244,9 @@ const TranscriptHighlighter = forwardRef(({
 
     // useAnimatedRef() instead of useRef() — required for Reanimated's scrollTo worklet.
     const flatListRef = useAnimatedRef();
+    // The list mounts once there is text (a status pane stands in before);
+    // patch whichever instance is there after each render — a no-op once done.
+    useEffect(() => { disableAnimatingCapture(flatListRef.current); });
 
     // ── SharedValues — the entire playback→highlight→scroll path is UI-thread ─
     const positionMsSV = useSharedValue(0);     // fed by PositionFeeder (ms)
