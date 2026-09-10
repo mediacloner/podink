@@ -68,7 +68,9 @@ export const getSubscribedEpisodes = async () => {
   return db.getAllAsync(`${EPISODE_WITH_IMAGE} WHERE ${NOT_LOCAL} AND ${NOT_RADIO} ORDER BY e.release_date DESC`);
 };
 
-// INSERT OR IGNORE preserves is_new, is_downloaded, local_audio_path, etc. for existing episodes
+// INSERT OR IGNORE preserves is_new, is_downloaded, local_audio_path, etc. for existing episodes.
+// A row arrives "new" unless the caller says otherwise (is_new: 0) — an old
+// episode the listener went looking for in the back catalogue is not news.
 const insertEpisodeRow = (runner, episode) => {
   // A NULL primary key (guid-less feed item) inserts as a distinct NULL row on
   // every refresh (SQLite allows multiple NULLs in a TEXT PRIMARY KEY), poisons
@@ -78,7 +80,7 @@ const insertEpisodeRow = (runner, episode) => {
   if (!id) return Promise.resolve();
   return runner.runAsync(
   `INSERT OR IGNORE INTO Episodes (id, title, description, podcast_title, podcast_feed_url, release_date, audio_url, is_downloaded, is_new, duration)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   [
     id,
     episode.title,
@@ -88,6 +90,7 @@ const insertEpisodeRow = (runner, episode) => {
     episode.release_date,
     episode.audio_url || episode.enclosure,
     episode.is_downloaded ? 1 : 0,
+    episode.is_new === 0 ? 0 : 1,
     episode.duration || 0,
   ]
   );
@@ -603,6 +606,17 @@ export const getLatestEpisodesForPodcast = async (feedUrl, limit = 5) => {
   `, [feedUrl, limit]);
 };
 
+/** Every row of a podcast on the device, newest first — the back-catalogue
+ *  screen shows these at once (and alone, offline) while the feed loads. */
+export const getStoredEpisodesForPodcast = async (feedUrl) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(`
+    ${EPISODE_WITH_IMAGE}
+    WHERE e.podcast_feed_url = ?
+    ORDER BY e.release_date DESC
+  `, [feedUrl]);
+};
+
 /** One episode drops out of the "new" count — the user acted on it
  *  (downloaded it from the Feed), so it no longer needs the badge. */
 export const markEpisodeSeen = async (id) => {
@@ -631,6 +645,11 @@ export const capNewEpisodes = async (feedUrl, maxNew = 5) => {
   `, [feedUrl, feedUrl, maxNew]);
 };
 
+/** Trim a feed's list to its latest maxKeep rows. Kept regardless of age:
+ *  downloads, transcripts, and anything the listener started or finished —
+ *  an episode opened from the back catalogue (4.5.1) would otherwise lose
+ *  its position, or drop out of Listening → Finished, on the next visit to
+ *  My Podcasts. */
 export const pruneOldEpisodesForPodcast = async (feedUrl, maxKeep) => {
   const db = await openDatabaseContext();
   await db.runAsync(`
@@ -638,6 +657,8 @@ export const pruneOldEpisodesForPodcast = async (feedUrl, maxKeep) => {
     WHERE podcast_feed_url = ?
       AND is_downloaded = 0
       AND has_transcript = 0
+      AND COALESCE(play_position, 0) = 0
+      AND COALESCE(is_played, 0) = 0
       AND id NOT IN (
         SELECT id FROM Episodes
         WHERE podcast_feed_url = ?

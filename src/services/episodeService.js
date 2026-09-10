@@ -5,8 +5,8 @@ import { Directory, File, Paths } from 'expo-file-system';
 import {
     clearPlayProgress, deleteEpisodeLocalData, deleteEpisodeRow, deletePodcast, getAllLocalAudioPaths,
     getEpisodesForPodcastFeed, getLocalCollectionFeedUrls, getPodcastByFeedUrl, getStaleFinishedDownloads,
-    isLocalFeedUrl, isYouTubeFeedUrl, LOCAL_KIND, markEpisodeFinished, markEpisodeSeen, updateEpisodeLocalPath,
-    YOUTUBE_KIND,
+    isLocalFeedUrl, isYouTubeFeedUrl, LOCAL_KIND, markEpisodeFinished, markEpisodeSeen, saveEpisode,
+    updateEpisodeLocalPath, YOUTUBE_KIND,
 } from '../database/queries';
 import { deleteAudioFile, downloadAudioFile } from './downloadService';
 import { enqueueTranscription, forgetTranscription } from './whisperService';
@@ -208,6 +208,11 @@ export const downloadEpisode = async (episode, { onProgress } = {}) => {
     }
     const safeId = String(episode.id).replace(/[^a-zA-Z0-9]/g, '_');
     const localPath = await downloadAudioFile(episode.audio_url, `episode_${safeId}.mp3`, onProgress);
+    // An old episode taken from the back catalogue can lose its row while the
+    // file downloads (My Podcasts trims a feed to its latest 50 on focus; only
+    // downloaded rows are exempt). Re-create it — a no-op when it is there —
+    // so the update below has a row and the file is never an orphan.
+    await saveEpisode({ ...episode, is_new: 0 });
     await updateEpisodeLocalPath(episode.id, localPath);
     // Downloading is "seeing" it: the My Podcasts badge (is_new count) drops
     // by one before the event below makes the badge re-check.

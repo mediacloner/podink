@@ -41,6 +41,7 @@ import CollectionEditorScreen from './screens/CollectionEditorScreen';
 import RadioScreen from './screens/RadioScreen';
 import RadioStationScreen from './screens/RadioStationScreen';
 import YouTubeImportScreen from './screens/YouTubeImportScreen';
+import PodcastEpisodesScreen from './screens/PodcastEpisodesScreen';
 
 LogBox.ignoreLogs(['Attempted to import the module']);
 
@@ -323,6 +324,14 @@ const AppRoot = () => {
                     <Stack.Screen
                         name="Collection"
                         component={CollectionScreen}
+                        options={{ headerShown: true, title: '' }}
+                    />
+                    {/* A podcast's whole back catalogue (4.5.1): My Podcasts
+                        unfolds a feed to its latest five; "More episodes"
+                        under them opens this, the feed read page by page. */}
+                    <Stack.Screen
+                        name="PodcastEpisodes"
+                        component={PodcastEpisodesScreen}
                         options={{ headerShown: true, title: '' }}
                     />
                     <Stack.Screen

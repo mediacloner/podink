@@ -72,6 +72,22 @@ export const truncateFeedItems = (xml, maxItems = DEFAULT_MAX_ITEMS) => {
     return out + xml.slice(pos);
 };
 
+// One feed item as the app stores it. react-native-rss-parser returns
+// undefined for <guid>-less items: fall back to the enclosure URL (then the
+// item link) so episodes get a stable, non-NULL key and don't duplicate /
+// crash on every refresh.
+const normalizeItem = (item) => {
+    const enclosure = item.enclosures && item.enclosures.length > 0 ? item.enclosures[0].url : null;
+    return {
+        id: item.id || enclosure || (item.links && item.links[0] && item.links[0].url) || null,
+        title: item.title,
+        description: item.description,
+        release_date: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
+        enclosure,
+        duration: parseDuration(item.itunes?.duration),
+    };
+};
+
 export const fetchPodcastFeed = async (url, { maxItems = DEFAULT_MAX_ITEMS } = {}) => {
   try {
     // Without an explicit UA, Android sends "okhttp/…" and hosts like
@@ -97,23 +113,91 @@ export const fetchPodcastFeed = async (url, { maxItems = DEFAULT_MAX_ITEMS } = {
       // Many hosts (Anchor/Spotify, Substack, the Dwarkesh feed) declare the
       // cover only as <itunes:image href> and ship no RSS <image> block.
       image: feed.image?.url || feed.itunes?.image || null,
-      episodes: feed.items.map(item => {
-        const enclosure = item.enclosures && item.enclosures.length > 0 ? item.enclosures[0].url : null;
-        return {
-          // react-native-rss-parser returns undefined for <guid>-less items.
-          // Fall back to the enclosure URL (then the item link) so episodes get
-          // a stable, non-NULL key and don't duplicate / crash on every refresh.
-          id: item.id || enclosure || (item.links && item.links[0] && item.links[0].url) || null,
-          title: item.title,
-          description: item.description,
-          release_date: item.published ? new Date(item.published).toISOString() : new Date().toISOString(),
-          enclosure,
-          duration: parseDuration(item.itunes?.duration),
-        };
-      })
+      episodes: feed.items.map(normalizeItem),
     };
   } catch (error) {
     console.error('RSS Parsing Error:', error);
     throw error;
   }
+};
+
+/**
+ * Every <item>…</item> block of an RSS 2.0 document as [start, end) offsets,
+ * in document order (newest first in podcast feeds). Empty for Atom / RDF
+ * feeds and for anything the scan cannot follow — callers parse those whole.
+ */
+export const findFeedItemRanges = (xml) => {
+    const ranges = [];
+    if (!xml) return ranges;
+    const firstItem = xml.indexOf('<item');
+    if (firstItem < 0) return ranges;
+    if (xml.lastIndexOf('<rss', firstItem) < 0 || xml.lastIndexOf('<channel', firstItem) < 0) return ranges;
+    let pos = firstItem;
+    for (;;) {
+        const start = xml.indexOf('<item', pos);
+        if (start < 0) break;
+        const close = xml.indexOf('</item', start);
+        if (close < 0) return []; // malformed — parse whole
+        const end = xml.indexOf('>', close);
+        if (end < 0) return [];
+        ranges.push([start, end + 1]);
+        pos = end + 1;
+    }
+    return ranges;
+};
+
+/**
+ * The document with only items [offset, offset + count) kept. Everything that
+ * is not an <item> block — channel title, cover, an <itunes:image> placed
+ * after the items — stays where it is. `ranges` is findFeedItemRanges' output.
+ */
+export const sliceFeedItems = (xml, ranges, offset, count) => {
+    let out = '';
+    let pos = 0;
+    for (let i = 0; i < ranges.length; i += 1) {
+        const [start, end] = ranges[i];
+        out += xml.slice(pos, start);
+        if (i >= offset && i < offset + count) out += xml.slice(start, end);
+        pos = end;
+    }
+    return out + xml.slice(pos);
+};
+
+/**
+ * A podcast's whole back catalogue, read a page at a time (4.5.1, the
+ * "More episodes" screen).
+ *
+ * The feed is fetched once and kept as text; each page cuts the document
+ * down to `count` items (sliceFeedItems) before the parser sees it, so a
+ * 3,000-item feed costs thirty short parses spread out — the list stays
+ * usable between them — instead of the one long parse that froze the app
+ * and made the Feed cut every list at 50 (see truncateFeedItems). Feeds
+ * whose items cannot be located (Atom, RDF) are parsed whole on the first
+ * page and served from memory after that.
+ *
+ * Returns { total, page(offset, count) }; page() resolves to normalized
+ * episodes (same shape as fetchPodcastFeed's), fewer than `count` at the end.
+ */
+export const openFeedHistory = async (url) => {
+    const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+    if (!response.ok) throw new Error(`Failed to fetch RSS: ${response.status}`);
+    const xml = await response.text();
+    const ranges = findFeedItemRanges(xml);
+    log('SERVICE', 'Feed history opened', { url, bytes: xml.length, items: ranges.length || null });
+
+    if (ranges.length === 0) {
+        const feed = await rssParser.parse(xml);
+        const all = feed.items.map(normalizeItem);
+        return { total: all.length, page: async (offset, count) => all.slice(offset, offset + count) };
+    }
+    return {
+        total: ranges.length,
+        page: async (offset, count) => {
+            if (offset >= ranges.length || count <= 0) return [];
+            const t0 = Date.now();
+            const feed = await rssParser.parse(sliceFeedItems(xml, ranges, offset, count));
+            log('SERVICE', 'Feed page parsed', { url, offset, items: feed.items.length, ms: Date.now() - t0 });
+            return feed.items.map(normalizeItem);
+        },
+    };
 };
