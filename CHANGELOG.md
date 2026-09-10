@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Slide a sentence to the right to translate it.** The long-press still works, but holding a finger still for half a second on every sentence felt slow (user: "sometimes is slow to take a complete translation of sentence"). A thumb slid left to right across a sentence now opens the same translation card: the words follow the thumb a little, a globe appears in the left margin, and letting go past about a centimetre and a half — or a quick flick — opens it. A vertical drag is still a scroll, a tap still seeks or opens a word, and the gesture uses the same handler as the long-press, so the notebook pencil and pause-while-looking-up behave exactly as before (`components/TranscriptHighlighter.js`, `SWIPE_*`).
+
 ## [4.5.1] - 2026-09-10
 
 ### Added

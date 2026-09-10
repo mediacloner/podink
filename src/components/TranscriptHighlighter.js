@@ -3,7 +3,7 @@ import React, {
     useMemo, useRef, useState,
 } from 'react';
 import {
-    ActivityIndicator, FlatList, InteractionManager, Platform, Pressable,
+    ActivityIndicator, FlatList, InteractionManager, PanResponder, Platform, Pressable,
     StyleSheet, Text, View, useWindowDimensions,
 } from 'react-native';
 import Animated, {
@@ -19,6 +19,7 @@ import Animated, {
     useAnimatedScrollHandler,
     useAnimatedStyle,
     useSharedValue,
+    withSpring,
     withTiming,
 } from 'react-native-reanimated';
 import TrackPlayer, { State } from 'react-native-track-player';
@@ -82,6 +83,16 @@ import FollowPill from './transcript/FollowPill';
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const CHUNK_MARGIN = 10;                 // matches sentenceWrap.marginBottom
+// Swipe-to-translate (user, 2026-09-10: the long-press "is slow to take a
+// complete translation of sentence"): a thumb slid left to right across a
+// sentence opens the same translation card as the long-press. Finger travel
+// in dp.
+const SWIPE_START = 10;   // rightward travel before the sentence claims the touch
+const SWIPE_TRIGGER = 72; // travel on release that opens the translation
+const SWIPE_FLICK = 30;   // …or this much with a quick flick (vx > SWIPE_FLICK_VX dp/ms)
+const SWIPE_FLICK_VX = 0.6;
+const SWIPE_MAX = 56;     // how far the sentence itself slides, rubber-banded
+const SWIPE_SPRING = { damping: 18, stiffness: 240, mass: 0.6 };
 const DEFAULT_FONT_SIZE = 22;
 const LOOKAHEAD_MS = 550;                // scaled by playback rate on the UI thread
 const WORD_LEVEL_RADIUS = 1;             // prev + current + next chunk → word-by-word
@@ -1336,6 +1347,47 @@ const Chunk = React.memo(({
     const handlePress = useCallback(() => onPress(item.startMs), [onPress, item.startMs]);
     const handleLongPress = useCallback(() => onLongPress(text, chunkIndex), [onLongPress, text, chunkIndex]);
 
+    // ── Swipe right → translate ───────────────────────────────────────────────
+    // A PanResponder, like the Library's SwipeableRow: the wrapper claims the
+    // touch once the finger has travelled SWIPE_START to the right and more
+    // across than down (a vertical drag stays a scroll — Android's ScrollView
+    // takes real vertical movement natively in any case). The Pressable
+    // underneath gives the touch up, which cancels its tap and long-press.
+    // The sentence follows the thumb a little, rubber-banded, with a globe
+    // fading in at its left; a release past SWIPE_TRIGGER, or a quick flick,
+    // opens the translation. Same handler as the long-press, so the card,
+    // the notebook pencil and pause-while-looking-up all behave the same.
+    const swipeX = useSharedValue(0);
+    const longPressRef = useRef(handleLongPress);
+    longPressRef.current = handleLongPress;
+    const swipePan = useMemo(() => PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, g) => g.dx > SWIPE_START && g.dx > Math.abs(g.dy) * 1.5,
+        onPanResponderMove: (_, g) => {
+            swipeX.value = g.dx <= 0 ? 0 : SWIPE_MAX * (1 - Math.exp(-g.dx / SWIPE_MAX));
+        },
+        onPanResponderRelease: (_, g) => {
+            swipeX.value = withSpring(0, SWIPE_SPRING);
+            if (g.dx >= SWIPE_TRIGGER || (g.dx >= SWIPE_FLICK && g.vx > SWIPE_FLICK_VX)) longPressRef.current();
+        },
+        onPanResponderTerminate: () => { swipeX.value = withSpring(0, SWIPE_SPRING); },
+    }), [swipeX]);
+    const swipeStyle = useAnimatedStyle(() => ({ transform: [{ translateX: swipeX.value }] }));
+    const swipeIconStyle = useAnimatedStyle(() => ({
+        opacity: interpolate(swipeX.value, [6, SWIPE_MAX * 0.6], [0, 1], 'clamp'),
+        transform: [{ scale: interpolate(swipeX.value, [6, SWIPE_MAX * 0.8], [0.7, 1], 'clamp') }],
+    }));
+    // The globe sits in the list's left gutter (contentContainer padding), so
+    // it never overlaps the words as they slide.
+    const withSwipe = (sentence) => (
+        <View {...swipePan.panHandlers}>
+            <Animated.View style={[styles.swipeIcon, swipeIconStyle]} pointerEvents="none">
+                <Icon name="globe" size={18} color={colors.accent} />
+            </Animated.View>
+            <Animated.View style={swipeStyle}>{sentence}</Animated.View>
+        </View>
+    );
+
     const baseStyle = {
         fontSize,
         lineHeight,
@@ -1357,7 +1409,7 @@ const Chunk = React.memo(({
         // reach the words, while a long-press that lands between words, at a
         // line end or in the gap under the last line — where no span owns
         // the touch — still opens the translation instead of doing nothing.
-        return (
+        return withSwipe(
             <Pressable
                 style={styles.sentenceWrap}
                 onLayout={handleLayout}
@@ -1385,11 +1437,11 @@ const Chunk = React.memo(({
                         />
                     ))}
                 </Text>
-            </Pressable>
+            </Pressable>,
         );
     }
 
-    return (
+    return withSwipe(
         <Pressable
             onLayout={handleLayout}
             onPress={handlePress}
@@ -1427,7 +1479,7 @@ const Chunk = React.memo(({
             ) : (
                 <Text style={baseStyle}>{text}</Text>
             )}
-        </Pressable>
+        </Pressable>,
     );
 }, chunkEqual);
 
@@ -1547,6 +1599,8 @@ const makeStyles = (colors) => StyleSheet.create({
 
     sentenceWrap: { marginBottom: CHUNK_MARGIN },
     pressedChunk: { opacity: 0.65 },
+    // Swipe-to-translate glyph, in the 24 px gutter left of the words.
+    swipeIcon: { position: 'absolute', left: -22, top: 0, bottom: CHUNK_MARGIN, justifyContent: 'center' },
     // A book title inside a sentence: a highlighter band in the palette's
     // purple behind the words, text in the primary colour — bold alone
     // vanished in the dimmed past/future text of both themes.
