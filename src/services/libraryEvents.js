@@ -13,6 +13,9 @@
  *   count = how many spellings were corrected — the Player reloads the text).
  * 'books-indexed' (services/bookIndex.js scanned an episode's transcript for
  * books; payload carries `count`) — the Player reloads its EpisodeBooks rows.
+ * 'analysis-indexed' (services/aiService.js wrote an episode's summary,
+ *   chapters and transcript fixes; payload carries `chapters` and `fixes`
+ *   counts) — the Player reloads the text and the chapter sheet its rows.
  * Subscribers must tolerate an undefined payload.
  *
  * 'playback-progress' fires on every persisted play position (~5s while

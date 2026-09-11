@@ -338,7 +338,14 @@ export const deleteEpisodeTranscript = async (id) => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
-    await db.runAsync(`UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL, names_indexed_at = NULL WHERE id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [id]);
+    await db.runAsync(
+      `UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL, names_indexed_at = NULL,
+              summary = NULL, ai_indexed_at = NULL, ai_model = NULL
+       WHERE id = ?`,
+      [id]
+    );
   });
 };
 
@@ -427,6 +434,61 @@ export const getEpisodesNeedingNameScan = async () => {
   return rows.map(r => r.id).filter(Boolean);
 };
 
+// ─── The episode assistant (services/aiService.js) ───────────────────────────
+
+export const getEpisodeChapters = async (episodeId) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT id, start_ms, end_ms, title, blurb, source FROM EpisodeChapters WHERE episode_id = ? ORDER BY start_ms ASC`,
+    [episodeId]
+  );
+};
+
+export const getEpisodeFixes = async (episodeId) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT heard, correct, kind, context, confidence, count, first_ms, applied
+     FROM EpisodeFixes WHERE episode_id = ? ORDER BY COALESCE(first_ms, 0) ASC, heard ASC`,
+    [episodeId]
+  );
+};
+
+/** One analysis replaces the last: summary, chapters and fixes together. */
+export const replaceEpisodeAnalysis = async (episodeId, { summary, chapters, fixes, model }, indexedAt = Date.now()) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [episodeId]);
+    for (const c of chapters || []) {
+      await db.runAsync(
+        `INSERT INTO EpisodeChapters (episode_id, start_ms, end_ms, title, blurb, source) VALUES (?, ?, ?, ?, ?, ?)`,
+        [episodeId, Math.round(c.startMs), c.endMs != null ? Math.round(c.endMs) : null, c.title, c.blurb || null, c.source || 'ai']
+      );
+    }
+    await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [episodeId]);
+    for (const f of fixes || []) {
+      await db.runAsync(
+        `INSERT OR REPLACE INTO EpisodeFixes (episode_id, heard, correct, kind, context, confidence, count, first_ms, applied)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [episodeId, f.heard, f.correct, f.kind || null, f.context || null, f.confidence || null,
+         f.count || 0, f.firstMs ?? null, f.applied === false ? 0 : 1]
+      );
+    }
+    await db.runAsync(
+      `UPDATE Episodes SET summary = ?, ai_indexed_at = ?, ai_model = ? WHERE id = ?`,
+      [summary || null, indexedAt, model || null, episodeId]
+    );
+  });
+};
+
+export const clearEpisodeAnalysis = async (episodeId) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [episodeId]);
+    await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [episodeId]);
+    await db.runAsync(`UPDATE Episodes SET summary = NULL, ai_indexed_at = NULL, ai_model = NULL WHERE id = ?`, [episodeId]);
+  });
+};
+
 export const clearEpisodeBooks = async (episodeId) => {
   const db = await openDatabaseContext();
   await runInTxn(db, async () => {
@@ -445,9 +507,11 @@ export const deleteEpisodeLocalData = async (id) => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [id]);
     await db.runAsync(
       `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0, downloaded_at = NULL,
-              books_indexed_at = NULL, names_indexed_at = NULL
+              books_indexed_at = NULL, names_indexed_at = NULL, summary = NULL, ai_indexed_at = NULL, ai_model = NULL
        WHERE id = ?`,
       [id]
     );

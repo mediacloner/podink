@@ -55,3 +55,33 @@ export const splitSentences = (items) => {
     if (cur.length) out.push(cur);
     return out;
 };
+
+// ─── Timed sentences ─────────────────────────────────────────────────────────
+// Transcript rows (usually one word each, with start_time) grouped into
+// sentences that keep the time their first word starts: the export, the
+// episode assistant and the chapter times all read the same lines.
+
+/** [{ startMs, endMs, text }] — one per sentence, in order. */
+export const sentencesWithTimes = (rows) => {
+    const words = [];
+    for (const seg of rows || []) {
+        const startMs = seg.start_time ?? seg.start ?? 0;
+        const endMs = seg.end_time ?? seg.end ?? startMs;
+        for (const t of String(seg.text || '').trim().split(/\s+/)) {
+            if (t) words.push({ text: t, startMs, endMs });
+        }
+    }
+    return splitSentences(words).map((ws) => ({
+        startMs: ws[0].startMs,
+        endMs: ws[ws.length - 1].endMs,
+        text: ws.map((w) => w.text).join(' '),
+    }));
+};
+
+/** "12:34", or "1:02:33" past the hour. */
+export const formatClock = (ms) => {
+    const total = Math.max(0, Math.floor((ms || 0) / 1000));
+    const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+    const mm = String(m).padStart(2, '0'), ss = String(s).padStart(2, '0');
+    return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+};

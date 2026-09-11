@@ -99,6 +99,26 @@ const WORD_LEVEL_RADIUS = 1;             // prev + current + next chunk → word
 const KEYPOINT_INTERVAL_MS = 10 * 60 * 1000;
 const KEYPOINT_HEIGHT = 36;              // fixed — used in both layout and scroll math
 const SEEK_CHUNK_GAP = 3;                // chunk jumps larger than this fade-snap
+// A paragraph is also the unit the reader taps, slides to translate and keeps
+// in the notebook, so one runaway sentence must not become all of them: past
+// this many words it is cut in two. The cut lands on the last clause boundary
+// in the tail (see clauseCut) rather than on a fixed word, because a fixed
+// word lands mid-phrase — an earlier cap of 35 ended a paragraph on "…wade
+// through the" and opened the next with "chaff that we are paid to do."
+const CHUNK_MAX_WORDS = 50;
+const CLAUSE_END = /[,;:—–)\]]["'”’]*$/;
+// How far back a boundary is worth looking for: past this the halves get too
+// lopsided and a clean break at the cap reads better than a stub.
+const CLAUSE_LOOKBACK = 20;
+
+/** Index in `words` to end the paragraph on, or -1 to cut at the cap. */
+const clauseCut = (words) => {
+    const floor = Math.max(9, words.length - CLAUSE_LOOKBACK);
+    for (let k = words.length - 2; k >= floor; k--) {
+        if (CLAUSE_END.test(words[k].text.trim())) return k;
+    }
+    return -1;
+};
 const FOLLOW_ANCHOR = 0.40;              // active chunk midpoint sits at 40% of viewport
 // ListHeader height, baked into item offsets. Tall enough that the first
 // paragraph starts clear of the header's drop-shadow and of the top scrim
@@ -373,14 +393,26 @@ const TranscriptHighlighter = forwardRef(({
                     // one usually sits in the next segment.
                     const nextWord = last ? _firstWordFrom(segments, i + 1) : ws[wi + 1];
                     const sent = isSentenceEnd(w, nextWord);
-                    if (sent || cur.length >= 35 || (i === segments.length - 1 && last)) {
+                    const overflow = cur.length >= CHUNK_MAX_WORDS;
+                    const lastOfAll = i === segments.length - 1 && last;
+                    if (sent || overflow || lastOfAll) {
+                        // Only an over-long sentence is cut at a clause; a real
+                        // sentence end and the end of the text take every word.
+                        let words = cur, rest = null;
+                        if (overflow && !sent && !lastOfAll) {
+                            const k = clauseCut(cur);
+                            if (k >= 0) { words = cur.slice(0, k + 1); rest = cur.slice(k + 1); }
+                        }
                         builtChunks.push({
                             id: `c${builtChunks.length}`,
-                            words: cur,
+                            words,
                             startMs: chunkStartMs,
                             chunkIndex: builtChunks.length,
                         });
-                        cur = [];
+                        // What is left of the sentence opens the next paragraph
+                        // and carries its own first word's time.
+                        cur = rest || [];
+                        if (cur.length) chunkStartMs = cur[0].startMs;
                     }
                 }
             }

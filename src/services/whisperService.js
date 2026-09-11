@@ -33,6 +33,7 @@ import {
 } from '../database/queries';
 import { notifyLibraryChange } from './libraryEvents';
 import { indexEpisodeBooks } from './bookIndex';
+import { analyzeIfAuto } from './aiService';
 import { log } from './logService';
 import { splitSentences } from './sentenceBoundary';
 
@@ -655,6 +656,9 @@ const _process = async (entry) => {
         // Books the episode talks about: scanned from the finished text
         // (force — a continued transcript has more text than its last scan).
         indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
+        // The episode assistant, when the listener switched it on: summary,
+        // chapters and corrections from the finished text (aiService).
+        analyzeIfAuto(entry.id).catch(() => {});
 
         log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length });
         entry.resolve(segments);

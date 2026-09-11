@@ -10,7 +10,8 @@
  * `getCorrectedTranscript`; Transcripts keeps the recogniser's text.
  */
 import {
-    getEpisodeById, getEpisodeNames, getEpisodesNeedingNameScan, getTranscriptsForEpisode, replaceEpisodeNames,
+    getEpisodeById, getEpisodeFixes, getEpisodeNames, getEpisodesNeedingNameScan, getTranscriptsForEpisode,
+    replaceEpisodeNames,
 } from '../database/queries';
 import { applyNameCorrections, findNameCorrections, nameCandidates } from './nameText';
 import { showNotesPlainText } from './showNotes';
@@ -19,8 +20,21 @@ import { log } from './logService';
 
 const _running = new Map();   // episodeId → Promise, so two callers share one scan
 
-/** Transcript rows with the episode's name corrections written in. */
+/** Transcript rows with the episode's name corrections written in, and
+ *  after them the fixes the episode assistant proposed (EpisodeFixes,
+ *  services/aiService.js) — the assistant read the text with the names
+ *  already corrected, so its "heard" spellings are matched on that text. */
 export const getCorrectedTranscript = async (episodeId) => {
+    const [rows, names, fixes] = await Promise.all([
+        getTranscriptsForEpisode(episodeId), getEpisodeNames(episodeId), getEpisodeFixes(episodeId),
+    ]);
+    const named = applyNameCorrections(rows, names);
+    const applied = (fixes || []).filter(f => f.applied !== 0).map(f => ({ heard: f.heard, canonical: f.correct }));
+    return applied.length ? applyNameCorrections(named, applied) : named;
+};
+
+/** The same rows with only the name corrections — what the assistant reads. */
+export const getNameCorrectedTranscript = async (episodeId) => {
     const [rows, names] = await Promise.all([getTranscriptsForEpisode(episodeId), getEpisodeNames(episodeId)]);
     return applyNameCorrections(rows, names);
 };
