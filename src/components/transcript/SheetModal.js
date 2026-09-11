@@ -22,7 +22,10 @@ const SPRING = { damping: 20, stiffness: 220, mass: 0.8 };
 
 // The Modal window is edge-to-edge, so the footer's own padding has to clear
 // the system navigation bar (safe-area inset) AND leave breathing room above
-// it — an inset-only margin puts the buttons flush against the bar.
+// it — an inset-only margin puts the buttons flush against the bar. A card
+// with no footer gives that same clearance to its scrolling body instead,
+// which is the card's last element then (the chapter sheet's button sat
+// behind the navigation buttons until it did).
 const FOOTER_GAP = 20;
 
 // Bottom sheet shared by the translation and word-lookup cards.
@@ -156,6 +159,12 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
         }),
     [visible, nativeScroll, dragFromTop, scrollY, translateY, requestClose]);
 
+    // Bottom clearance belongs to whichever is last: the footer when there is
+    // one, otherwise the body. Lifted over the keyboard there is no bar to
+    // clear (the lift already sits above it).
+    const edgeGap = (lift ? 0 : bottom) + FOOTER_GAP;
+    const bodyPad = shown.footer != null ? 0 : edgeGap;
+
     const backdropStyle = useAnimatedStyle(() => ({ opacity: backdrop.value }));
     const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }] }));
 
@@ -192,7 +201,7 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
                             <ScrollView
                                 ref={scrollRef}
                                 style={st.scroll}
-                                contentContainerStyle={st.scrollContent}
+                                contentContainerStyle={[st.scrollContent, bodyPad > 0 && { paddingBottom: bodyPad }]}
                                 showsVerticalScrollIndicator={false}
                                 bounces={false}
                                 overScrollMode='never'
@@ -203,7 +212,7 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
                             </ScrollView>
                         </GestureDetector>
                         {shown.footer != null && (
-                            <View style={{ paddingBottom: (lift ? 0 : bottom) + FOOTER_GAP }}>{shown.footer}</View>
+                            <View style={{ paddingBottom: edgeGap }}>{shown.footer}</View>
                         )}
                     </Animated.View>
                 </GestureDetector>

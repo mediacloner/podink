@@ -112,10 +112,16 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
     const analysed = !!episode?.ai_indexed_at || chapters.length > 0;
     const appliedCount = fixes.filter(f => f.applied !== 0).length;
 
+    // Title, summary, then one line per chapter — the blocks that have
+    // something in them, a blank line between each.
     const onShare = useCallback(() => {
-        const head = [episode?.podcast_title, episode?.title].filter(Boolean).join(' — ');
-        const lines = chapters.map(c => `[${formatClock(c.start_ms)}] ${c.title}${c.blurb ? ` — ${c.blurb}` : ''}`);
-        shareText([head, '', summary, '', lines.length ? 'Chapters' : '', ...lines].filter((l, i, a) => l !== '' || (a[i - 1] !== '' && a[i + 1] !== undefined)).join('\n'), 'Share summary');
+        const blocks = [[episode?.podcast_title, episode?.title].filter(Boolean).join(' — '), summary];
+        if (chapters.length) {
+            blocks.push(['Chapters', ...chapters.map(
+                c => `[${formatClock(c.start_ms)}] ${c.title}${c.blurb ? ` — ${c.blurb}` : ''}`
+            )].join('\n'));
+        }
+        shareText(blocks.filter(Boolean).join('\n\n'), 'Share summary');
     }, [episode, chapters, summary]);
 
     const seekTo = useCallback((ms) => { if (ms != null && onSeek) onSeek(ms); }, [onSeek]);
