@@ -436,7 +436,7 @@ const TranslationModal = ({
                                         <Text style={ms.linkText}>Reading it again…</Text>
                                     </View>
                                 ) : (
-                                    <Text style={ms.linkText}>Read again with OpenAI · ~$0.0001</Text>
+                                    <Text style={ms.linkText}>Read again with OpenAI</Text>
                                 )}
                             </TouchableOpacity>
                         )}
@@ -485,7 +485,7 @@ const makeStyles = (colors) => StyleSheet.create({
     },
     divider: { height: 0.5, backgroundColor: colors.hairline, marginBottom: 16 },
     translatedText: { color: colors.textPrimary, fontSize: 19, lineHeight: 28, fontWeight: '600', marginBottom: 12, letterSpacing: -0.2 },
-    linkRow: { flexDirection: 'row', alignItems: 'center', gap: 18, marginBottom: 20 },
+    linkRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 16, rowGap: 10, marginBottom: 20 },
     linkBtn: { alignSelf: 'flex-start' },
     linkText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
     withCtx: { flexDirection: 'row', alignItems: 'center', gap: 5 },
