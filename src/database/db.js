@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -331,6 +331,50 @@ const migrateToV10 = async (txn) => {
     await txn.execAsync(`CREATE UNIQUE INDEX IF NOT EXISTS idx_notebook_place ON Notebook(episode_id, start_ms)`);
 };
 
+const migrateToV11 = async (txn) => {
+    // The episode assistant (4.6.0, services/aiService.js): a summary and
+    // chapters a language model wrote from the transcript, and the transcript
+    // corrections it proposed. Chapters feed the Player's chapter sheet; the
+    // fixes are applied when a transcript is read, after EpisodeNames, and
+    // never written into Transcripts. Episodes.summary is the episode's
+    // summary, ai_indexed_at when the pass ran (epoch ms; NULL = never) and
+    // ai_model which model wrote it. Deleting a transcript clears all of it.
+    await txn.execAsync(
+        `CREATE TABLE IF NOT EXISTS EpisodeChapters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            episode_id TEXT NOT NULL,
+            start_ms INTEGER NOT NULL,
+            end_ms INTEGER,
+            title TEXT NOT NULL,
+            blurb TEXT,
+            source TEXT NOT NULL DEFAULT 'ai',
+            FOREIGN KEY (episode_id) REFERENCES Episodes(id) ON DELETE CASCADE
+        );`
+    );
+    await txn.execAsync(`CREATE INDEX IF NOT EXISTS idx_episode_chapters ON EpisodeChapters(episode_id, start_ms)`);
+    await txn.execAsync(
+        `CREATE TABLE IF NOT EXISTS EpisodeFixes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            episode_id TEXT NOT NULL,
+            heard TEXT NOT NULL,
+            correct TEXT NOT NULL,
+            kind TEXT,
+            context TEXT,
+            confidence TEXT,
+            count INTEGER DEFAULT 0,
+            first_ms INTEGER,
+            applied INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (episode_id) REFERENCES Episodes(id) ON DELETE CASCADE
+        );`
+    );
+    await txn.execAsync(`CREATE UNIQUE INDEX IF NOT EXISTS idx_episode_fixes_heard ON EpisodeFixes(episode_id, heard)`);
+    const cols = await txn.getAllAsync(`PRAGMA table_info(Episodes)`);
+    const have = new Set(cols.map(c => c.name));
+    if (!have.has('summary')) await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN summary TEXT`);
+    if (!have.has('ai_indexed_at')) await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN ai_indexed_at INTEGER`);
+    if (!have.has('ai_model')) await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN ai_model TEXT`);
+};
+
 export const initDB = async () => {
     const db = await openDatabaseContext();
 
@@ -356,6 +400,7 @@ export const initDB = async () => {
         if (cur < 8) await migrateToV8(db);
         if (cur < 9) await migrateToV9(db);
         if (cur < 10) await migrateToV10(db);
+        if (cur < 11) await migrateToV11(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

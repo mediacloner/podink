@@ -16,6 +16,9 @@ import {
     getInstalledDictionaries, hasBuiltInToken, installDictionary, isInstalling, listRemoteDictionaries, setGithubToken,
 } from '../services/dictionaryService';
 import { onLibraryChange } from '../services/libraryEvents';
+import {
+    AI_AUTO_KEY, AI_FIX_KEY, AI_MODEL_KEY, AI_MODELS, DEFAULT_AI_MODEL, OPENAI_KEY_KEY, estimateEpisodeCost,
+} from '../services/aiService';
 import { showAlert } from '../components/AppAlert';
 import { useTheme, useStyles, withAlpha, type, THEMES, THEME_OPTIONS } from '../theme';
 
@@ -89,7 +92,15 @@ const SettingsScreen = () => {
     const [dictBusy, setDictBusy] = useState({});          // id → { phase, percent }
     const [dictListLoading, setDictListLoading] = useState(false);
 
-    useEffect(() => { loadPreference(); loadLearningPrefs(); }, []);
+    // The episode assistant (services/aiService.js reads the same keys)
+    const [aiKey, setAiKey] = useState('');
+    const [aiKeyDraft, setAiKeyDraft] = useState('');
+    const [aiKeyEditing, setAiKeyEditing] = useState(false);
+    const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
+    const [aiAuto, setAiAuto] = useState(false);
+    const [aiFix, setAiFix] = useState(true);
+
+    useEffect(() => { loadPreference(); loadLearningPrefs(); loadAssistantPrefs(); }, []);
     useEffect(() => { checkModelStatus(selectedModel); }, [selectedModel]);
 
     // A stack screen since 2.3.0 (opened from the header gear), so it styles
@@ -140,6 +151,43 @@ const SettingsScreen = () => {
                 if (parsed > 0) setPlaybackRate(String(parsed));
             }
         } catch (e) {}
+    };
+
+    const loadAssistantPrefs = async () => {
+        try {
+            const [key, model, auto, fix] = await Promise.all([
+                AsyncStorage.getItem(OPENAI_KEY_KEY),
+                AsyncStorage.getItem(AI_MODEL_KEY),
+                AsyncStorage.getItem(AI_AUTO_KEY),
+                AsyncStorage.getItem(AI_FIX_KEY),
+            ]);
+            setAiKey((key || '').trim());
+            setAiModel(AI_MODELS.some(m => m.id === model) ? model : DEFAULT_AI_MODEL);
+            setAiAuto(auto === '1');
+            setAiFix(fix !== '0');
+        } catch (e) {}
+    };
+    const saveAiKey = async () => {
+        const k = aiKeyDraft.trim();
+        if (!k) return;
+        setAiKey(k); setAiKeyDraft(''); setAiKeyEditing(false);
+        try { await AsyncStorage.setItem(OPENAI_KEY_KEY, k); } catch (e) {}
+    };
+    const removeAiKey = async () => {
+        setAiKey(''); setAiKeyDraft(''); setAiKeyEditing(false);
+        try { await AsyncStorage.removeItem(OPENAI_KEY_KEY); } catch (e) {}
+    };
+    const saveAiModel = async (id) => {
+        setAiModel(id);
+        try { await AsyncStorage.setItem(AI_MODEL_KEY, id); } catch (e) {}
+    };
+    const saveAiAuto = async (on) => {
+        setAiAuto(on);
+        try { await AsyncStorage.setItem(AI_AUTO_KEY, on ? '1' : '0'); } catch (e) {}
+    };
+    const saveAiFix = async (on) => {
+        setAiFix(on);
+        try { await AsyncStorage.setItem(AI_FIX_KEY, on ? '1' : '0'); } catch (e) {}
     };
 
     const saveTranslationLang = async (code) => {
@@ -658,6 +706,140 @@ const SettingsScreen = () => {
                         </TouchableOpacity>
                     );
                 })()}
+            </View>
+
+            {/* Section: Episode assistant */}
+            <Text style={styles.sectionLabel}>EPISODE ASSISTANT</Text>
+
+            <View style={styles.infoBanner}>
+                <Icon name="info" size={13} color={colors.warning} style={{ marginTop: 1 }} />
+                <Text style={styles.infoText}>
+                    A summary, chapters and transcript corrections written by a model at OpenAI. An episode's transcript is sent there, with your own key, only when you ask — from the chapters glyph in the Player, or with the switch below. Nothing else leaves the phone.
+                </Text>
+            </View>
+
+            <View style={styles.card}>
+                <View style={[styles.settingBlock, styles.rowBorder]}>
+                    <View style={styles.settingHead}>
+                        <Icon name="key" size={15} color={colors.accent} />
+                        <Text style={styles.settingTitle}>OpenAI API key</Text>
+                    </View>
+                    <Text style={[styles.settingHint, styles.indent]}>
+                        Made at platform.openai.com under API keys, with a little prepaid credit on the account — a ChatGPT subscription does not include it. Usage is billed there per episode ({estimateEpisodeCost(aiModel, 3600, { fixes: aiFix })} for an hour of audio with the model below). Stored only on this device.
+                    </Text>
+                    {aiKeyEditing || !aiKey ? (
+                        <View style={[styles.tokenRow, styles.indent]}>
+                            <TextInput
+                                style={styles.tokenInput}
+                                value={aiKeyDraft}
+                                onChangeText={setAiKeyDraft}
+                                placeholder="sk-…"
+                                placeholderTextColor={colors.textFaint}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                secureTextEntry
+                                accessibilityLabel="OpenAI API key"
+                            />
+                            <TouchableOpacity
+                                style={[styles.smallBtn, !aiKeyDraft.trim() && styles.smallBtnDisabled]}
+                                onPress={saveAiKey}
+                                disabled={!aiKeyDraft.trim()}
+                                accessibilityRole="button"
+                                accessibilityLabel="Save key"
+                            >
+                                <Text style={styles.smallBtnText}>Save</Text>
+                            </TouchableOpacity>
+                            {!!aiKey && (
+                                <TouchableOpacity style={styles.smallBtnGhost} onPress={() => { setAiKeyEditing(false); setAiKeyDraft(''); }} accessibilityRole="button">
+                                    <Text style={styles.smallBtnGhostText}>Cancel</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    ) : (
+                        <View style={[styles.tokenRow, styles.indent]}>
+                            <Icon name="check-circle" size={14} color={colors.success} />
+                            <Text style={styles.tokenSaved}>{maskToken(aiKey)}</Text>
+                            <TouchableOpacity style={styles.smallBtnGhost} onPress={() => setAiKeyEditing(true)} accessibilityRole="button">
+                                <Text style={styles.smallBtnGhostText}>Change</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.smallBtnGhost} onPress={removeAiKey} accessibilityRole="button">
+                                <Text style={[styles.smallBtnGhostText, { color: colors.danger }]}>Remove</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+                </View>
+
+                {AI_MODELS.map((m) => {
+                    const selected = aiModel === m.id;
+                    return (
+                        <TouchableOpacity
+                            key={m.id}
+                            style={[styles.modelRow, styles.rowBorder]}
+                            onPress={() => saveAiModel(m.id)}
+                            activeOpacity={0.7}
+                            accessibilityRole="radio"
+                            accessibilityLabel={`${m.label}, ${m.tier}`}
+                            accessibilityState={{ selected }}
+                        >
+                            <View style={styles.modelInfo}>
+                                <View style={styles.modelNameRow}>
+                                    <Text style={[styles.modelName, selected && styles.modelNameActive]}>{m.label}</Text>
+                                    {m.recommended && (
+                                        <View style={styles.badge}>
+                                            <Text style={styles.badgeText}>Recommended</Text>
+                                        </View>
+                                    )}
+                                </View>
+                                <Text style={styles.modelDesc}>{m.tier} · {m.id} · {estimateEpisodeCost(m.id, 3600, { fixes: aiFix })} for an hour of audio</Text>
+                            </View>
+                            <View style={styles.modelMeta}>
+                                <View style={[styles.radio, selected && styles.radioOn]}>
+                                    {selected && <View style={styles.radioDot} />}
+                                </View>
+                            </View>
+                        </TouchableOpacity>
+                    );
+                })}
+
+                <View style={[styles.settingRow, styles.rowBorder]}>
+                    <View style={{ flex: 1 }}>
+                        <View style={styles.settingHead}>
+                            <Icon name="zap" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Summarise after every transcription</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>
+                            The summary and chapters are written as soon as a transcript finishes. Off, they are written when you ask from the Player.
+                        </Text>
+                    </View>
+                    <Switch
+                        value={aiAuto}
+                        onValueChange={saveAiAuto}
+                        disabled={!aiKey}
+                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.accent, 0.45) }}
+                        thumbColor={aiAuto && aiKey ? colors.accent : colors.textSecondary}
+                        ios_backgroundColor={colors.surfaceHigh}
+                        accessibilityLabel="Summarise every episode after it is transcribed"
+                    />
+                </View>
+                <View style={styles.settingRow}>
+                    <View style={{ flex: 1 }}>
+                        <View style={styles.settingHead}>
+                            <Icon name="edit-3" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Also correct the transcript</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>
+                            The model proposes fixes for misheard names, titles and homophones. They are written into the text you read and listed in the chapter sheet, where each one can be checked; the recogniser's words are kept underneath.
+                        </Text>
+                    </View>
+                    <Switch
+                        value={aiFix}
+                        onValueChange={saveAiFix}
+                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.accent, 0.45) }}
+                        thumbColor={aiFix ? colors.accent : colors.textSecondary}
+                        ios_backgroundColor={colors.surfaceHigh}
+                        accessibilityLabel="Also let the model correct the transcript"
+                    />
+                </View>
             </View>
 
             {/* Section: Storage */}

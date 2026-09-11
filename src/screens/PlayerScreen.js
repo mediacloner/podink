@@ -29,6 +29,7 @@ import {
 import { getStation, stationIdFromFeedUrl } from '../services/radioStations';
 import { artworkSource } from '../api/userAgent';
 import { buildTranscriptExport, shareText } from '../components/transcript/share';
+import ChapterSheet from '../components/transcript/ChapterSheet';
 import { extractColor, softenForHeader } from '../services/colorExtractor';
 import { useTheme, useStyles, radii, withAlpha } from '../theme';
 
@@ -68,6 +69,7 @@ const PlayerScreen = ({ route, navigation }) => {
     const [segments, setSegments] = useState([]);
     // Books the transcript mentions (EpisodeBooks rows) — bold titles + book card.
     const [books, setBooks] = useState([]);
+    const [chapterSheet, setChapterSheet] = useState(false);   // the summary-and-chapters card
     const [transcriptLoading, setTranscriptLoading] = useState(false);
     const [audioStatus, setAudioStatus] = useState('');
     const [audioError, setAudioError] = useState(false);
@@ -339,6 +341,11 @@ const PlayerScreen = ({ route, navigation }) => {
             } else if (payload.type === 'names-indexed') {
                 if (payload.count > 0) refetchTranscript();
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
+            } else if (payload.type === 'analysis-indexed') {
+                // The episode assistant wrote its summary, chapters and fixes:
+                // the fixes change the text, the rest lives on the episode row.
+                if (payload.fixes > 0) refetchTranscript();
+                getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
             } else if (payload.type === 'transcript-error') {
                 setTranscribing(false);
             } else if (payload.type === 'radio-programme') {
@@ -431,6 +438,17 @@ const PlayerScreen = ({ route, navigation }) => {
         if (!ep || !segments.length) return;
         shareText(buildTranscriptExport(ep, segments), 'Share transcript');
     }, [ep, segments]);
+    // A chapter tapped in the sheet: the transcript's own seek (it also
+    // re-engages follow mode and moves the player).
+    const seekFromChapter = useCallback((ms) => {
+        setChapterSheet(false);
+        if (transcriptRef.current?.seekToMs) transcriptRef.current.seekToMs(ms);
+        else TrackPlayer.seekTo(Math.max(0, ms) / 1000).catch(() => {});
+    }, []);
+    const openSettingsFromSheet = useCallback(() => {
+        setChapterSheet(false);
+        navigation.navigate('Settings');
+    }, [navigation]);
     const canTranscribe = !!ep?.local_audio_path && !isRadio;
     // Rows saved by a job that never finished (cancelled from a list, failed
     // part-way, the process killed): the text shows, so the no-transcript
@@ -510,6 +528,17 @@ const PlayerScreen = ({ route, navigation }) => {
                         {ep.title}
                     </Text>
                 </View>
+                {!isRadio && hasTranscript && segments.length > 0 && (
+                    <TouchableOpacity
+                        onPress={() => setChapterSheet(true)}
+                        hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                        style={styles.radioStop}
+                        accessibilityRole='button'
+                        accessibilityLabel='Summary and chapters'
+                    >
+                        <Icon name='list' size={18} color={withAlpha(headerFg, 0.75)} />
+                    </TouchableOpacity>
+                )}
                 {!isRadio && hasTranscript && segments.length > 0 && (
                     <TouchableOpacity
                         onPress={shareTranscript}
@@ -614,6 +643,16 @@ const PlayerScreen = ({ route, navigation }) => {
                     live={liveControls}
                 />
             </View>
+
+            {!isRadio && (
+                <ChapterSheet
+                    visible={chapterSheet}
+                    onClose={() => setChapterSheet(false)}
+                    episode={ep}
+                    onSeek={seekFromChapter}
+                    onOpenSettings={openSettingsFromSheet}
+                />
+            )}
 
         </View>
     );

@@ -139,6 +139,49 @@ const tokenize = (rows) => {
     return toks;
 };
 
+// ─── Phrases from outside (the episode assistant, services/aiService.js) ─────
+
+/** A phrase written the way applyNameCorrections matches it: each word
+ *  without its leading / trailing punctuation and (unless `keepPossessive`)
+ *  its possessive, single spaces. "Rushy's book," → "Rushy book". The
+ *  replacement text keeps its possessives ("Midnight's Children"): the
+ *  heard token's own possessive is put back by applyNameCorrections, so a
+ *  caller strips the replacement's last one only when the heard phrase
+ *  ended in one too. Empty when nothing is left. */
+export const normalizePhrase = (phrase, { keepPossessive = false } = {}) => {
+    const out = [];
+    for (const text of String(phrase || '').trim().split(/\s+/)) {
+        if (!text) continue;
+        const lead = (text.match(LEAD) || [''])[0];
+        let body = text.slice(lead.length);
+        const trail = (body.match(TRAIL) || [''])[0];
+        body = trail ? body.slice(0, -trail.length) : body;
+        if (!keepPossessive && POSSESSIVE.test(body)) body = body.slice(0, -2);
+        if (body) out.push(body);
+    }
+    return out.join(' ');
+};
+
+/** How often a (normalised) phrase occurs in the rows, matched the way
+ *  applyNameCorrections will match it, and when it is first said. */
+export const countPhrase = (rows, phrase) => {
+    const parts = normalizePhrase(phrase).toLowerCase().split(' ').filter(Boolean);
+    if (!parts.length || !rows?.length) return { count: 0, firstMs: null };
+    const toks = tokenize(rows);
+    let count = 0, firstMs = null;
+    for (let i = 0; i + parts.length <= toks.length; i++) {
+        let ok = true;
+        for (let j = 0; j < parts.length; j++) {
+            if (toks[i + j].core.toLowerCase() !== parts[j]) { ok = false; break; }
+        }
+        if (!ok) continue;
+        count += 1;
+        if (firstMs == null) firstMs = rows[toks[i].row]?.start_time ?? rows[toks[i].row]?.start ?? null;
+        i += parts.length - 1;
+    }
+    return { count, firstMs };
+};
+
 // ─── Scoring ─────────────────────────────────────────────────────────────────
 
 const ACCEPT = 0.78;      // weighted score for a full-name match
