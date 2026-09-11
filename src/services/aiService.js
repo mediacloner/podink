@@ -29,6 +29,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { requestJson } from '../api/openai';
 import { getEpisodeById, isRadioFeedUrl, replaceEpisodeAnalysis } from '../database/queries';
 import { getNameCorrectedTranscript, indexEpisodeNames } from './nameIndex';
+import { indexEpisodeBooks } from './bookIndex';
 import { countPhrase, normalizePhrase } from './nameText';
 import { showNotesPlainText } from './showNotes';
 import { formatClock, sentencesWithTimes } from './sentenceBoundary';
@@ -412,6 +413,16 @@ export const analyzeEpisode = (episodeId, { force = false } = {}) => {
             fixList: fixes.map(f => `${f.heard} → ${f.correct} (${f.kind}, ${f.confidence}${f.applied ? '' : ', not applied'}) ×${f.count}`).slice(0, 60),
         });
         try { notifyLibraryChange({ type: 'analysis-indexed', episodeId, chapters: chapters.length, fixes: fixes.length }); } catch (_) {}
+
+        // The books and people an episode names are read out of the corrected
+        // transcript (bookIndex reads getCorrectedTranscript), and a misheard
+        // author is exactly what a catalogue lookup cannot survive — so the
+        // scan is run again now that the corrections are in. Also when the
+        // episode was never scanned at all: the after-every-transcription
+        // path leaves it to this, so the scan happens once, on the best text.
+        if (fixes.length > 0 || !ep.books_indexed_at) {
+            indexEpisodeBooks(episodeId, { force: true, front: true }).catch(() => {});
+        }
         return { summary, chapters, fixes, cost, model, usage };
     })().catch((e) => {
         log('SYSTEM', 'Episode assistant failed', { id: episodeId, kind: e?.kind, error: e?.message || String(e) });

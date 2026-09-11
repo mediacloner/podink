@@ -64,6 +64,10 @@ const TranslationModal = ({
     // is that second request in flight, `aiError` its failure — the free
     // translation stays on screen through both.
     const [engine, setEngine] = useState('g');
+    // The free engine is handed the paragraph with the two before it in one
+    // request; only its solo retry (when the pairing does not line up) loses
+    // them, and the card says so rather than claiming context it did not use.
+    const [gWithContext, setGWithContext] = useState(true);
     const [aiBusy, setAiBusy] = useState(false);
     const [aiError, setAiError] = useState('');
     const [hasKey, setHasKey] = useState(false);
@@ -99,6 +103,7 @@ const TranslationModal = ({
         if (!visible || !contextText) return;
         setExpanded(false);
         setEngine('g');
+        setGWithContext(true);
         setAiError('');
 
         // Two engines give two different answers for the same paragraph, so
@@ -159,6 +164,7 @@ const TranslationModal = ({
                 return fetchTranslation(text, lang, ctrl.signal).then(solo => {
                     if (stale) return;
                     const one = (solo || '').trim();
+                    setGWithContext(false);
                     finish(one ? [one] : []);
                 });
             })
@@ -402,6 +408,19 @@ const TranslationModal = ({
             ) : (
                 <>
                     <Text style={ms.translatedText}>{lastTranslation}</Text>
+                    {/* Which engine wrote this, and whether it cost anything */}
+                    <View style={ms.engineRow}>
+                        <Icon
+                            name={engine === 'ai' ? 'zap' : 'globe'}
+                            size={12}
+                            color={engine === 'ai' ? colors.success : colors.textMuted}
+                        />
+                        <Text style={[ms.engineText, engine === 'ai' && ms.engineTextAi]}>
+                            {engine === 'ai'
+                                ? 'OpenAI · paid · read with the lines before'
+                                : `Google Translate · free${gWithContext ? ' · with the lines before' : ''}`}
+                        </Text>
+                    </View>
                     {!!aiError && <Text style={ms.aiError}>{aiError}</Text>}
                     <View style={ms.linkRow}>
                         {hasContext && (
@@ -409,12 +428,7 @@ const TranslationModal = ({
                                 <Text style={ms.linkText}>{expanded ? 'Hide context' : 'Show context'}</Text>
                             </TouchableOpacity>
                         )}
-                        {engine === 'ai' ? (
-                            <View style={ms.withCtx}>
-                                <Icon name='check' size={12} color={colors.success} />
-                                <Text style={ms.withCtxText}>Read with the lines before</Text>
-                            </View>
-                        ) : hasKey && (
+                        {engine !== 'ai' && hasKey && (
                             <TouchableOpacity onPress={retryWithContext} style={ms.linkBtn} disabled={aiBusy}>
                                 {aiBusy ? (
                                     <View style={ms.withCtx}>
@@ -422,7 +436,7 @@ const TranslationModal = ({
                                         <Text style={ms.linkText}>Reading it again…</Text>
                                     </View>
                                 ) : (
-                                    <Text style={ms.linkText}>Translate with the lines before</Text>
+                                    <Text style={ms.linkText}>Read again with OpenAI · ~$0.0001</Text>
                                 )}
                             </TouchableOpacity>
                         )}
@@ -475,7 +489,9 @@ const makeStyles = (colors) => StyleSheet.create({
     linkBtn: { alignSelf: 'flex-start' },
     linkText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
     withCtx: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-    withCtxText: { color: colors.success, fontSize: 13, fontWeight: '600' },
+    engineRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: -10, marginBottom: 14 },
+    engineText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
+    engineTextAi: { color: colors.success },
     aiError: { color: colors.danger, fontSize: 13, lineHeight: 19, marginBottom: 10 },
     errorBlock: { gap: 14, marginBottom: 20 },
     errorText: { color: colors.danger, fontSize: 15 },

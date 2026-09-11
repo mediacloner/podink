@@ -655,10 +655,14 @@ const _process = async (entry) => {
         _startFg('Transcribing podcasts', 'Complete!', 0);
         // Books the episode talks about: scanned from the finished text
         // (force — a continued transcript has more text than its last scan).
-        indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
-        // The episode assistant, when the listener switched it on: summary,
-        // chapters and corrections from the finished text (aiService).
-        analyzeIfAuto(entry.id).catch(() => {});
+        // The episode assistant first, when the listener switched it on
+        // (aiService): its corrections change the names the book-and-people
+        // scan has to match, so that scan waits and aiService starts it once
+        // the corrections are written. analyzeIfAuto resolves null when the
+        // switch is off, there is no key, or the request failed — then the
+        // scan runs here instead, on the transcript as recognised.
+        const scanBooks = () => indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
+        analyzeIfAuto(entry.id).then(done => { if (!done) scanBooks(); }, scanBooks);
 
         log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length });
         entry.resolve(segments);
