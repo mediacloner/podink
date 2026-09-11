@@ -64,10 +64,6 @@ const TranslationModal = ({
     // is that second request in flight, `aiError` its failure — the free
     // translation stays on screen through both.
     const [engine, setEngine] = useState('g');
-    // The free engine is handed the paragraph with the two before it in one
-    // request; only its solo retry (when the pairing does not line up) loses
-    // them, and the card says so rather than claiming context it did not use.
-    const [gWithContext, setGWithContext] = useState(true);
     const [aiBusy, setAiBusy] = useState(false);
     const [aiError, setAiError] = useState('');
     const [hasKey, setHasKey] = useState(false);
@@ -103,7 +99,6 @@ const TranslationModal = ({
         if (!visible || !contextText) return;
         setExpanded(false);
         setEngine('g');
-        setGWithContext(true);
         setAiError('');
 
         // Two engines give two different answers for the same paragraph, so
@@ -164,7 +159,6 @@ const TranslationModal = ({
                 return fetchTranslation(text, lang, ctrl.signal).then(solo => {
                     if (stale) return;
                     const one = (solo || '').trim();
-                    setGWithContext(false);
                     finish(one ? [one] : []);
                 });
             })
@@ -416,9 +410,7 @@ const TranslationModal = ({
                             color={engine === 'ai' ? colors.success : colors.textMuted}
                         />
                         <Text style={[ms.engineText, engine === 'ai' && ms.engineTextAi]}>
-                            {engine === 'ai'
-                                ? 'OpenAI · paid · read with the lines before'
-                                : `Google Translate · free${gWithContext ? ' · with the lines before' : ''}`}
+                            {engine === 'ai' ? 'OpenAI · paid' : 'Google Translate · free'}
                         </Text>
                     </View>
                     {!!aiError && <Text style={ms.aiError}>{aiError}</Text>}
@@ -436,7 +428,7 @@ const TranslationModal = ({
                                         <Text style={ms.linkText}>Reading it again…</Text>
                                     </View>
                                 ) : (
-                                    <Text style={ms.linkText}>Read again with OpenAI</Text>
+                                    <Text style={ms.linkText}>Translate OpenAI</Text>
                                 )}
                             </TouchableOpacity>
                         )}
