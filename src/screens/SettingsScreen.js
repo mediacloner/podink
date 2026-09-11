@@ -714,7 +714,7 @@ const SettingsScreen = () => {
             <View style={styles.infoBanner}>
                 <Icon name="info" size={13} color={colors.warning} style={{ marginTop: 1 }} />
                 <Text style={styles.infoText}>
-                    A summary, chapters and transcript corrections written by a model at OpenAI. An episode's transcript is sent there, with your own key, only when you ask — from the chapters glyph in the Player, or with the switch below. Nothing else leaves the phone.
+                    A summary, chapters and transcript corrections written by a model at OpenAI, and — when a translation reads wrong — a second reading of that sentence with the lines before it, from the translation card. Text is sent there, with your own key, only when you ask. Nothing else leaves the phone.
                 </Text>
             </View>
 

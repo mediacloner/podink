@@ -32,6 +32,7 @@ import { getNameCorrectedTranscript, indexEpisodeNames } from './nameIndex';
 import { countPhrase, normalizePhrase } from './nameText';
 import { showNotesPlainText } from './showNotes';
 import { formatClock, sentencesWithTimes } from './sentenceBoundary';
+import { langEnglishName } from '../components/transcript/translate';
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
@@ -66,6 +67,10 @@ export const isFixTranscriptOn = async () => {
     try { return (await AsyncStorage.getItem(AI_FIX_KEY)) !== '0'; } catch (_) { return true; }
 };
 export const modelInfo = (id) => AI_MODELS.find(m => m.id === id) || AI_MODELS[0];
+
+// Failures carry a `kind` so the caller can tell a missing key from a
+// network problem and say something useful (api/openai.js uses the same set).
+const tagged = (kind, message) => Object.assign(new Error(message), { kind });
 
 // ─── Cost ────────────────────────────────────────────────────────────────────
 
@@ -151,6 +156,65 @@ const FIXES_SCHEMA = {
             },
         },
     },
+};
+
+// ─── Translation with the lines before it ────────────────────────────────────
+// The card already hands Google the two sentences before the pressed one, but
+// a sentence-level engine mostly translates them side by side: a pronoun, an
+// ellipsis or a joke that only the previous line explains comes out wrong.
+// This asks the model instead, with those lines named as context.
+
+const translateInstructions = (target) => `You translate an English podcast transcript into ${target} for someone who is learning English by reading along with the audio.
+
+You are given the lines spoken just before, for context only, and then the numbered paragraphs to translate. Return one translation per numbered paragraph, in the same order, the same number of them — never merge, split, reorder or drop one, and never translate the context lines.
+
+Translate what was said, in natural ${target}: the meaning a listener takes, not a word-for-word mapping. Use the context to settle what a pronoun, an ellipsis, a short reply or a joke refers to. Speech is not prose — keep false starts, repetitions and interruptions rather than tidying them into a clean sentence. Leave people's names, programme, book and film titles as they are unless that language has its own established name for them. Return only the translations, with no notes or explanations.`;
+
+const TRANSLATE_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['translations'],
+    properties: { translations: { type: 'array', items: { type: 'string' } } },
+};
+
+const CONTEXT_MAX_CHARS = 1200;
+
+/**
+ * Translates `paragraphs` (the pressed sentence, and the ones shown above it)
+ * into `lang`, with `before` as context the model may read but not translate.
+ * Resolves to an array of the same length, or rejects — the caller falls back
+ * to the free engine. Never sends anything when the assistant has no key.
+ */
+export const translateParagraphs = async ({ paragraphs, lang, before = '', signal }) => {
+    const parts = (paragraphs || []).map(p => String(p || '').trim()).filter(Boolean);
+    if (!parts.length) return [];
+    const apiKey = await getOpenAIKey();
+    if (!apiKey) throw tagged('nokey', 'No OpenAI API key.');
+    const model = await getAIModel();
+    const ctx = String(before || '').trim().slice(-CONTEXT_MAX_CHARS);
+    const numbered = parts.map((p, i) => `${i + 1}. ${p}`).join('\n');
+    const input = [
+        ctx ? `Spoken just before, for context only — do not translate:\n"${ctx}"` : null,
+        `Translate these ${parts.length} paragraph${parts.length === 1 ? '' : 's'}:\n${numbered}`,
+    ].filter(Boolean).join('\n\n');
+    const t0 = Date.now();
+    const { json, usage } = await requestJson({
+        apiKey, model, instructions: translateInstructions(langEnglishName(lang)),
+        schemaName: 'translations', schema: TRANSLATE_SCHEMA, input,
+        maxOutputTokens: 1600, signal,
+    });
+    const out = Array.isArray(json?.translations) ? json.translations.map(t => String(t || '').trim()) : [];
+    log('SERVICE', 'Context translation', {
+        lang, model, paragraphs: parts.length, returned: out.length,
+        contextChars: ctx.length, tokensIn: usage.input, tokensOut: usage.output,
+        cost: `$${dollars(model, usage).toFixed(5)}`, ms: Date.now() - t0,
+    });
+    // A count that does not line up would pair every paragraph with the wrong
+    // translation; the caller's fallback is better than a shifted card.
+    if (out.length !== parts.length || out.some(t => !t)) {
+        throw tagged('malformed', 'The translation did not line up with the text.');
+    }
+    return out;
 };
 
 // ─── Transcript → request text ───────────────────────────────────────────────
@@ -261,7 +325,6 @@ const acceptFixes = (raw, rows) => {
 
 const _running = new Map();   // episodeId → Promise
 
-const tagged = (kind, message) => Object.assign(new Error(message), { kind });
 
 /**
  * Summary, chapters and (when the switch is on) fixes for one episode,

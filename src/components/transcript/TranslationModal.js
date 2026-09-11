@@ -4,14 +4,15 @@ import { Feather as Icon } from '@expo/vector-icons';
 import { radii, withAlpha, useTheme, useStyles } from '../../theme';
 import { fetchTranslation, langLabel, translateErrorMessage } from './translate';
 import { askAssistantAboutText, copyText, shareText } from './share';
+import { getOpenAIKey, translateParagraphs } from '../../services/aiService';
 import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
 import { showAlert } from '../AppAlert';
 import {
     getNotebookEntry, removeNotebookEntry, saveNotebookEntry, updateNotebookNote, updateNotebookTranslation,
 } from '../../services/notebookService';
 
-// In-memory cache, keyed by language + chunk context so repeat long-presses
-// on the same paragraph never re-hit the network within a session.
+// In-memory cache, keyed by engine + language + chunk context so repeat
+// long-presses on the same paragraph never re-hit the network within a session.
 const _cache = new Map();
 
 // A note is written to the row this long after the last keystroke; the
@@ -58,6 +59,14 @@ const TranslationModal = ({
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [expanded, setExpanded] = useState(false);
+    // Which engine produced what is on screen: 'g' the free one (always
+    // first), 'ai' the model re-reading it with the lines before. `aiBusy`
+    // is that second request in flight, `aiError` its failure — the free
+    // translation stays on screen through both.
+    const [engine, setEngine] = useState('g');
+    const [aiBusy, setAiBusy] = useState(false);
+    const [aiError, setAiError] = useState('');
+    const [hasKey, setHasKey] = useState(false);
     const [copied, setCopied] = useState(false);
 
     // Paragraphs fed into the request: up to two preceding chunks plus the
@@ -67,11 +76,44 @@ const TranslationModal = ({
         [contextText],
     );
 
+    // Only offer the model when there is a key to pay with.
+    // What goes to the model as context. `precedingText` runs three chunks
+    // back, and the card already shows (and sends for translation) the two
+    // just before the pressed one — so the tail they occupy is trimmed off
+    // rather than handing the model the same sentences twice.
+    const contextBefore = useMemo(() => {
+        const before = (precedingText || '').trim();
+        const shown = englishParagraphs.slice(0, -1).join(' ').trim();
+        if (before && shown && before.endsWith(shown)) return before.slice(0, -shown.length).trim();
+        return before;
+    }, [precedingText, englishParagraphs]);
+
+    useEffect(() => {
+        if (!visible) return;
+        let alive = true;
+        getOpenAIKey().then(k => { if (alive) setHasKey(!!k); }).catch(() => {});
+        return () => { alive = false; };
+    }, [visible]);
+
     useEffect(() => {
         if (!visible || !contextText) return;
         setExpanded(false);
+        setEngine('g');
+        setAiError('');
 
-        const key = `${lang}:${contextText}`;
+        // Two engines give two different answers for the same paragraph, so
+        // the engine is part of the key. A paragraph already re-read with
+        // context keeps that answer when the card opens on it again.
+        const aiKey = `ai:${lang}:${contextText}`;
+        const better = _cache.get(aiKey);
+        if (better) {
+            setTranslationParts(better);
+            setEngine('ai');
+            setLoading(false);
+            setError('');
+            return;
+        }
+        const key = `g:${lang}:${contextText}`;
         const cached = _cache.get(key);
         if (cached) {
             setTranslationParts(cached);
@@ -101,6 +143,9 @@ const TranslationModal = ({
             setLoading(false);
         };
 
+        // The free engine always answers first: it is instant and costs
+        // nothing, and most paragraphs need nothing more. The button under
+        // the translation is what pays for a second, context-aware reading.
         fetchTranslation(contextText, lang, ctrl.signal)
             .then(full => {
                 if (stale) return;
@@ -128,6 +173,31 @@ const TranslationModal = ({
             ctrl.abort();
         };
     }, [visible, contextText, englishParagraphs, text, lang]);
+
+    // "Read it again with the lines before" — the one place the card spends
+    // anything. The free translation stays on screen while the model works
+    // and stays if it fails, so this can only improve what is there.
+    const retryWithContext = useCallback(async () => {
+        if (aiBusy || !contextText) return;
+        setAiBusy(true);
+        setAiError('');
+        try {
+            const out = await translateParagraphs({
+                paragraphs: englishParagraphs, lang, before: contextBefore,
+            });
+            if (!out.length) throw new Error('empty');
+            _cache.set(`ai:${lang}:${contextText}`, out);
+            setTranslationParts(out);
+            setEngine('ai');
+        } catch (e) {
+            setAiError(e?.kind === 'nokey'
+                ? 'Add your OpenAI API key in Settings → Episode assistant first.'
+                : e?.kind === 'quota' || e?.kind === 'auth' ? e.message
+                : 'The model could not be reached. The translation below is unchanged.');
+        } finally {
+            setAiBusy(false);
+        }
+    }, [aiBusy, contextText, englishParagraphs, lang, contextBefore]);
 
     // "Copied" flashes on the copy button, then reverts.
     useEffect(() => {
@@ -332,10 +402,28 @@ const TranslationModal = ({
             ) : (
                 <>
                     <Text style={ms.translatedText}>{lastTranslation}</Text>
+                    {!!aiError && <Text style={ms.aiError}>{aiError}</Text>}
                     <View style={ms.linkRow}>
                         {hasContext && (
                             <TouchableOpacity onPress={() => setExpanded(e => !e)} style={ms.linkBtn}>
                                 <Text style={ms.linkText}>{expanded ? 'Hide context' : 'Show context'}</Text>
+                            </TouchableOpacity>
+                        )}
+                        {engine === 'ai' ? (
+                            <View style={ms.withCtx}>
+                                <Icon name='check' size={12} color={colors.success} />
+                                <Text style={ms.withCtxText}>Read with the lines before</Text>
+                            </View>
+                        ) : hasKey && (
+                            <TouchableOpacity onPress={retryWithContext} style={ms.linkBtn} disabled={aiBusy}>
+                                {aiBusy ? (
+                                    <View style={ms.withCtx}>
+                                        <ActivityIndicator size='small' color={colors.accent} />
+                                        <Text style={ms.linkText}>Reading it again…</Text>
+                                    </View>
+                                ) : (
+                                    <Text style={ms.linkText}>Translate with the lines before</Text>
+                                )}
                             </TouchableOpacity>
                         )}
                         <AskAssistantButton onPress={onAsk} compact />
@@ -386,6 +474,9 @@ const makeStyles = (colors) => StyleSheet.create({
     linkRow: { flexDirection: 'row', alignItems: 'center', gap: 18, marginBottom: 20 },
     linkBtn: { alignSelf: 'flex-start' },
     linkText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
+    withCtx: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+    withCtxText: { color: colors.success, fontSize: 13, fontWeight: '600' },
+    aiError: { color: colors.danger, fontSize: 13, lineHeight: 19, marginBottom: 10 },
     errorBlock: { gap: 14, marginBottom: 20 },
     errorText: { color: colors.danger, fontSize: 15 },
     askHint: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
