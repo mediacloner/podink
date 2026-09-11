@@ -199,6 +199,37 @@ const TranslationModal = ({
         }
     }, [aiBusy, contextText, englishParagraphs, lang, contextBefore]);
 
+    // Back to the free translation. Both readings are kept, so switching
+    // between them costs nothing and asks no one — except the one case where
+    // the card opened straight onto a paragraph read earlier with the model
+    // and the free one was never fetched in this session.
+    const backToGoogle = useCallback(async () => {
+        if (aiBusy || !contextText) return;
+        setAiError('');
+        const cached = _cache.get(`g:${lang}:${contextText}`);
+        if (cached) {
+            setTranslationParts(cached);
+            setEngine('g');
+            return;
+        }
+        setAiBusy(true);
+        try {
+            const full = await fetchTranslation(contextText, lang);
+            const parts = (full || '').split(/\n+/).map(p => p.trim()).filter(Boolean);
+            const out = parts.length === englishParagraphs.length
+                ? parts
+                : [((await fetchTranslation(text, lang)) || '').trim()].filter(Boolean);
+            if (!out.length) throw new Error('empty');
+            _cache.set(`g:${lang}:${contextText}`, out);
+            setTranslationParts(out);
+            setEngine('g');
+        } catch (e) {
+            setAiError(translateErrorMessage(e));
+        } finally {
+            setAiBusy(false);
+        }
+    }, [aiBusy, contextText, englishParagraphs, lang, text]);
+
     // "Copied" flashes on the copy button, then reverts.
     useEffect(() => {
         if (!copied) return;
@@ -420,16 +451,20 @@ const TranslationModal = ({
                                 <Text style={ms.linkText}>{expanded ? 'Hide context' : 'Show context'}</Text>
                             </TouchableOpacity>
                         )}
-                        {engine !== 'ai' && hasKey && (
-                            <TouchableOpacity onPress={retryWithContext} style={ms.linkBtn} disabled={aiBusy}>
-                                {aiBusy ? (
-                                    <View style={ms.withCtx}>
-                                        <ActivityIndicator size='small' color={colors.accent} />
-                                        <Text style={ms.linkText}>Reading it again…</Text>
-                                    </View>
-                                ) : (
-                                    <Text style={ms.linkText}>Translate OpenAI</Text>
-                                )}
+                        {/* The two readings, either way round — whichever is
+                            not on screen is the one offered. */}
+                        {aiBusy ? (
+                            <View style={ms.withCtx}>
+                                <ActivityIndicator size='small' color={colors.accent} />
+                                <Text style={ms.linkText}>Translating…</Text>
+                            </View>
+                        ) : engine === 'ai' ? (
+                            <TouchableOpacity onPress={backToGoogle} style={ms.linkBtn}>
+                                <Text style={ms.linkText}>Translate Google</Text>
+                            </TouchableOpacity>
+                        ) : hasKey && (
+                            <TouchableOpacity onPress={retryWithContext} style={ms.linkBtn}>
+                                <Text style={ms.linkText}>Translate OpenAI</Text>
                             </TouchableOpacity>
                         )}
                         <AskAssistantButton onPress={onAsk} compact />
