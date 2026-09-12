@@ -181,6 +181,7 @@ let _ctxModel    = null;  // model key currently loaded
 let _ctxPromise  = null;  // dedup concurrent init calls
 
 const _initCtx = async (allowDownload = true) => {
+    _cancelIdleRelease();
     let modelKey = DEFAULT_MODEL_KEY;
     try {
         const saved = await AsyncStorage.getItem('@whisper_model');
@@ -253,10 +254,52 @@ const _abandonCtx = () => {
     ASR.release().catch(() => {});
 };
 
-// Pre-warm on app focus — never auto-downloads the model (that would pull
-// ~99 MB silently at launch, e.g. for v1 upgraders whose stored Moonshine key
-// is retired). Cold-start cost is only paid when the model is already present.
-export const initializeWhisper = () => _getCtx(false).catch(() => {});
+// ─── Letting the engine go ───────────────────────────────────────────────────
+//
+// A loaded engine is by far the app's largest allocation: Parakeet 0.6B is
+// ~630 MB of weights and over a gigabyte of ONNX Runtime arenas once the
+// sessions are built. Nothing touches it between jobs, so the system pages it
+// out to zram and then has to page it back in behind whatever the app does
+// next — an idle engine makes the whole app, and the phone, slower.
+//
+// So it is freed as soon as nothing needs it: a minute after the queue drains
+// (a job enqueued right after another does not pay for a reload), and at once
+// when the app goes to the background with nothing transcribing. Loading it
+// again costs a few seconds, paid once, ahead of work that runs for minutes.
+// For the same reason there is no pre-warm at launch: it would spend those
+// seconds and that gigabyte on a session that may never transcribe anything.
+const IDLE_RELEASE_MS = 60000;
+let _idleTimer = null;
+
+const _cancelIdleRelease = () => {
+    if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+};
+/** Nothing is using the engine: no job running, no queue, no live radio, and
+ *  no load in flight — live radio asks for the engine just before it claims
+ *  the service, and must not have it taken away in between. */
+const _engineIdle = () => !_running && !_keeper && !_ctxPromise && _queue.length === 0;
+const _releaseIfIdle = () => {
+    _cancelIdleRelease();
+    if (!_ctxModel || !_engineIdle()) return;
+    log('SYSTEM', 'Releasing idle STT engine', { modelKey: _ctxModel });
+    _abandonCtx();
+};
+const _scheduleIdleRelease = () => {
+    _cancelIdleRelease();
+    if (!_ctxModel || !_engineIdle()) return;
+    // A job that finishes while the app is in the background gets no grace:
+    // JS timers freeze there once the foreground service goes, so a timer set
+    // now might not fire until the app is opened again — with the engine held
+    // all the while. Nothing is waiting on it anyway.
+    if (AppState.currentState !== 'active') { _releaseIfIdle(); return; }
+    _idleTimer = setTimeout(() => {
+        _idleTimer = null;
+        if (_ctxModel && _engineIdle()) {
+            log('SYSTEM', 'Releasing idle STT engine', { modelKey: _ctxModel });
+            _abandonCtx();
+        }
+    }, IDLE_RELEASE_MS);
+};
 
 // ─── Engine access for other transcribers (live radio) ──────────────────────
 
@@ -282,7 +325,10 @@ export const getNativeRecognizer = () =>
  *  runner leaves the service up until stopTranscriptionService(). */
 let _keeper = false;
 export const keepTranscriptionServiceAlive = (title, message) => { _keeper = true; _startFg(title, message, 0); };
-export const stopTranscriptionService = () => { _keeper = false; if (!_running && _queue.length === 0) _stopFg(); };
+export const stopTranscriptionService = () => {
+    _keeper = false;
+    if (!_running && _queue.length === 0) { _stopFg(); _scheduleIdleRelease(); }
+};
 
 // ─── Text-to-segment conversion ─────────────────────────────────────────────
 
@@ -737,6 +783,7 @@ const _runNext = async () => {
             // foreground service is its recorder's — a finished or cancelled
             // job must not take the service down.
             if (!_held && !_keeper) _stopFg();
+            _scheduleIdleRelease();
             log('SERVICE', 'Queue empty');
         } else {
             setTimeout(_runNext, 0);
@@ -774,6 +821,11 @@ AppState.addEventListener('change', (state) => {
             }
         }
         setTimeout(_runNext, 300);
+    } else {
+        // Leaving the app with nothing to transcribe: hand the engine's
+        // memory back now rather than carrying it while the app sits in the
+        // background (where it is also what gets the process killed first).
+        _releaseIfIdle();
     }
 });
 
@@ -790,6 +842,7 @@ export const enqueueTranscription = async (id, audioFilePath, onProgress, onStar
         throw new Error('Already queued');
     }
     log('QUEUE', 'Enqueue', { id, activeId: _activeId, queue: _queue.map(e => e.id), running: _running });
+    _cancelIdleRelease();
 
     if (FgService && !_running && _queue.length === 0) {
         FgService.requestBatteryExemption();

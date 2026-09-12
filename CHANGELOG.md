@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Opening an episode is no longer slow, and gets slower the longer the episode is.** Every read of a transcript rewrote it with the episode's name corrections, and the last step of that rewrite — putting the corrected words back into their rows — searched the whole transcript once for each row. On an hour of word-level rows that is tens of thousands of searches through tens of thousands of words, seconds of the one thread the app draws with, and it ran on every open, on every refresh while a live transcript grew, and twice per read for an episode the assistant had corrected (names first, then its fixes). The words come out in row order, so the rewrite now walks them once: measured on generated transcripts, 20,000 rows went from 2.6 s to 13 ms and 40,000 rows from 6.1 s to 15 ms, with the output identical on 577 comparisons against the old code (`services/nameText.js` `applyNameCorrections`).
+- **The episode assistant no longer stalls when it finishes.** Each correction the model proposes is checked against the transcript before it is kept — and each check tokenised the whole transcript again, forty times over for a normal run. The transcript is now tokenised once per read and reused, which also covers the book scan, where the same walk ran once per book it had resolved (`services/nameText.js`, `services/bookText.js`).
+
+### Changed
+- **The speech engine is let go when nothing is transcribing.** Loaded, it is by far the app's largest allocation — Parakeet 0.6B is ~630 MB of weights and over a gigabyte once ONNX Runtime has built its sessions — and it used to stay for the life of the process: on a Pixel 7 that meant 1.3 GB the system had paged out to compressed memory and had to page back in behind everything else the app did, which is what made the whole app feel heavy after a transcription. It is now released a minute after the queue drains (so a job queued straight after another does not pay for it) and at once when the app goes to the background with nothing transcribing; a live-radio session holds it as long as it records. Loading it again takes a few seconds, paid once, ahead of work that runs for minutes. For the same reason the model is no longer loaded at launch: that spent those seconds and that gigabyte on a session that may never transcribe anything (`services/whisperService.js` `IDLE_RELEASE_MS`).
+
 ## [4.6.0] - 2026-09-11
 
 ### Added

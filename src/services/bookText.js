@@ -328,7 +328,15 @@ const matchAt = (toks, caps, i, variant, joined, requireCap = false) => {
     return -1;
 };
 
+// One tokenisation per rows array: a scan calls findFirstMention once per
+// book it resolved, and bibliographyCandidates once per author, each over the
+// whole transcript. Keyed on the array, so it goes when the rows do; the
+// readers below never mutate what they get.
+const _tokenCache = new WeakMap();
+
 const tokenize = (rows) => {
+    const hit = rows && _tokenCache.get(rows);
+    if (hit) return hit;
     const toks = [], caps = [], ms = [], orig = [];
     for (const r of rows || []) {
         const t = r.start_time ?? r.start ?? 0;
@@ -337,7 +345,9 @@ const tokenize = (rows) => {
             toks.push(normTok(w)); caps.push(/^[^\p{L}\p{N}]*\p{Lu}/u.test(w) ? 1 : 0); ms.push(t); orig.push(w);
         }
     }
-    return { toks, caps, ms, orig };
+    const out = { toks, caps, ms, orig };
+    if (rows) _tokenCache.set(rows, out);
+    return out;
 };
 
 /**

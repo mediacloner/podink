@@ -118,8 +118,17 @@ const LEAD = /^[^\p{L}\p{N}]+/u;
 const TRAIL = /[^\p{L}\p{N}]+$/u;
 const POSSESSIVE = /['’]s$/i;
 
-/** Rows → flat tokens: { row, text, lead, core, trail, poss, cap, sentenceStart }. */
+// One tokenisation per rows array. The episode assistant checks forty
+// proposed fixes against the same transcript (countPhrase per fix), and an
+// hour of word-level rows is tens of thousands of tokens — without this the
+// text is walked once per fix. Keyed on the array, so the tokens go when the
+// rows do; nothing below mutates them.
+const _tokenCache = new WeakMap();
+
+/** Rows → flat tokens: { row, text, lead, core, lower, trail, poss, cap, sentenceStart }. */
 const tokenize = (rows) => {
+    const hit = _tokenCache.get(rows);
+    if (hit) return hit;
     const toks = [];
     rows.forEach((row, ri) => {
         for (const text of String(row.text || '').trim().split(/\s+/)) {
@@ -130,12 +139,15 @@ const tokenize = (rows) => {
             body = trail ? body.slice(0, -trail.length) : body;
             let poss = '';
             if (POSSESSIVE.test(body)) { poss = body.slice(-2); body = body.slice(0, -2); }
-            toks.push({ row: ri, text, lead, core: body, trail, poss, cap: /^\p{Lu}/u.test(body) });
+            // `lower` is precomputed: the matching loops compare it against
+            // every candidate at every position.
+            toks.push({ row: ri, text, lead, core: body, lower: body.toLowerCase(), trail, poss, cap: /^\p{Lu}/u.test(body) });
         }
     });
     for (let i = 0; i < toks.length; i++) {
         toks[i].sentenceStart = i === 0 || isSentenceEnd(toks[i - 1].text, toks[i].text);
     }
+    _tokenCache.set(rows, toks);
     return toks;
 };
 
@@ -172,7 +184,7 @@ export const countPhrase = (rows, phrase) => {
     for (let i = 0; i + parts.length <= toks.length; i++) {
         let ok = true;
         for (let j = 0; j < parts.length; j++) {
-            if (toks[i + j].core.toLowerCase() !== parts[j]) { ok = false; break; }
+            if (toks[i + j].lower !== parts[j]) { ok = false; break; }
         }
         if (!ok) continue;
         count += 1;
@@ -320,7 +332,7 @@ export const applyNameCorrections = (rows, corrections) => {
             if (i + n > toks.length) continue;
             for (const c of byLen.get(n)) {
                 let ok = true;
-                for (let j = 0; j < n; j++) if (toks[i + j].core.toLowerCase() !== c.parts[j]) { ok = false; break; }
+                for (let j = 0; j < n; j++) if (toks[i + j].lower !== c.parts[j]) { ok = false; break; }
                 if (ok) { hit = { n, canon: c.canon }; break; }
             }
             if (hit) break;
@@ -342,11 +354,18 @@ export const applyNameCorrections = (rows, corrections) => {
     }
     if (!changed) return rows;
 
+    // Tokens come out of tokenize() in row order, so each row's run is
+    // contiguous: walk it with a moving index. Scanning `out` once per row
+    // instead cost seconds on the JS thread for an hour of word-level rows,
+    // every time the Player read the transcript.
     const result = [];
+    let ti = 0;
     rows.forEach((row, ri) => {
-        const mine = out.filter(t => t.row === ri);
-        if (!mine.length) { result.push(row); return; }
-        const kept = mine.filter(t => !t.drop).map(t => t.text);
+        const from = ti;
+        while (ti < out.length && out[ti].row === ri) ti++;
+        if (ti === from) { result.push(row); return; }
+        const kept = [];
+        for (let k = from; k < ti; k++) if (!out[k].drop) kept.push(out[k].text);
         if (!kept.length) {
             // A row whose words merged into the previous one: its span goes there.
             const k = result.length - 1;

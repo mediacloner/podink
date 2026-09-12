@@ -10,7 +10,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 import { initDB } from './database/db';
 import AppAlert, { showAlert } from './components/AppAlert';
 import { setupPlayer, ensurePlayerAlive, onUserPlay, onUserStop } from './services/trackPlayer';
-import { restoreQueue, initializeWhisper } from './services/whisperService';
+import { restoreQueue } from './services/whisperService';
 import { cleanupOldWhisperModels } from './services/downloadService';
 import { restoreLogs } from './services/logService';
 import { sweepOrphanFiles, sweepStaleFinishedDownloads } from './services/episodeService';
@@ -245,8 +245,6 @@ const AppRoot = () => {
                 // Finished downloads that went a week without a replay go
                 // (audio + transcript); the rows stay. Also on each resume.
                 sweepStaleFinishedDownloads();
-                // Pre-warm STT model so the first transcription doesn't pay cold-start.
-                initializeWhisper();
             })
             .catch((e) => console.error('DB init failed', e))
             .finally(() => setDbReady(true));
