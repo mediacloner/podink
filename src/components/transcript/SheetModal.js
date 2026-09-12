@@ -51,25 +51,39 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
 
     // Keyboard (the note typed in the sentence card): the Modal's window is
     // edge-to-edge on Android, where adjustResize no longer shrinks it, so
-    // the sheet lifts itself by the keyboard's height. The lift is measured
-    // against the root's own layout — where the window did shrink (iOS,
-    // older Android) the shrink is subtracted, so the sheet never lifts
-    // twice — and the card is capped to the space left above the keyboard.
-    const [kbHeight, setKbHeight] = useState(0);
+    // the sheet lifts itself over the keyboard. What it lifts by is the
+    // keyboard's TOP EDGE (screenY) measured down from the card's own full
+    // height, not the height RN reports: that height is the IME window's
+    // own, which stops at the navigation bar — 24 dp short of the
+    // edge-to-edge Modal's bottom on a Pixel — and the Close button was
+    // landing in exactly that gap (user, 2026-09-12: "I can't see the
+    // button of close"). The reported height stays the floor, for anything
+    // that gives no usable screenY. The lift is measured against the root's
+    // own layout — where the window did shrink (iOS, older Android) the
+    // shrink is subtracted, so the sheet never lifts twice — and the card is
+    // capped to the space left above the keyboard.
+    const [kb, setKb] = useState({ height: 0, top: 0 });
     const [rootHeight, setRootHeight] = useState(0);
     const fullHeightRef = useRef(0);
     useEffect(() => {
-        const show = Keyboard.addListener('keyboardDidShow', (e) => setKbHeight(e?.endCoordinates?.height ?? 0));
-        const hide = Keyboard.addListener('keyboardDidHide', () => setKbHeight(0));
-        return () => { show.remove(); hide.remove(); };
+        const onShow = (e) => {
+            const c = e?.endCoordinates;
+            if (!c?.height) return;   // a frame change with no keyboard is a hide; didHide clears it
+            setKb({ height: c.height, top: c.screenY ?? 0 });
+        };
+        const show = Keyboard.addListener('keyboardDidShow', onShow);
+        const change = Keyboard.addListener('keyboardDidChangeFrame', onShow);
+        const hide = Keyboard.addListener('keyboardDidHide', () => setKb({ height: 0, top: 0 }));
+        return () => { show.remove(); change.remove(); hide.remove(); };
     }, []);
     const onRootLayout = useCallback((e) => {
         const h = e.nativeEvent.layout.height;
-        if (!kbHeight) fullHeightRef.current = Math.max(fullHeightRef.current, h);
+        if (!kb.height) fullHeightRef.current = Math.max(fullHeightRef.current, h);
         setRootHeight(h);
-    }, [kbHeight]);
+    }, [kb.height]);
     const shrink = Math.max(0, fullHeightRef.current - rootHeight);
-    const lift = Math.max(0, kbHeight - shrink);
+    const covered = kb.height ? Math.max(kb.height, fullHeightRef.current - kb.top) : 0;
+    const lift = Math.max(0, covered - shrink);
     const liftedMaxHeight = lift ? Math.max(240, rootHeight - lift - top - 12) : maxHeight;
 
     const translateY = useSharedValue(OFFSCREEN);

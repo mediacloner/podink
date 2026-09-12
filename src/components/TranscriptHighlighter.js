@@ -88,11 +88,15 @@ const CHUNK_MARGIN = 10;                 // matches sentenceWrap.marginBottom
 // sentence opens the same translation card as the long-press. Finger travel
 // in dp.
 const SWIPE_START = 10;   // rightward travel before the sentence claims the touch
-const SWIPE_TRIGGER = 72; // travel on release that opens the translation
-const SWIPE_FLICK = 30;   // …or this much with a quick flick (vx > SWIPE_FLICK_VX dp/ms)
-const SWIPE_FLICK_VX = 0.6;
-const SWIPE_MAX = 56;     // how far the sentence itself slides, rubber-banded
+const SWIPE_TRIGGER = 34; // TOTAL finger travel that opens the translation
+const SWIPE_FLICK = 22;   // …or this much with a quick flick (vx > SWIPE_FLICK_VX dp/ms)
+const SWIPE_FLICK_VX = 0.35;
+const SWIPE_MAX = 44;     // how far the sentence itself slides, rubber-banded
 const SWIPE_SPRING = { damping: 18, stiffness: 240, mass: 0.6 };
+// Double-tap a sentence to play on from it (user, 2026-09-12: "I want to use
+// double tap in sentence to continue the reproduction in this point"). One tap
+// still only seeks there.
+const DOUBLE_TAP_MS = 300;
 const DEFAULT_FONT_SIZE = 22;
 const LOOKAHEAD_MS = 550;                // scaled by playback rate on the UI thread
 const WORD_LEVEL_RADIUS = 1;             // prev + current + next chunk → word-by-word
@@ -882,6 +886,11 @@ const TranscriptHighlighter = forwardRef(({
     }, [followSV]);
 
     const onChunkPress = useCallback((startMs) => doSeek(startMs), [doSeek]);
+    // Double tap: go there and carry on playing from it.
+    const onChunkDoublePress = useCallback((startMs) => {
+        doSeek(startMs);
+        TrackPlayer.play().catch(() => {});
+    }, [doSeek]);
     const onKeypointPress = useCallback((timeMs) => doSeek(timeMs), [doSeek]);
 
     // Keep chunks accessible inside handlers without making them deps.
@@ -1066,6 +1075,7 @@ const TranscriptHighlighter = forwardRef(({
                 activeIndexSV={activeIndexSV}
                 isPlayingSV={isPlayingSV}
                 onPress={onChunkPress}
+                onDoublePress={onChunkDoublePress}
                 onLongPress={onLongPress}
                 onWordPress={onWordPress}
                 onBookPress={onBookPress}
@@ -1075,7 +1085,8 @@ const TranscriptHighlighter = forwardRef(({
         );
     }, [
         fontSize, lineHeight, activeChunkSV, activeIndexSV, isPlayingSV,
-        onChunkPress, onLongPress, onWordPress, onBookPress, wordBook, onCellLayout, onKeypointPress,
+        onChunkPress, onChunkDoublePress, onLongPress, onWordPress, onBookPress, wordBook,
+        onCellLayout, onKeypointPress,
     ]);
 
     let statusPane = null;
@@ -1323,7 +1334,8 @@ const KeypointRow = React.memo(({ item, onPress }) => {
 const chunkEqual = (p, n) =>
     p.item === n.item && p.index === n.index &&
     p.fontSize === n.fontSize && p.lineHeight === n.lineHeight &&
-    p.onPress === n.onPress && p.onLongPress === n.onLongPress &&
+    p.onPress === n.onPress && p.onDoublePress === n.onDoublePress &&
+    p.onLongPress === n.onLongPress &&
     p.onWordPress === n.onWordPress && p.onCellLayout === n.onCellLayout &&
     p.onBookPress === n.onBookPress && p.wordBook === n.wordBook;
 
@@ -1343,7 +1355,7 @@ const bookRuns = (words, wordBook) => {
 const Chunk = React.memo(({
     item, index, fontSize, lineHeight,
     activeChunkSV, activeIndexSV, isPlayingSV,
-    onPress, onLongPress, onWordPress, onBookPress, wordBook, onCellLayout,
+    onPress, onDoublePress, onLongPress, onWordPress, onBookPress, wordBook, onCellLayout,
 }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -1376,7 +1388,24 @@ const Chunk = React.memo(({
         onCellLayout(index, item.id, e.nativeEvent.layout.height);
     }, [onCellLayout, index, item.id]);
 
-    const handlePress = useCallback(() => onPress(item.startMs), [onPress, item.startMs]);
+    // One tap seeks here; a second within DOUBLE_TAP_MS plays on from here.
+    // The first tap makes this the active sentence, which turns it word-level
+    // (tap = define) a moment later, so the words count the second tap too —
+    // otherwise a quick double tap ends in the word card by accident.
+    const lastTapRef = useRef(0);
+    const takeDoubleTap = useCallback(() => {
+        const now = Date.now();
+        const second = now - lastTapRef.current < DOUBLE_TAP_MS;
+        lastTapRef.current = second ? 0 : now;
+        if (second) onDoublePress(item.startMs);
+        return second;
+    }, [onDoublePress, item.startMs]);
+    const handlePress = useCallback(() => {
+        if (!takeDoubleTap()) onPress(item.startMs);
+    }, [takeDoubleTap, onPress, item.startMs]);
+    const handleWordPress = useCallback((word, ci) => {
+        if (!takeDoubleTap()) onWordPress(word, ci);
+    }, [takeDoubleTap, onWordPress]);
     const handleLongPress = useCallback(() => onLongPress(text, chunkIndex), [onLongPress, text, chunkIndex]);
 
     // ── Swipe right → translate ───────────────────────────────────────────────
@@ -1386,28 +1415,52 @@ const Chunk = React.memo(({
     // takes real vertical movement natively in any case). The Pressable
     // underneath gives the touch up, which cancels its tap and long-press.
     // The sentence follows the thumb a little, rubber-banded, with a globe
-    // fading in at its left; a release past SWIPE_TRIGGER, or a quick flick,
-    // opens the translation. Same handler as the long-press, so the card,
-    // the notebook pencil and pause-while-looking-up all behave the same.
+    // fading in at its left; the card opens the moment the travel passes
+    // SWIPE_TRIGGER — under the thumb, without waiting for the finger to
+    // lift (user, 2026-09-12: "I need to move too much the thumb to run
+    // translation") — or on release after a short quick flick. Same handler
+    // as the long-press, so the card, the notebook pencil and
+    // pause-while-looking-up all behave the same.
     const swipeX = useSharedValue(0);
     const longPressRef = useRef(handleLongPress);
     longPressRef.current = handleLongPress;
+    const firedRef = useRef(false);
+    // PanResponder zeroes dx when it grants the responder, so the travel
+    // already made by then — everything up to SWIPE_START, and however much
+    // further the finger got between two touch samples — is remembered and
+    // added back. Without it the thresholds below are thresholds on top of an
+    // unknown head start, which is what made the swipe feel so long.
+    const grantAtRef = useRef(0);
     const swipePan = useMemo(() => PanResponder.create({
         onStartShouldSetPanResponder: () => false,
-        onMoveShouldSetPanResponder: (_, g) => g.dx > SWIPE_START && g.dx > Math.abs(g.dy) * 1.5,
+        onMoveShouldSetPanResponder: (_, g) => {
+            const take = g.dx > SWIPE_START && g.dx > Math.abs(g.dy) * 1.5;
+            if (take) grantAtRef.current = g.dx;
+            return take;
+        },
+        onPanResponderGrant: () => { firedRef.current = false; },
         onPanResponderMove: (_, g) => {
-            swipeX.value = g.dx <= 0 ? 0 : SWIPE_MAX * (1 - Math.exp(-g.dx / SWIPE_MAX));
+            if (firedRef.current) return;   // card already open under the thumb
+            const travel = grantAtRef.current + g.dx;
+            if (travel >= SWIPE_TRIGGER) {
+                firedRef.current = true;
+                swipeX.value = withSpring(0, SWIPE_SPRING);
+                longPressRef.current();
+                return;
+            }
+            swipeX.value = travel <= 0 ? 0 : SWIPE_MAX * (1 - Math.exp(-travel / SWIPE_MAX));
         },
         onPanResponderRelease: (_, g) => {
+            if (firedRef.current) return;
             swipeX.value = withSpring(0, SWIPE_SPRING);
-            if (g.dx >= SWIPE_TRIGGER || (g.dx >= SWIPE_FLICK && g.vx > SWIPE_FLICK_VX)) longPressRef.current();
+            if (grantAtRef.current + g.dx >= SWIPE_FLICK && g.vx > SWIPE_FLICK_VX) longPressRef.current();
         },
         onPanResponderTerminate: () => { swipeX.value = withSpring(0, SWIPE_SPRING); },
     }), [swipeX]);
     const swipeStyle = useAnimatedStyle(() => ({ transform: [{ translateX: swipeX.value }] }));
     const swipeIconStyle = useAnimatedStyle(() => ({
-        opacity: interpolate(swipeX.value, [6, SWIPE_MAX * 0.6], [0, 1], 'clamp'),
-        transform: [{ scale: interpolate(swipeX.value, [6, SWIPE_MAX * 0.8], [0.7, 1], 'clamp') }],
+        opacity: interpolate(swipeX.value, [3, SWIPE_MAX * 0.35], [0, 1], 'clamp'),
+        transform: [{ scale: interpolate(swipeX.value, [3, SWIPE_MAX * 0.42], [0.7, 1], 'clamp') }],
     }));
     // The globe sits in the list's left gutter (contentContainer padding), so
     // it never overlaps the words as they slide.
@@ -1461,7 +1514,7 @@ const Chunk = React.memo(({
                             lineHeight={lineHeight}
                             activeIndexSV={activeIndexSV}
                             isPlayingSV={isPlayingSV}
-                            onWordPress={onWordPress}
+                            onWordPress={handleWordPress}
                             onWordLongPress={handleLongPress}
                             bookId={w.globalIndex < wordBook.length ? wordBook[w.globalIndex] : 0}
                             bookJoinsNext={w.globalIndex + 1 < wordBook.length && wordBook[w.globalIndex] !== 0 && wordBook[w.globalIndex + 1] === wordBook[w.globalIndex]}
