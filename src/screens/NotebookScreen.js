@@ -333,7 +333,7 @@ const NotebookScreen = ({ navigation }) => {
                         <EmptyState
                             icon='edit-3'
                             title='Your notebook is empty'
-                            subtitle='Long-press a sentence in a transcript and tap the pencil to keep it here with your own notes'
+                            subtitle='Slide a sentence to the right in a transcript and tap the pencil to keep it here with your own notes'
                         />
                     )
                 }

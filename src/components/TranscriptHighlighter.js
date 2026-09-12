@@ -44,7 +44,14 @@ const trimWord = (t) => (t || '').trim().replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}'
 // within the clause: a phrase doesn't cross a comma. `tokens` are the raw
 // words of the sentence (punctuation still attached), `at` the tapped one.
 const CONTEXT_WORDS = 6;
-const endsClause = (t) => /[.,;:!?…]["”’)]*\s*$/.test(t || '');
+// The punctuation a token ends on, '' when it ends on a letter.
+const endPunct = (t) => (/([.,;:!?…])["”’)\]]*\s*$/.exec(t || '') || ['', ''])[1];
+// Full stops that belong to the word rather than to the sentence: the
+// abbreviations that stand beside a name. Without them "St. Louis" reads as
+// two clauses and the name is never seen whole.
+const ABBREVIATION = /^(?:st|ste|sr|sra|jr|mr|mrs|ms|dr|prof|rev|fr|hon|gen|col|sgt|capt|lt|cmdr|sen|rep|gov|pres|mt|mts|ft|ave|blvd|rd)$/i;
+const isAbbreviation = (t) => endPunct(t) === '.' && ABBREVIATION.test(trimWord(t));
+const endsClause = (t) => !!endPunct(t) && !isAbbreviation(t);
 const clauseContext = (tokens, at) => {
     const prevWords = [];
     for (let i = at - 1; i >= 0 && prevWords.length < CONTEXT_WORDS; i--) {
@@ -56,7 +63,50 @@ const clauseContext = (tokens, at) => {
         if (endsClause(tokens[i - 1])) break;
         nextWords.push(trimWord(tokens[i]));
     }
-    return { prevWords, nextWords };
+    return { prevWords, nextWords, nameRun: nameRun(tokens, at) };
+};
+
+// The name run around the tapped word, for the Wikipedia lookup, which reads
+// punctuation differently from the dictionary: two kinds of it sit INSIDE a
+// name and must not end the run — an abbreviation's full stop ("St. Louis",
+// "Dr. King") and the comma of a place ("St. Louis, Missouri", "Cambridge,
+// Massachusetts"), which is exactly how Wikipedia titles those pages, so the
+// comma is kept on the word rather than trimmed off. Any other punctuation
+// ends the run, and so does a comma that does not sit between two
+// capitalised words. Tapping "Louis" in "St. Louis, Missouri" therefore asks
+// for that whole title first, then "St. Louis", then "Louis" — where before
+// the full stop and the comma left it asking only about "Louis".
+const NAME_WORDS = 4;
+const startsUpper = (t) => /^\p{Lu}/u.test(trimWord(t) || '');
+// The word as the run keeps it: its abbreviation stop and its name-internal
+// comma stay attached, everything else is trimmed away.
+const nameWord = (t) => {
+    const core = trimWord(t);
+    if (!core) return '';
+    if (isAbbreviation(t)) return core + '.';
+    return endPunct(t) === ',' ? core + ',' : core;
+};
+// Whether the punctuation between tokens[i] and tokens[i + 1] keeps the two
+// inside one name.
+const joinsName = (tokens, i) => {
+    const p = endPunct(tokens[i]);
+    if (!p) return true;
+    if (isAbbreviation(tokens[i])) return true;
+    return p === ',' && startsUpper(tokens[i]) && startsUpper(tokens[i + 1]);
+};
+const nameRun = (tokens, at) => {
+    if (at < 0 || at >= tokens.length) return { word: '', prevWords: [], nextWords: [] };
+    const prevWords = [];
+    for (let i = at - 1; i >= 0 && prevWords.length < NAME_WORDS; i--) {
+        if (!joinsName(tokens, i)) break;
+        prevWords.unshift(nameWord(tokens[i]));
+    }
+    const nextWords = [];
+    for (let i = at + 1; i < tokens.length && nextWords.length < NAME_WORDS; i++) {
+        if (!joinsName(tokens, i - 1)) break;
+        nextWords.push(nameWord(tokens[i]));
+    }
+    return { word: nameWord(tokens[at]), prevWords, nextWords };
 };
 
 const CLOSED_TRANSLATE = { visible: false, text: '', contextText: '', precedingText: '', chunkIndex: null, startMs: 0 };
@@ -83,10 +133,9 @@ import FollowPill from './transcript/FollowPill';
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const CHUNK_MARGIN = 10;                 // matches sentenceWrap.marginBottom
-// Swipe-to-translate (user, 2026-09-10: the long-press "is slow to take a
-// complete translation of sentence"): a thumb slid left to right across a
-// sentence opens the same translation card as the long-press. Finger travel
-// in dp.
+// Swipe-to-translate (user, 2026-09-10: the long-press it replaced "is slow
+// to take a complete translation of sentence"): a thumb slid left to right
+// across a sentence opens the translation card. Finger travel in dp.
 const SWIPE_START = 10;   // rightward travel before the sentence claims the touch
 const SWIPE_TRIGGER = 34; // TOTAL finger travel that opens the translation
 const SWIPE_FLICK = 22;   // …or this much with a quick flick (vx > SWIPE_FLICK_VX dp/ms)
@@ -144,7 +193,7 @@ const rippleFor = (colors) => ({ color: withAlpha(colors.accent, 0.12), foregrou
 // ReactScrollView.java drops that end event when a finger lands first
 // (cancelPostTouchScrolling on ACTION_DOWN), so the natural "scroll to a
 // sentence, hold it" gesture is taken by the list, and worse, leaves the flag
-// set: from then on every tap and long-press on a sentence is swallowed until
+// set: from then on every tap and gesture on a sentence is swallowed until
 // a later drag's end event arrives. User (2026-09-10): "long press … doesn't
 // work and I need to move the scroll to work". On Android the native
 // ScrollView already intercepts touches during a real fling, so the JS check
@@ -939,12 +988,12 @@ const TranscriptHighlighter = forwardRef(({
         if (resumeOnCloseRef.current) TrackPlayer.play().catch(() => {});
     }, []);
 
-    // ── Translation modal (paragraph long-press) ─────────────────────────────
+    // ── Translation modal (slide a sentence right) ───────────────────────────
     const [translateModal, setTranslateModal] = useState(CLOSED_TRANSLATE);
     // Read inside the word-card handlers without making it a dependency.
     const translateModalRef = useRef(translateModal);
     useEffect(() => { translateModalRef.current = translateModal; }, [translateModal]);
-    const onLongPress = useCallback((text, chunkIndex) => {
+    const onTranslate = useCallback((text, chunkIndex) => {
         const ch = chunksRef.current;
         const prevTexts = [];
         if (chunkIndex >= 2 && ch[chunkIndex - 2]) prevTexts.push(chunkText(ch[chunkIndex - 2]));
@@ -1076,7 +1125,7 @@ const TranscriptHighlighter = forwardRef(({
                 isPlayingSV={isPlayingSV}
                 onPress={onChunkPress}
                 onDoublePress={onChunkDoublePress}
-                onLongPress={onLongPress}
+                onTranslate={onTranslate}
                 onWordPress={onWordPress}
                 onBookPress={onBookPress}
                 wordBook={wordBook}
@@ -1085,7 +1134,7 @@ const TranscriptHighlighter = forwardRef(({
         );
     }, [
         fontSize, lineHeight, activeChunkSV, activeIndexSV, isPlayingSV,
-        onChunkPress, onChunkDoublePress, onLongPress, onWordPress, onBookPress, wordBook,
+        onChunkPress, onChunkDoublePress, onTranslate, onWordPress, onBookPress, wordBook,
         onCellLayout, onKeypointPress,
     ]);
 
@@ -1335,7 +1384,7 @@ const chunkEqual = (p, n) =>
     p.item === n.item && p.index === n.index &&
     p.fontSize === n.fontSize && p.lineHeight === n.lineHeight &&
     p.onPress === n.onPress && p.onDoublePress === n.onDoublePress &&
-    p.onLongPress === n.onLongPress &&
+    p.onTranslate === n.onTranslate &&
     p.onWordPress === n.onWordPress && p.onCellLayout === n.onCellLayout &&
     p.onBookPress === n.onBookPress && p.wordBook === n.wordBook;
 
@@ -1355,7 +1404,7 @@ const bookRuns = (words, wordBook) => {
 const Chunk = React.memo(({
     item, index, fontSize, lineHeight,
     activeChunkSV, activeIndexSV, isPlayingSV,
-    onPress, onDoublePress, onLongPress, onWordPress, onBookPress, wordBook, onCellLayout,
+    onPress, onDoublePress, onTranslate, onWordPress, onBookPress, wordBook, onCellLayout,
 }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -1406,24 +1455,26 @@ const Chunk = React.memo(({
     const handleWordPress = useCallback((word, ci) => {
         if (!takeDoubleTap()) onWordPress(word, ci);
     }, [takeDoubleTap, onWordPress]);
-    const handleLongPress = useCallback(() => onLongPress(text, chunkIndex), [onLongPress, text, chunkIndex]);
+    const handleTranslate = useCallback(() => onTranslate(text, chunkIndex), [onTranslate, text, chunkIndex]);
 
     // ── Swipe right → translate ───────────────────────────────────────────────
     // A PanResponder, like the Library's SwipeableRow: the wrapper claims the
     // touch once the finger has travelled SWIPE_START to the right and more
     // across than down (a vertical drag stays a scroll — Android's ScrollView
     // takes real vertical movement natively in any case). The Pressable
-    // underneath gives the touch up, which cancels its tap and long-press.
+    // underneath gives the touch up, which cancels its tap.
     // The sentence follows the thumb a little, rubber-banded, with a globe
     // fading in at its left; the card opens the moment the travel passes
     // SWIPE_TRIGGER — under the thumb, without waiting for the finger to
     // lift (user, 2026-09-12: "I need to move too much the thumb to run
-    // translation") — or on release after a short quick flick. Same handler
-    // as the long-press, so the card, the notebook pencil and
-    // pause-while-looking-up all behave the same.
+    // translation") — or on release after a short quick flick. It is the only
+    // way into the translation card: the long-press it replaced is gone, so a
+    // finger resting on a sentence no longer competes with the tap and the
+    // double tap (user, 2026-09-12: "tap and double tap some is confuse at the
+    // moment, you can eliminate long press to sentences").
     const swipeX = useSharedValue(0);
-    const longPressRef = useRef(handleLongPress);
-    longPressRef.current = handleLongPress;
+    const translateRef = useRef(handleTranslate);
+    translateRef.current = handleTranslate;
     const firedRef = useRef(false);
     // PanResponder zeroes dx when it grants the responder, so the travel
     // already made by then — everything up to SWIPE_START, and however much
@@ -1445,7 +1496,7 @@ const Chunk = React.memo(({
             if (travel >= SWIPE_TRIGGER) {
                 firedRef.current = true;
                 swipeX.value = withSpring(0, SWIPE_SPRING);
-                longPressRef.current();
+                translateRef.current();
                 return;
             }
             swipeX.value = travel <= 0 ? 0 : SWIPE_MAX * (1 - Math.exp(-travel / SWIPE_MAX));
@@ -1453,7 +1504,7 @@ const Chunk = React.memo(({
         onPanResponderRelease: (_, g) => {
             if (firedRef.current) return;
             swipeX.value = withSpring(0, SWIPE_SPRING);
-            if (grantAtRef.current + g.dx >= SWIPE_FLICK && g.vx > SWIPE_FLICK_VX) longPressRef.current();
+            if (grantAtRef.current + g.dx >= SWIPE_FLICK && g.vx > SWIPE_FLICK_VX) translateRef.current();
         },
         onPanResponderTerminate: () => { swipeX.value = withSpring(0, SWIPE_SPRING); },
     }), [swipeX]);
@@ -1483,24 +1534,14 @@ const Chunk = React.memo(({
     if (isWordLevel) {
         // Word-by-word reading region (active ± 1): tapping a word must open the
         // dictionary popover. The parent Text has NO press handlers at all — a
-        // parent Text that owns onPress OR onLongPress claims the touch responder
-        // for the whole block, starving the per-word handlers (word taps did
-        // nothing / the parent seeked). So every handler lives on the words:
-        // tap = define, long-press = translate the sentence. Seeking stays on
-        // the other (non-word-level) sentences and the transport controls.
-        //
-        // The wrapper is a Pressable with ONLY a long-press: a View responder
-        // is asked after the word spans, so word taps and long-presses still
-        // reach the words, while a long-press that lands between words, at a
-        // line end or in the gap under the last line — where no span owns
-        // the touch — still opens the translation instead of doing nothing.
+        // parent Text that owns a press claims the touch responder for the
+        // whole block, starving the per-word handlers (word taps did nothing /
+        // the parent seeked). So the tap lives on the words: tap = define.
+        // Seeking stays on the other (non-word-level) sentences and the
+        // transport controls; translating is the slide. The wrapper is a plain
+        // View now that it carries no press of its own, only the layout.
         return withSwipe(
-            <Pressable
-                style={styles.sentenceWrap}
-                onLayout={handleLayout}
-                onLongPress={handleLongPress}
-                delayLongPress={400}
-            >
+            <View style={styles.sentenceWrap} onLayout={handleLayout}>
                 <Text
                     style={baseStyle}
                     suppressHighlighting
@@ -1515,14 +1556,13 @@ const Chunk = React.memo(({
                             activeIndexSV={activeIndexSV}
                             isPlayingSV={isPlayingSV}
                             onWordPress={handleWordPress}
-                            onWordLongPress={handleLongPress}
                             bookId={w.globalIndex < wordBook.length ? wordBook[w.globalIndex] : 0}
                             bookJoinsNext={w.globalIndex + 1 < wordBook.length && wordBook[w.globalIndex] !== 0 && wordBook[w.globalIndex + 1] === wordBook[w.globalIndex]}
                             onBookPress={onBookPress}
                         />
                     ))}
                 </Text>
-            </Pressable>,
+            </View>,
         );
     }
 
@@ -1530,15 +1570,13 @@ const Chunk = React.memo(({
         <Pressable
             onLayout={handleLayout}
             onPress={handlePress}
-            onLongPress={handleLongPress}
-            delayLongPress={400}
             android_ripple={CHUNK_RIPPLE}
             style={({ pressed }) => [styles.sentenceWrap, pressed && styles.pressedChunk]}
         >
             {runs ? (
                 // A title is its own span: bold, and its tap opens the book
                 // card instead of seeking (a nested Text with onPress takes
-                // the touch; long-press still translates the sentence).
+                // the touch).
                 <Text style={baseStyle}>
                     {runs.map((run, i) => {
                         const text = i === 0 ? run.text.replace(/^\s+/, '') : run.text;
@@ -1552,7 +1590,6 @@ const Chunk = React.memo(({
                                     style={styles.bookTitle}
                                     suppressHighlighting
                                     onPress={() => onBookPress(run.bookId, run.startMs)}
-                                    onLongPress={handleLongPress}
                                 >
                                     {m ? m[1] : text}
                                 </Text>
@@ -1574,7 +1611,7 @@ const Chunk = React.memo(({
 
 const Word = React.memo(({
     word, chunkIndex, fontSize, lineHeight,
-    activeIndexSV, isPlayingSV, onWordPress, onWordLongPress,
+    activeIndexSV, isPlayingSV, onWordPress,
     bookId = 0, bookJoinsNext = false, onBookPress,
 }) => {
     const { colors } = useTheme();
@@ -1652,13 +1689,12 @@ const Word = React.memo(({
     // Press lives on a PLAIN Text — onPress on a nested Animated.Text does not
     // fire inside a parent Text (RN press hit-testing only routes to real Text
     // spans), so the animated colour goes on an inner Animated.Text while the
-    // outer Text owns the tap-to-define / long-press-to-translate handlers.
+    // outer Text owns the tap-to-define handler.
     return (
         <Text
             selectable={false}
             suppressHighlighting
             onPress={handlePress}
-            onLongPress={onWordLongPress}
         >
             {lead}
             {/* The band runs on under the space when the next word belongs to

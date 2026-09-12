@@ -12,7 +12,7 @@ import {
 } from '../../services/notebookService';
 
 // In-memory cache, keyed by engine + language + chunk context so repeat
-// long-presses on the same paragraph never re-hit the network within a session.
+// repeated slides on the same paragraph never re-hit the network within a session.
 const _cache = new Map();
 
 // A note is written to the row this long after the last keystroke; the
@@ -70,7 +70,7 @@ const TranslationModal = ({
     const [copied, setCopied] = useState(false);
 
     // Paragraphs fed into the request: up to two preceding chunks plus the
-    // pressed one (see TranscriptHighlighter's onLongPress).
+    // pressed one (see TranscriptHighlighter's onTranslate).
     const englishParagraphs = useMemo(
         () => (contextText ?? '').split(/\n\n+/).map(p => p.trim()).filter(Boolean),
         [contextText],

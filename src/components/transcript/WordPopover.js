@@ -118,7 +118,7 @@ export const normalizeWord = (raw) =>
 // Bottom-sheet word card: a quick translation, the sentence in context, and
 // the entry from one of the offline MDict dictionaries (penReader set), with
 // a dictionary selector in the footer. `data` is null (hidden) or
-// { word, prevWords, nextWords, startMs, contextText, contextTranslation?,
+// { word, prevWords, nextWords, nameRun?, startMs, contextText, contextTranslation?,
 // precedingText? } — contextTranslation is the sentence's translation when
 // the caller already has it (a word tapped inside the translation card),
 // shown without a request; precedingText is the transcript just before the
@@ -354,15 +354,19 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     // blank. Function words and the pronoun "I" never go. As with phrasal
     // verbs, the capitalised words around the tap are tried together first
     // ("Los Angeles", "Avidius Cassius"), then the word on its own.
-    const wikiCandidates = useMemo(
-        () => (data ? nameCandidates({ word, prevWords: data.prevWords || [], nextWords: data.nextWords || [] }) : []),
+    // The name run is the transcript's own, read with the punctuation a name
+    // contains ("St. Louis, Missouri"); the dictionary's clause stands in for
+    // a caller that sends none.
+    const nameRun = useMemo(
+        () => (data ? (data.nameRun || { word, prevWords: data.prevWords || [], nextWords: data.nextWords || [] }) : null),
         [data, word],
     );
+    const wikiCandidates = useMemo(() => (nameRun ? nameCandidates(nameRun) : []), [nameRun]);
     const capitalised = IS_CAPITALISED.test(word) && !/^I(?:['’]|$)/.test(word);
     const dictSettled = dict.status === 'ready' || dict.status === 'missing' || dict.status === 'none';
     const wikiWanted = visible && !override && !!normalized && dictSettled
         && !FUNCTION_WORDS.has(normalized.replace(CLITIC, ''))
-        && (capitalised ? ((data?.prevWords || []).length > 0 || dict.status !== 'ready') : dict.status === 'missing');
+        && (capitalised ? ((nameRun?.prevWords || []).length > 0 || dict.status !== 'ready') : dict.status === 'missing');
     const wikiKey = wikiWanted && wikiCandidates.length ? `en:${wikiCandidates.join('|')}` : '';
     useEffect(() => {
         if (!wikiKey) { setWiki({ status: 'idle' }); return; }

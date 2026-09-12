@@ -140,13 +140,15 @@ const MAX_RUN = 4;
  * every stretch of it that contains the word becomes a candidate — the whole
  * run, then shorter ones, down to the word alone. A word that is not
  * capitalised is offered on its own (a dictionary miss such as "stoicism").
- * `prevWords` / `nextWords` are the clause context the transcript already
- * hands the card (punctuation trimmed, case kept).
+ * `prevWords` / `nextWords` are the name run the transcript hands the card
+ * (case kept; an abbreviation's full stop and a name-internal comma kept
+ * with their word, so "St. Louis, Missouri" arrives whole — a candidate
+ * never ends on that comma).
  */
 export const nameCandidates = ({ word, prevWords = [], nextWords = [] }) => {
     const w = (word || '').trim();
     if (!w) return [];
-    if (!isCapitalised(w)) return [w];
+    if (!isCapitalised(w)) return [w.replace(/,$/, '')];
 
     const before = [];
     for (let i = prevWords.length - 1; i >= 0; i--) {
@@ -169,9 +171,11 @@ export const nameCandidates = ({ word, prevWords = [], nextWords = [] }) => {
     for (let len = Math.min(run.length, MAX_RUN); len >= 1; len--) {
         for (let start = Math.max(0, at - len + 1); start <= at && start + len <= run.length; start++) {
             const words = run.slice(start, start + len);
-            // A run never starts or ends on a connector ("of Liberty").
+            // A run never starts or ends on a connector ("of Liberty"), and
+            // the comma that held it together goes when it falls at the end
+            // ("St. Louis, Missouri", then "St. Louis" — never "St. Louis,").
             if (isConnector(words[0]) || isConnector(words[words.length - 1])) continue;
-            out.push(words.join(' '));
+            out.push(words.join(' ').replace(/,$/, ''));
         }
     }
     return out;
