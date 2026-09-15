@@ -22,6 +22,12 @@
  *         island props as JSON with ISO times.
  *   npr   NPR publishes no timetable for its Program Stream; a fixed weekly
  *         line-up (Eastern time) is built in, marked as such under the guide.
+ *   kqed  KQED's weekly-schedule page carries every programme's air times as
+ *         text ("MON-FRI 9am-11am, 10pm-11pm") in its embedded page state;
+ *         they are read into a weekly grid (Pacific time), kept for six hours.
+ *   vaughan  Vaughan Radio's page on grupovaughan.com lists each show with its
+ *         time ranges and days in Spanish ("De lunes a viernes"); read into a
+ *         weekly grid (Madrid time), kept for six hours.
  *   none  No guide; the stream's ICY title, when it carries one, stands in.
  *
  * A guide may carry a `note` (shown under the list) saying where it comes
@@ -398,6 +404,171 @@ const nprItems = (nowMs) => {
 
 const fetchNpr = async () => ({ ...nowAndNext(nprItems(Date.now())), source: 'guide', note: NPR_NOTE });
 
+// ─── Weekly grids (KQED, Vaughan Radio) ──────────────────────────────────────
+//
+// Two broadcasters publish their line-up only as text per programme, not as a
+// timetable. Each is read once into a grid of weekly slots and kept for six
+// hours; now / next are then worked out from the grid on every call.
+//   slot = { days: [0..6, Sunday first], from, to (minutes into the day; `to`
+//            passes 1440 when the show runs past midnight), title, subtitle,
+//            description }
+
+const GRID_TTL_MS = 6 * 3600 * 1000;
+const _grids = new Map(); // provider key -> { at, slots }
+
+const cachedGrid = async (key, build) => {
+    const c = _grids.get(key);
+    if (c && Date.now() - c.at < GRID_TTL_MS) return c.slots;
+    const slots = await build();
+    if (!slots.length) throw new Error('Empty grid');
+    _grids.set(key, { at: Date.now(), slots });
+    return slots;
+};
+
+/** The grid's programmes for yesterday, today and tomorrow in `tz`. */
+const weeklyItems = (slots, tz, nowMs) => {
+    const items = [];
+    for (const offset of [-1, 0, 1]) {
+        const p = zoneParts(tz, new Date(nowMs + offset * 86400 * 1000));
+        const weekday = new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay();
+        for (const sl of slots) {
+            if (!sl.days.includes(weekday)) continue;
+            items.push({
+                title: sl.title, subtitle: sl.subtitle || '', description: sl.description || '',
+                start: zonedToMs(tz, p.y, p.m, p.d, Math.floor(sl.from / 60), sl.from % 60),
+                end: zonedToMs(tz, p.y, p.m, p.d, Math.floor(sl.to / 60), sl.to % 60),
+            });
+        }
+    }
+    return items;
+};
+
+/** Weekdays from `a` to `b` going forward round the week ("sat"–"sun", "lunes"–"domingo"). */
+const dayRange = (map, a, b) => {
+    const out = [];
+    let d = map[a];
+    const end = b != null && map[b] != null ? map[b] : d;
+    for (let i = 0; i < 7; i++) { out.push(d); if (d === end) break; d = (d + 1) % 7; }
+    return out;
+};
+
+// KQED (San Francisco) — "MON-FRI 9am-11am, 10pm-11pm<br />SAT 8pm-9pm and SUN 11am-12pm"
+
+const KQED_TZ = 'America/Los_Angeles';
+const KQED_NOTE = 'Air times as KQED lists them for each programme; the news and station breaks between them are not listed.';
+const KQED_DAYS = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+
+/** Minutes into the day for "9", "4:30" with "am"/"pm"; a start with no
+ *  meridiem takes the end's ("12-1pm" = 12:00–13:00). */
+const clock12 = (h, m, mer, fallbackMer) => {
+    let hh = Number(h) % 12; // 12am → 0, 12pm → 12 (after the pm add)
+    if (String(mer || fallbackMer || '').toLowerCase() === 'pm') hh += 12;
+    return hh * 60 + Number(m || 0);
+};
+
+const KQED_TOKEN = /^(?:(sun|mon|tue|wed|thu|fri|sat)[a-z]*(?:\s*-\s*(sun|mon|tue|wed|thu|fri|sat)[a-z]*)?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*-\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?$/;
+
+/** One programme's air-time text → slots. Pieces without a day keep the
+ *  last day span seen; a lone time ("TUE 10pm") is an hour; prose is skipped. */
+const parseKqedAirtime = (airtime, programme) => {
+    const slots = [];
+    let days = null;
+    const pieces = String(airtime || '').replace(/<br\s*\/?>/gi, ',').replace(/\s+and\s+/gi, ',').split(',');
+    for (const raw of pieces) {
+        const m = raw.trim().toLowerCase().match(KQED_TOKEN);
+        if (!m) continue;
+        if (m[1]) days = dayRange(KQED_DAYS, m[1], m[2]);
+        if (!days) continue;
+        const from = clock12(m[3], m[4], m[5], m[8]);
+        let to = m[6] ? clock12(m[6], m[7], m[8], m[5]) : from + 60;
+        if (to <= from) to += 24 * 60;
+        slots.push({ days, from, to, ...programme });
+    }
+    return slots;
+};
+
+const fetchKqed = async () => {
+    const slots = await cachedGrid('kqed', async () => {
+        const html = await (await fetchWithTimeout('https://www.kqed.org/radio/weekly-schedule')).text();
+        const m = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/);
+        if (!m) throw new Error('No page state');
+        const programs = JSON.parse(m[1])?.programsReducer || {};
+        const out = [];
+        for (const p of Object.values(programs)) {
+            if (!p?.airtime || !p?.title) continue;
+            out.push(...parseKqedAirtime(p.airtime, { title: text(p.title), subtitle: '', description: text(p.info) }));
+        }
+        return out;
+    });
+    const nowMs = Date.now();
+    return { ...nowAndNext(weeklyItems(slots, KQED_TZ, nowMs), nowMs), source: 'guide', note: KQED_NOTE };
+};
+
+// Vaughan Radio (Madrid) — blocks of "TITLE<br><br>Con PRESENTER", a
+// description, then time ranges each followed by the days they apply to.
+
+const VAUGHAN_TZ = 'Europe/Madrid';
+const VAUGHAN_NOTE = 'Programme times from Vaughan Radio’s own page; Vaughan lists some shows against each other for the same hour.';
+const VAUGHAN_DAYS = { domingo: 0, lunes: 1, martes: 2, miércoles: 3, miercoles: 3, jueves: 4, viernes: 5, sábado: 6, sabado: 6 };
+
+/** "De lunes a viernes" / "Sábado y domingo" / "Domingo" → weekdays, else null. */
+const vaughanDays = (line) => {
+    const s = line.toLowerCase();
+    const range = s.match(/de\s+(\S+)\s+a\s+(\S+)/);
+    if (range && VAUGHAN_DAYS[range[1]] != null && VAUGHAN_DAYS[range[2]] != null) return dayRange(VAUGHAN_DAYS, range[1], range[2]);
+    const named = Object.keys(VAUGHAN_DAYS).filter(d => s.includes(d)).map(d => VAUGHAN_DAYS[d]);
+    return named.length ? [...new Set(named)] : null;
+};
+
+/** "THE SHOW WITH NO NAME" → "The Show With No Name". */
+const titleCase = (s) => String(s).toLowerCase().replace(/(^|[\s\-(])([a-záéíóúñü])/g, (m, a, b) => a + b.toUpperCase());
+
+const parseVaughanPage = (html) => {
+    const slots = [];
+    const chunks = html.split('<h3 class="info-piece__title">').slice(1);
+    for (const chunk of chunks) {
+        const headEnd = chunk.indexOf('</h3>');
+        if (headEnd < 0) continue;
+        const [rawTitle, ...rest] = chunk.slice(0, headEnd).split(/<br\s*\/?>/i);
+        const title = titleCase(text(rawTitle));
+        const presenter = text(rest.join(' ')).replace(/^con\s+/i, '').replace(/\s+y\s+/g, ' and ');
+        if (!title) continue;
+        const body = chunk.slice(headEnd);
+        const lines = body.split(/<\/?div[^>]*>/).map(l => text(l)).filter(Boolean);
+        const descParts = [];
+        let pending = [];
+        let sawTime = false;
+        for (const line of lines) {
+            const t = line.match(/^(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})$/);
+            if (t) {
+                sawTime = true;
+                const from = Number(t[1]) * 60 + Number(t[2]);
+                let to = Number(t[3]) * 60 + Number(t[4]);
+                if (to <= from) to += 24 * 60;
+                pending.push({ from, to });
+                continue;
+            }
+            const days = vaughanDays(line);
+            if (days && pending.length) {
+                for (const r of pending) {
+                    slots.push({ days, from: r.from, to: r.to, title, subtitle: presenter ? `With ${presenter}` : '', description: descParts.join(' ') });
+                }
+                pending = [];
+                continue;
+            }
+            if (!sawTime && line.length > 30) descParts.push(line);
+        }
+    }
+    return slots;
+};
+
+const fetchVaughan = async () => {
+    const slots = await cachedGrid('vaughan', async () =>
+        parseVaughanPage(await (await fetchWithTimeout('https://grupovaughan.com/vaughan-radio')).text()));
+    const nowMs = Date.now();
+    return { ...nowAndNext(weeklyItems(slots, VAUGHAN_TZ, nowMs), nowMs), source: 'guide', note: VAUGHAN_NOTE };
+};
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 const fetchFresh = async (station) => {
@@ -411,6 +582,8 @@ const fetchFresh = async (station) => {
         case 'rte': return fetchRte(g.service || 'radio1', g.tz || 'Europe/Dublin');
         case 'lbc': return fetchLbc(g.service || 'lbc');
         case 'npr': return fetchNpr();
+        case 'kqed': return fetchKqed();
+        case 'vaughan': return fetchVaughan();
         default: return EMPTY('none');
     }
 };
@@ -467,6 +640,21 @@ export const stationLocalTime = (tz, date = new Date()) => {
         weekday: WEEKDAYS[new Date(there).getUTCDay()],
         dayShift: Math.round((there - here) / 86400000),
     };
+};
+
+/** Minutes a zone's wall clock is ahead of UTC at `date` (negative behind). */
+export const zoneOffsetMinutes = (tz, date = new Date()) => {
+    const z = zoneParts(tz, date);
+    const wall = Date.UTC(z.y, z.m - 1, z.d, z.h, z.min);
+    const utc = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours(), date.getUTCMinutes());
+    return Math.round((wall - utc) / 60000);
+};
+
+/** How far a zone's clock is from the device's own, in minutes, going the
+ *  short way round the day (a clock 23 h ahead is 1 h behind). */
+export const zoneDistanceMinutes = (tz, date = new Date()) => {
+    const diff = Math.abs(zoneOffsetMinutes(tz, date) + date.getTimezoneOffset()) % 1440;
+    return Math.min(diff, 1440 - diff);
 };
 
 /** "12 min left" / "ends 14:30" helpers for the now card. */
