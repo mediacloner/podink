@@ -53,9 +53,13 @@ class LiveRadioModule(reactContext: ReactApplicationContext) :
         const val EVENT_ERROR = "LiveRadioError"
         const val EVENT_STOPPED = "LiveRadioStopped"
         // Segment lengths never exceed this; it is also ExoPlayer's playlist
-        // reload period (halved while nothing changes) and, x3, its "playlist
-        // stuck" limit. 12 s of source silence before the player complains.
-        const val TARGET_DURATION_SEC = 12
+        // reload period (halved while nothing changes) and, x3.5, its
+        // "playlist stuck" limit. Segments are ~6 s, so 7 lets the player see
+        // each new one about as soon as it lands; at 12 it looked only every
+        // other segment, ran dry and stalled for a second each time whenever
+        // it was near the edge (Pixel 7 log, 2026-09-16). A stuck playlist
+        // (~25 s of source silence) is retried, not fatal, for a single variant.
+        const val TARGET_DURATION_SEC = 7
     }
 
     private var recorder: Recorder? = null

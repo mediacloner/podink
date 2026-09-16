@@ -8,7 +8,7 @@
  *                 local HLS event playlist (see below), so the listener can
  *                 pause, skip back and forth through what has aired since
  *                 tuning in, and catch up with LIVE — playback starts once
- *                 LIVE_BUFFER_SEC (15 s) is recorded and follows that far
+ *                 LIVE_BUFFER_SEC (20 s) is recorded and follows that far
  *                 behind. Without the recorder (iOS, or after a fatal
  *                 recorder error) the player plays the stream itself: no
  *                 past, nothing to seek.
@@ -67,10 +67,15 @@ export const FOLLOW_DELAY_SEC = 40;
 // never sent closer to it than this, so a word is on screen.
 const LIVE_LEAD_SEC = 1.5;
 // Live mode with the recorder (no transcript): playback starts once this much
-// is recorded and never comes closer than this to the recorded edge. The
-// player reloads the growing playlist about every TARGETDURATION (12 s), so
-// staying 15 s back keeps at least one unplayed segment ahead at every reload.
-export const LIVE_BUFFER_SEC = 15;
+// is on disk and never comes closer than this to the recorded edge. The player
+// reloads the growing playlist about every TARGETDURATION (7 s; it was 12),
+// and an HLS source hands the recorder its segments in bursts up to ~10 s
+// late, so the head start must cover both: 20 s means the fourth 6 s segment
+// (24 s on disk) before the first sound. At 15 — and counting the seconds
+// since the last segment as recorded — playback could begin with 12 s on
+// disk, sit within a second of the edge and stall on every reload (Pixel 7
+// log, 2026-09-16).
+export const LIVE_BUFFER_SEC = 20;
 // Within this many seconds of the follow position the Player shows "LIVE".
 export const LIVE_EDGE_SEC = 6;
 const PROGRAMME_POLL_MS = 60 * 1000;
@@ -322,17 +327,21 @@ const maybeStartFollowing = (s) => {
     if (_session !== s || s.status !== 'buffering') return;
     if (s.mode === 'transcript' && !s.firstWindowDone) return;
     const need = startDelaySec(s);
-    const air = airSec(s);
-    if (air >= need) {
+    // Seconds on disk, not airSec: the seconds since the last segment are not
+    // in the playlist yet, and the whole head start must be there before the
+    // player looks for its first segment.
+    if (s.totalSec >= need) {
         if (s.startTimer) { clearTimeout(s.startTimer); s.startTimer = null; }
         startPlayback(s, 0);
         return;
     }
+    // Segment events are what normally bring us back here; the timer covers
+    // one that is missed, and re-checks rather than starting short.
     if (!s.startTimer) {
         s.startTimer = setTimeout(() => {
             s.startTimer = null;
-            if (_session === s && s.status === 'buffering') startPlayback(s, 0);
-        }, Math.max(500, (need - air) * 1000 + 300));
+            maybeStartFollowing(s);
+        }, Math.max(500, (need - s.totalSec) * 1000 + 300));
     }
 };
 
@@ -573,6 +582,14 @@ const _startSession = async (stationId, mode) => {
         // different episode replacing the station is onTrackLoad's business.
         _subs.push(TrackPlayer.addEventListener(Event.PlaybackState, async ({ state }) => {
             if (_session !== s) return;
+            // A stall while following is what the listener hears as a cut;
+            // record where it happened against what the player had loaded.
+            if (state === State.Buffering && s.status === 'playing') {
+                try {
+                    const p = await TrackPlayer.getProgress();
+                    log('RADIO', 'Player buffering', { position: Math.round(p.position), buffered: Math.round(p.buffered), recorded: Math.round(s.totalSec) });
+                } catch (_) {}
+            }
             if (state === State.Paused || state === State.Stopped) {
                 let track = null;
                 try { track = await TrackPlayer.getActiveTrack(); } catch (_) {}

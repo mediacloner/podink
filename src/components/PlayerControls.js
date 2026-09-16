@@ -24,6 +24,8 @@ const formatRate = (rate) => `${String(Number(rate.toFixed(2)))}x`;
 
 /**
  * `live` (live radio, 4.0.0):
+ *   undefined                              not known yet (the row is still
+ *                                          loading): the saved speed waits
  *   null                                   an episode — nothing changes
  *   { mode: 'live' }                       the station's stream itself: no
  *                                          past to seek into, so the slider,
@@ -43,7 +45,7 @@ const formatRate = (rate) => `${String(Number(rate.toFixed(2)))}x`;
  *                                          taps back to live; the middle shows
  *                                          the delay behind the broadcast.
  */
-const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange, live = null }) => {
+const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange, live }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
     const accent = accentProp ?? colors.accent;
@@ -56,22 +58,33 @@ const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange, li
     // ── Playback rate ────────────────────────────────────────────────────────
     const [rate, setRate] = useState(1);
 
+    // Live radio plays at the speed it is broadcast. Faster than 1x the
+    // player overtakes the recording within minutes and then runs dry on
+    // every playlist reload — the second-long cuts of 2026-09-16 were a
+    // saved 1.15x applied to a station. So an episode gets the saved rate, a
+    // station is pinned to 1x (the saved rate is kept for the next episode),
+    // and while the screen does not yet know which it has nothing is applied.
+    const liveKind = live === undefined ? 'unknown' : live ? 'radio' : 'episode';
     useEffect(() => {
+        if (liveKind === 'unknown') return undefined;
         let cancelled = false;
         (async () => {
             try {
-                const saved = await AsyncStorage.getItem(RATE_KEY);
-                const restored = parseFloat(saved ?? '1') || 1;
+                let next = 1;
+                if (liveKind === 'episode') {
+                    const saved = await AsyncStorage.getItem(RATE_KEY);
+                    next = parseFloat(saved ?? '1') || 1;
+                }
                 if (cancelled) return;
-                setRate(restored);
+                setRate(next);
                 // setRate can throw before a track is loaded; the restore
                 // callback must still fire so PlayerScreen mirrors the rate
-                try { await TrackPlayer.setRate(restored); } catch (_) {}
-                onRateChangeRef.current?.(restored);
+                try { await TrackPlayer.setRate(next); } catch (_) {}
+                onRateChangeRef.current?.(next);
             } catch (_) {}
         })();
         return () => { cancelled = true; };
-    }, []);
+    }, [liveKind]);
 
     const applyRate = async (next) => {
         setRate(next);
@@ -270,17 +283,23 @@ const PlayerControls = ({ accent: accentProp, onReplaySentence, onRateChange, li
 
             {/* Controls */}
             <View style={styles.controls}>
-                {/* Playback rate: tap cycles, long-press resets to 1x */}
-                <TouchableOpacity
-                    style={styles.sideBtn}
-                    onPress={cycleRate}
-                    onLongPress={() => applyRate(1)}
-                    hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
-                >
-                    <Text style={[styles.rateLabel, rate !== 1 && { color: accent }]}>
-                        {formatRate(rate)}
-                    </Text>
-                </TouchableOpacity>
+                {/* Playback rate: tap cycles, long-press resets to 1x. Live
+                    radio has no speed; the placeholder keeps the play button
+                    centred, like the one on the right. */}
+                {live ? (
+                    <View style={styles.sideBtn} />
+                ) : (
+                    <TouchableOpacity
+                        style={styles.sideBtn}
+                        onPress={cycleRate}
+                        onLongPress={() => applyRate(1)}
+                        hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                    >
+                        <Text style={[styles.rateLabel, rate !== 1 && { color: accent }]}>
+                            {formatRate(rate)}
+                        </Text>
+                    </TouchableOpacity>
+                )}
 
                 {/* Skip back */}
                 <TouchableOpacity style={[styles.skipBtn, liveDirect && styles.skipOff]} onPress={() => jump(-10)} disabled={liveDirect}>

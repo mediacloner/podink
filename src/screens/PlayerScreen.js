@@ -640,7 +640,7 @@ const PlayerScreen = ({ route, navigation }) => {
                     accent={accent}
                     onReplaySentence={radioMode === 'live' ? null : handleReplaySentence}
                     onRateChange={setPlaybackRate}
-                    live={liveControls}
+                    live={ep ? liveControls : undefined}
                 />
             </View>
 

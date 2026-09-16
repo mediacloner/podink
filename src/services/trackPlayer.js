@@ -245,12 +245,18 @@ export const loadEpisodeTrack = async (episode, autoPlay = true) => {
     await applyControlOptions(!!track.isLiveStream);
     await TrackPlayer.add(track);
 
-    // reset() reverts the player to 1x, so re-apply the saved playback rate
-    try {
-        const saved = await AsyncStorage.getItem('@playback_rate');
-        const rate = parseFloat(saved ?? '1');
-        if (rate > 0) await TrackPlayer.setRate(rate);
-    } catch (_) {}
+    // reset() reverts the player to 1x, so re-apply the saved playback rate —
+    // except to live radio, which plays at the speed it is broadcast: faster
+    // than 1x the player overtakes the recording within minutes and then
+    // stalls on every playlist reload (the "cuts" of 2026-09-16).
+    // PlayerControls pins its speed button to 1x for the same reason.
+    if (episode.podcast_kind !== 'radio') {
+        try {
+            const saved = await AsyncStorage.getItem('@playback_rate');
+            const rate = parseFloat(saved ?? '1');
+            if (rate > 0) await TrackPlayer.setRate(rate);
+        } catch (_) {}
+    }
 
     if (autoPlay) await TrackPlayer.play();
 };
