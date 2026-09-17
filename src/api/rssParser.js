@@ -175,9 +175,29 @@ export const sliceFeedItems = (xml, ranges, offset, count) => {
  * whose items cannot be located (Atom, RDF) are parsed whole on the first
  * page and served from memory after that.
  *
+ * Pages come newest first whichever way the feed runs. Most feeds put the
+ * latest item first; a few (hand-kept feeds, some Podbean and Libsyn shows)
+ * put it last, and paging those from the top showed the oldest episodes
+ * first and the new ones only once the whole feed had loaded. The dates of
+ * the first and last <item> are read from the text before any parsing, and
+ * an oldest-first document is paged from its end, each page read backwards.
+ *
  * Returns { total, page(offset, count) }; page() resolves to normalized
  * episodes (same shape as fetchPodcastFeed's), fewer than `count` at the end.
  */
+// The date an <item> carries, read from the document without parsing it.
+// Null when it has none or it does not parse.
+const ITEM_DATE = /<(?:pubDate|dc:date)\b[^>]*>\s*([^<]+?)\s*</i;
+const itemDateAt = (xml, [start, end]) => {
+    const m = ITEM_DATE.exec(xml.slice(start, end));
+    const t = m ? new Date(m[1]).getTime() : NaN;
+    return Number.isNaN(t) ? null : t;
+};
+
+// Whether a list whose ends carry these dates runs newest first. An undated
+// end, or two equal dates, count as newest first (the common case).
+const runsNewestFirst = (first, last) => first == null || last == null || first >= last;
+
 export const openFeedHistory = async (url) => {
     const response = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
     if (!response.ok) throw new Error(`Failed to fetch RSS: ${response.status}`);
@@ -188,16 +208,28 @@ export const openFeedHistory = async (url) => {
     if (ranges.length === 0) {
         const feed = await rssParser.parse(xml);
         const all = feed.items.map(normalizeItem);
+        if (all.length > 1
+            && !runsNewestFirst(Date.parse(all[0].release_date), Date.parse(all[all.length - 1].release_date))) {
+            all.reverse();
+        }
         return { total: all.length, page: async (offset, count) => all.slice(offset, offset + count) };
     }
+    const total = ranges.length;
+    const newestFirst = runsNewestFirst(itemDateAt(xml, ranges[0]), itemDateAt(xml, ranges[total - 1]));
+    if (!newestFirst) log('SERVICE', 'Feed runs oldest first; paged from its end', { url });
     return {
-        total: ranges.length,
+        total,
         page: async (offset, count) => {
-            if (offset >= ranges.length || count <= 0) return [];
+            if (offset >= total || count <= 0) return [];
+            // Page n of an oldest-first document is its items counted back
+            // from the end, read backwards.
+            const start = newestFirst ? offset : Math.max(0, total - offset - count);
+            const end = newestFirst ? Math.min(total, offset + count) : total - offset;
             const t0 = Date.now();
-            const feed = await rssParser.parse(sliceFeedItems(xml, ranges, offset, count));
+            const feed = await rssParser.parse(sliceFeedItems(xml, ranges, start, end - start));
             log('SERVICE', 'Feed page parsed', { url, offset, items: feed.items.length, ms: Date.now() - t0 });
-            return feed.items.map(normalizeItem);
+            const items = feed.items.map(normalizeItem);
+            return newestFirst ? items : items.reverse();
         },
     };
 };

@@ -189,13 +189,13 @@ const PodcastEpisodesScreen = ({ navigation, route }) => {
         });
         if (feedStatus === 'done') {
             // Downloads and started episodes the feed has since dropped.
-            const gone = stored.list.filter(r => !inFeed.has(r.id));
-            if (gone.length > 0) {
-                out.push(...gone);
-                out.sort((a, b) => String(b.release_date || '').localeCompare(String(a.release_date || '')));
-            }
+            out.push(...stored.list.filter(r => !inFeed.has(r.id)));
         }
-        return out;
+        // Newest first whatever order the feed keeps. An oldest-first feed is
+        // turned round by openFeedHistory; this catches the rest — a repost,
+        // a trailer or a season put back in order can sit anywhere in it.
+        // (release_date is ISO-8601, so the strings sort as dates.)
+        return out.sort((a, b) => String(b.release_date || '').localeCompare(String(a.release_date || '')));
     }, [feedItems, stored, feedStatus, asEpisode]);
 
     const shown = useMemo(() => {

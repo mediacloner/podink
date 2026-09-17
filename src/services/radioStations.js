@@ -39,7 +39,6 @@ const LOGOS = {
     bbc_radio_london: require('../../assets/radio/bbc_radio_london.png'),
     vaughan_radio: require('../../assets/radio/vaughan_radio.png'),
     kqed: require('../../assets/radio/kqed.png'),
-    voa_learning_english: require('../../assets/radio/voa_learning_english.png'),
     abc_radio_sydney: require('../../assets/radio/abc_radio_sydney.png'),
 };
 
@@ -260,20 +259,6 @@ const RAW_STATIONS = [
         ],
         guide: { provider: 'kqed' },
         homepage: 'https://www.kqed.org/radio',
-    },
-    {
-        id: 'voa_learning_english',
-        flag: '🇺🇸',
-        tz: 'America/New_York',
-        city: 'Washington',
-        name: 'VOA Learning English',
-        blurb: 'News and features read slowly, in simpler English, for learners',
-        detail: 'Voice of America’s service for learners: world news, science, health and American life read at a slower pace with a limited vocabulary — the classic first radio station for English students. No programme guide is published.',
-        streams: [
-            { url: 'https://voa-ingest.akamaized.net/hls/live/2035234/160_342L/playlist.m3u8', kind: 'hls' },
-        ],
-        guide: { provider: 'none' },
-        homepage: 'https://learningenglish.voanews.com/',
     },
     // ── Australia & New Zealand
     {
