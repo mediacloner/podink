@@ -6,8 +6,10 @@ import { radii, type, useStyles, useTheme, withAlpha } from '../theme';
 
 /**
  * What a station is broadcasting: the programme on air (title, description,
- * time span with a progress bar) and the next two. Used by the station screen
- * and by the Player when a station plays without a transcript.
+ * time span with a progress bar) and the next two, always both. Used by the
+ * Player when a station plays without a transcript (the station list folds
+ * its own coming-up rows; here they stay open — user, 2026-09-19: "in the
+ * screen of player the coming up program have to be always").
  *
  *   guide     radioSchedule.fetchGuide() result, or null while loading
  *             (its optional `note` is printed under the list)

@@ -39,7 +39,6 @@ import SettingsGearButton from './components/SettingsGearButton';
 import CollectionScreen from './screens/CollectionScreen';
 import CollectionEditorScreen from './screens/CollectionEditorScreen';
 import RadioScreen from './screens/RadioScreen';
-import RadioStationScreen from './screens/RadioStationScreen';
 import YouTubeImportScreen from './screens/YouTubeImportScreen';
 import PodcastEpisodesScreen from './screens/PodcastEpisodesScreen';
 
@@ -77,9 +76,12 @@ const useNavigationTheme = () => {
 };
 
 // Badge types that can change the new-episodes count; transcript events can't.
-const BADGE_EVENT_TYPES = ['subscribe', 'unsubscribe', 'download-complete', 'episode-delete'];
+const BADGE_EVENT_TYPES = ['subscribe', 'unsubscribe', 'download-complete', 'episode-delete', 'episode-seen'];
 
-const PodcastsTabIcon = ({ color, size }) => {
+// The Feed's tab icon carries the red dot while any episode is new — the
+// Feed is where new episodes land (user, 4.7.0: "the red dot on the My
+// Podcasts button has to be in Feed"; it sat on My Podcasts until then).
+const FeedTabIcon = ({ color, size }) => {
     const styles = useStyles(makeStyles);
     const [hasNew, setHasNew] = useState(false);
     const isFocused = useIsFocused();
@@ -102,7 +104,7 @@ const PodcastsTabIcon = ({ color, size }) => {
 
     return (
         <View>
-            <Icon name="headphones" size={size} color={color} />
+            <Icon name={TAB_ICONS.Timeline} size={size} color={color} />
             {hasNew && <View style={styles.dot} />}
         </View>
     );
@@ -160,20 +162,23 @@ const TabNavigator = ({ navigation }) => {
                     headerRight: () => <SettingsGearButton style={{ marginRight: 16, marginTop: 3 }} />,
                 })}
             >
-                <Tab.Screen name="Timeline" component={SubscribedTimeline} options={{ title: 'Feed' }} />
                 <Tab.Screen
-                    name="Podcasts"
-                    component={PodcastsScreen}
+                    name="Timeline"
+                    component={SubscribedTimeline}
                     options={{
-                        title: 'My Podcasts',
-                        tabBarIcon: ({ color, size }) => <PodcastsTabIcon color={color} size={size} />,
+                        title: 'Feed',
+                        tabBarIcon: ({ color, size }) => <FeedTabIcon color={color} size={size} />,
                     }}
                 />
+                <Tab.Screen name="Podcasts" component={PodcastsScreen} options={{ title: 'My Podcasts' }} />
                 <Tab.Screen name="Library"  component={DownloadedTimeline}  options={{ title: 'Library' }} />
-                {/* Live radio (4.0.0): stations, on-air guide, listen with or
-                    without a transcript. Fourth tab, just before Listening,
-                    since 2026-09-15 on the user's ask (it was the first tab
-                    from 2026-09-07); the app still opens on the Feed. */}
+                {/* Live radio (4.0.0): stations with what is on air; a tap
+                    plays the station at once and opens the Player, where a
+                    transcript can be started (since 2026-09-19 — the station
+                    page with its two buttons is gone). Fourth tab, just
+                    before Listening, since 2026-09-15 on the user's ask (it
+                    was the first tab from 2026-09-07); the app still opens on
+                    the Feed. */}
                 <Tab.Screen name="Radio" component={RadioScreen} options={{ title: 'Live Radio' }} />
                 <Tab.Screen name="Listening" component={ListeningScreen} options={{ title: 'Listening' }} />
             </Tab.Navigator>
@@ -337,11 +342,6 @@ const AppRoot = () => {
                         name="CollectionEditor"
                         component={CollectionEditorScreen}
                         options={{ headerShown: true, title: 'Import audio' }}
-                    />
-                    <Stack.Screen
-                        name="RadioStation"
-                        component={RadioStationScreen}
-                        options={{ headerShown: true, title: '' }}
                     />
                     {/* YouTube (4.1.0): a video link → downloaded audio +
                         transcript, filed under its channel in My Podcasts.

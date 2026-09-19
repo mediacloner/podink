@@ -133,8 +133,10 @@ export const updatePodcastImage = async (feedUrl, imageUrl) => {
   );
 };
 
-/** Subscriptions, the one with the newest episode first (My Podcasts), so
- *  a show that just published rises to the top. release_date is ISO-8601,
+/** Subscriptions for My Podcasts: the ones with episodes not yet seen (the
+ *  red badge) first, then the rest, each group with the newest episode
+ *  first, so a show that just published rises to the top (user, 4.7.0: "my
+ *  podcasts have to be ordered by the new ones"). release_date is ISO-8601,
  *  so string order is date order; a podcast with no episodes yet sorts last
  *  (NULL is smallest in SQLite), then by subscription date. */
 export const getPodcasts = async () => {
@@ -142,11 +144,19 @@ export const getPodcasts = async () => {
   return db.getAllAsync(`
     SELECT p.*,
            (SELECT MAX(e.release_date) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS latest_episode_at,
-           (SELECT COUNT(*) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS episode_count
+           (SELECT COUNT(*) FROM Episodes e WHERE e.podcast_feed_url = p.feed_url) AS episode_count,
+           EXISTS (SELECT 1 FROM Episodes e WHERE e.podcast_feed_url = p.feed_url AND e.is_new = 1) AS has_new
     FROM Podcasts p
     WHERE COALESCE(p.kind, 'rss') != '${RADIO_KIND}'
-    ORDER BY latest_episode_at DESC, p.subscribed_at DESC
+    ORDER BY has_new DESC, latest_episode_at DESC, p.subscribed_at DESC
   `);
+};
+
+/** The double check in the Feed and My Podcasts headers: every new episode
+ *  seen at once — no red dot, no red count anywhere. */
+export const markAllEpisodesAsSeen = async () => {
+  const db = await openDatabaseContext();
+  await db.runAsync('UPDATE Episodes SET is_new = 0 WHERE is_new = 1');
 };
 
 export const getPodcastByFeedUrl = async (feedUrl) => {
@@ -682,15 +692,11 @@ export const getStoredEpisodesForPodcast = async (feedUrl) => {
 };
 
 /** One episode drops out of the "new" count — the user acted on it
- *  (downloaded it from the Feed), so it no longer needs the badge. */
+ *  (downloaded it, or tapped the check that sits on a new row), so it no
+ *  longer needs the red dot. */
 export const markEpisodeSeen = async (id) => {
   const db = await openDatabaseContext();
   await db.runAsync('UPDATE Episodes SET is_new = 0 WHERE id = ? AND is_new = 1', [id]);
-};
-
-export const markPodcastEpisodesAsSeen = async (feedUrl) => {
-  const db = await openDatabaseContext();
-  await db.runAsync('UPDATE Episodes SET is_new = 0 WHERE podcast_feed_url = ?', [feedUrl]);
 };
 
 // Keep only the latest maxNew episodes marked as new; mark the rest as seen

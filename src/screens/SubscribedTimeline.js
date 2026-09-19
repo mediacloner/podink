@@ -11,14 +11,15 @@ import Animated, {
 import NetInfo from '@react-native-community/netinfo';
 import { showAlert } from '../components/AppAlert';
 import { useIsFocused } from '@react-navigation/native';
-import { Feather as Icon } from '@expo/vector-icons';
+import { Feather as Icon, MaterialCommunityIcons } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
 import EmptyState from '../components/EmptyState';
 import LoadingBar from '../components/LoadingBar';
 import SettingsGearButton from '../components/SettingsGearButton';
 import {
     getSubscribedEpisodes, saveEpisodesBatch, savePodcast, updatePodcastImage,
-    getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes, LOCAL_KIND, YOUTUBE_KIND,
+    getPodcasts, pruneOldEpisodesForPodcast, capNewEpisodes, markEpisodeSeen, markAllEpisodesAsSeen,
+    LOCAL_KIND, YOUTUBE_KIND,
 } from '../database/queries';
 import {
     downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
@@ -61,6 +62,19 @@ const SubscribedTimeline = ({ navigation }) => {
     // Which row is transcribing / waiting, so a download's automatic
     // transcription shows its progress right here in the Feed.
     const { activeId, queuedIds } = useTranscriptionQueue();
+
+    // The check under a new episode's notes: looked at, decided about — the
+    // red dot goes, and the My Podcasts count and the tab dot follow.
+    const handleMarkSeen = useCallback(async (episode) => {
+        try {
+            await markEpisodeSeen(episode.id);
+        } catch (e) {
+            showAlert('Could not clear the mark', e?.message || 'Please try again.');
+            return;
+        }
+        setEpisodes(prev => prev.map(e => (e.id === episode.id ? { ...e, is_new: 0 } : e)));
+        notifyLibraryChange({ type: 'episode-seen', episodeId: episode.id });
+    }, []);
 
     const heightSV = useSharedValue(0);
     const opacitySV = useSharedValue(0);
@@ -116,12 +130,34 @@ const SubscribedTimeline = ({ navigation }) => {
         loadData();
     }), []);
 
+    // The double check in the header: every new episode seen at once — no
+    // red dot or count left anywhere (user, 4.7.0: "a small icon with a
+    // double check that marks all podcasts as checked").
+    const handleCheckAll = useCallback(async () => {
+        try {
+            await markAllEpisodesAsSeen();
+        } catch (e) {
+            showAlert('Could not clear the marks', e?.message || 'Please try again.');
+            return;
+        }
+        loadData();
+        notifyLibraryChange({ type: 'episode-seen' });
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     // setOptions replaces the tab-level headerRight (the Settings gear), so
-    // render both here: "+" for feeds, gear for Settings.
+    // render all here: the double check, "+" for feeds, gear for Settings.
     useEffect(() => {
         navigation.setOptions({
             headerRight: () => (
                 <View style={styles.headerActions}>
+                    <TouchableOpacity
+                        onPress={handleCheckAll}
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Clear the new marks of every episode"
+                    >
+                        <MaterialCommunityIcons name="check-all" size={24} color={colors.accent} />
+                    </TouchableOpacity>
                     <TouchableOpacity
                         onPress={togglePanel}
                         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
@@ -134,7 +170,7 @@ const SubscribedTimeline = ({ navigation }) => {
                 </View>
             ),
         });
-    }, [panelOpen, colors, styles]);
+    }, [panelOpen, colors, styles, handleCheckAll]);
 
     const loadData = async () => {
         try {
@@ -283,6 +319,9 @@ const SubscribedTimeline = ({ navigation }) => {
                     description: ep.description || '',
                     audio_url: ep.enclosure,
                 })));
+            // A new subscription's back catalogue is not "new": only its
+            // latest five keep the dot, as after a refresh.
+            await capNewEpisodes(rss);
             setRssUrl('');
             loadData();
             notifyLibraryChange({ type: 'subscribe' });
@@ -414,8 +453,12 @@ const SubscribedTimeline = ({ navigation }) => {
             isQueued={queuedIds.includes(item.id)}
             showArtwork
             expandOnPress
+            onMarkSeen={handleMarkSeen}
         />
-    ), [handleOpenEpisode, handleDownload, handleTranscribe, handleCancel, downloads, activeId, queuedIds]);
+    ), [
+        handleOpenEpisode, handleDownload, handleTranscribe, handleCancel, handleMarkSeen,
+        downloads, activeId, queuedIds,
+    ]);
 
     return (
         <View style={styles.container}>

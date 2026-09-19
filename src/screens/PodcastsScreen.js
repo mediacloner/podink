@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
 import { showAlert } from '../components/AppAlert';
-import { Feather as Icon } from '@expo/vector-icons';
+import { Feather as Icon, MaterialCommunityIcons } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
 import SwipeableRow, { closeOpenRow } from '../components/SwipeableRow';
 import EmptyState from '../components/EmptyState';
@@ -15,7 +15,7 @@ import SettingsGearButton from '../components/SettingsGearButton';
 import {
     getPodcasts,
     getNewEpisodesCountForPodcast, getLatestEpisodesForPodcast,
-    markPodcastEpisodesAsSeen, capNewEpisodes,
+    markEpisodeSeen, markAllEpisodesAsSeen, capNewEpisodes,
     pruneOldEpisodesForPodcast, LOCAL_KIND, YOUTUBE_KIND,
 } from '../database/queries';
 import { deleteCollection, isImportSupported, pickAudioFiles, pickFolder } from '../services/importService';
@@ -32,6 +32,12 @@ import { withAlpha, type, useStyles, useTheme } from '../theme';
 
 const MAX_NEW = 5;
 const EMPTY_EPISODES = [];
+// A podcast's red count, and the dots on its new episodes, clear as the
+// listener checks the episodes (the Check pill under Download on a new row)
+// or downloads them, or all at once with the header's double check — never
+// on their own (user, 4.7.0: "I don't like the 10 seconds, I prefer a
+// checked button in My Podcasts too"). Until 4.6.0 closing an open podcast
+// cleared its whole count at once.
 
 const PodcastRow = React.memo(({
     podcast,
@@ -49,6 +55,7 @@ const PodcastRow = React.memo(({
     onDownload,
     onTranscribe,
     onCancel,
+    onMarkSeen,
 }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -132,6 +139,7 @@ const PodcastRow = React.memo(({
                         onDownload={onDownload}
                         onTranscribe={onTranscribe}
                         onCancel={onCancel}
+                        onMarkSeen={onMarkSeen}
                         isDownloading={ep.id in downloads}
                         downloadProgress={downloads[ep.id] ?? 0}
                         isTranscribing={activeId === ep.id}
@@ -235,26 +243,51 @@ const PodcastsScreen = ({ navigation }) => {
         );
     }, [navigation]);
 
+    // The double check in the header: every new episode of every podcast
+    // seen at once (user, 4.7.0: "a small icon with a double check that
+    // marks all podcasts as checked"). The red counts, the dots on open
+    // rows, the Feed and the tab dot all follow.
+    const handleCheckAll = useCallback(async () => {
+        try {
+            await markAllEpisodesAsSeen();
+        } catch (e) {
+            showAlert('Could not clear the marks', e?.message || 'Please try again.');
+            return;
+        }
+        refreshNewCounts().catch(() => {});
+        refreshLoadedEpisodes();
+        notifyLibraryChange({ type: 'episode-seen' });
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     // setOptions replaces the tab-level headerRight (the Settings gear), so
-    // render both: import for local audio, gear for Settings.
+    // render all: the double check, import for local audio, gear for Settings.
     useEffect(() => {
-        if (!isImportSupported()) return;
         navigation.setOptions({
             headerRight: () => (
                 <View style={styles.headerActions}>
                     <TouchableOpacity
-                        onPress={handleImport}
+                        onPress={handleCheckAll}
                         hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                         accessibilityRole="button"
-                        accessibilityLabel="Import audio files"
+                        accessibilityLabel="Clear the new marks of every episode"
                     >
-                        <Icon name="folder-plus" size={21} color={colors.accent} />
+                        <MaterialCommunityIcons name="check-all" size={24} color={colors.accent} />
                     </TouchableOpacity>
+                    {isImportSupported() && (
+                        <TouchableOpacity
+                            onPress={handleImport}
+                            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                            accessibilityRole="button"
+                            accessibilityLabel="Import audio files"
+                        >
+                            <Icon name="folder-plus" size={21} color={colors.accent} />
+                        </TouchableOpacity>
+                    )}
                     <SettingsGearButton />
                 </View>
             ),
         });
-    }, [navigation, handleImport, colors, styles]);
+    }, [navigation, handleImport, handleCheckAll, colors, styles]);
 
     const handleOpenCollection = useCallback((podcast) => {
         navigation.navigate('Collection', { feedUrl: podcast.feed_url });
@@ -309,12 +342,28 @@ const PodcastsScreen = ({ navigation }) => {
         setNewCountMap(counts);
     }, []);
 
+    // The Check pill on a new row: looked at, decided about. The red dot
+    // goes, the podcast's count drops, and the Feed and the tab dot follow.
+    // The list keeps its order until the next visit, so nothing slides
+    // while it is being read.
+    const handleMarkSeen = useCallback(async (episode) => {
+        try {
+            await markEpisodeSeen(episode.id);
+        } catch (e) {
+            showAlert('Could not clear the mark', e?.message || 'Please try again.');
+            return;
+        }
+        await refreshEpisodesFor(episode.podcast_feed_url).catch(() => {});
+        refreshNewCounts().catch(() => {});
+        notifyLibraryChange({ type: 'episode-seen', episodeId: episode.id });
+    }, [refreshEpisodesFor, refreshNewCounts]);
+
     // Event-driven updates instead of reload-on-every-focus-only: transcripts
     // and downloads completed anywhere update the expanded rows in place.
     useEffect(() => onLibraryChange((payload) => {
         const t = payload?.type;
         if (t === 'transcript-progress') return;
-        if (t === 'download-complete') refreshNewCounts().catch(() => {});
+        if (t === 'download-complete' || t === 'episode-seen') refreshNewCounts().catch(() => {});
         if (t === 'transcript-complete' || t === 'transcript-error'
             || t === 'transcript-delete'
             || t === 'download-complete' || t === 'episode-delete'
@@ -327,27 +376,17 @@ const PodcastsScreen = ({ navigation }) => {
         if (isFocused) {
             loadPodcasts();
         } else {
-            const feedUrl = expandedRef.current;
-            if (feedUrl) {
-                markPodcastEpisodesAsSeen(feedUrl)
-                    .then(() => notifyLibraryChange())
-                    .catch(() => {});
-                setNewCountMap(prev => ({ ...prev, [feedUrl]: 0 }));
-                setExpanded(null);
-            }
+            // Leaving the tab folds the open podcast; its count stays.
+            if (expandedRef.current) setExpanded(null);
         }
     }, [isFocused, loadPodcasts, setExpanded]);
 
     const handleToggleExpand = useCallback(async (podcast) => {
         if (expandedRef.current === podcast.feed_url) {
-            // Collapse + mark as seen
+            // Collapse; the count stays until its episodes are ticked.
             setExpanded(null);
-            setNewCountMap(prev => ({ ...prev, [podcast.feed_url]: 0 }));
-            markPodcastEpisodesAsSeen(podcast.feed_url)
-                .then(() => notifyLibraryChange())
-                .catch(() => {});
         } else {
-            // Load fresh episodes then expand
+            // Load fresh episodes then expand.
             const eps = await getLatestEpisodesForPodcast(podcast.feed_url, MAX_NEW);
             setEpisodesMap(prev => ({ ...prev, [podcast.feed_url]: eps }));
             setExpanded(podcast.feed_url);
@@ -490,11 +529,12 @@ const PodcastsScreen = ({ navigation }) => {
             onDownload={handleDownload}
             onTranscribe={handleTranscribe}
             onCancel={handleCancel}
+            onMarkSeen={handleMarkSeen}
         />
     ), [
         newCountMap, expandedFeedUrl, episodesMap, downloads, activeId, queuedIds,
         handleToggleExpand, handleUnsubscribe, handleOpenEpisode, handleOpenCollection, handleOpenHistory,
-        handleDownload, handleTranscribe, handleCancel,
+        handleDownload, handleTranscribe, handleCancel, handleMarkSeen,
     ]);
 
     if (isLoading) {

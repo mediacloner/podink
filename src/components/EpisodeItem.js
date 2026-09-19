@@ -43,6 +43,14 @@ const EpisodeItem = ({
     // Imported collections: every chapter is on the device by definition,
     // so the green "Downloaded" pill says nothing — keep only the actions.
     showDownloadedPill = true,
+    // The check on a new row (4.7.0): a pill that clears the row's red dot —
+    // "looked at, decided about, download or not" — and nothing more (user:
+    // "I don't need a special state, only that it cleans the red dot"). It
+    // shows only while the dot is there, under the Download pill in the Feed
+    // and in My Podcasts alike (user: "put the button below download", then
+    // "the Feed's has to be in the same place as My Podcasts"). A download
+    // clears the dot too.
+    onMarkSeen,
 }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -74,6 +82,15 @@ const EpisodeItem = ({
         setExpanded(next);
         rotation.value = withSpring(next ? 1 : 0, { damping: 15 });
     };
+    const checkPill = onMarkSeen && episode.is_new ? (
+        <Pill
+            variant="neutral"
+            icon="check"
+            label="Check"
+            onPress={() => onMarkSeen(episode)}
+            accessibilityLabel="Check: clear the new mark"
+        />
+    ) : null;
 
     const chevronStyle = useAnimatedStyle(() => ({
         transform: [{ rotate: `${rotation.value * 180}deg` }],
@@ -114,6 +131,7 @@ const EpisodeItem = ({
                     + (hideActions && isDownloading ? ', downloading' : '')
                     + (hideActions && !isDownloading && episode.is_downloaded ? ', downloaded' : '')
                     + (hideActions && episode.has_transcript ? ', transcript' : '')
+                    + (episode.is_new ? ', new' : '')
                     + (episode.is_played ? ', played' : progressLabel ? `, ${progressLabel}` : '')}
                 accessibilityState={expandOnPress ? { expanded } : undefined}
             >
@@ -129,9 +147,14 @@ const EpisodeItem = ({
 
                 {/* Left info — plain View, tap bubbles up to outer row */}
                 <View style={styles.info}>
-                    <Text style={styles.podcastLabel} numberOfLines={1}>
-                        {episode.podcast_title}
-                    </Text>
+                    {/* The red dot of a "new" episode — the same signal as the
+                        count on a My Podcasts row, one episode at a time. */}
+                    <View style={styles.labelRow}>
+                        {!!episode.is_new && <View style={styles.newDot} />}
+                        <Text style={styles.podcastLabel} numberOfLines={1}>
+                            {episode.podcast_title}
+                        </Text>
+                    </View>
                     <Text
                         style={[styles.episodeTitle, !!episode.is_played && styles.episodeTitlePlayed]}
                         numberOfLines={2}
@@ -289,6 +312,8 @@ const EpisodeItem = ({
                             </View>
                         </View>
                     )}
+                    {/* The check of a new row, under the pills. */}
+                    {checkPill}
                 </View>
                 )}
             </TouchableOpacity>
@@ -380,11 +405,14 @@ const makeStyles = (colors) => StyleSheet.create({
 
     /* Info */
     info: { flex: 1, gap: 4 },
+    labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    newDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: colors.danger },
     podcastLabel: {
         ...type.caption,
         fontWeight: '700',
         color: colors.textMuted,
         textTransform: 'uppercase',
+        flexShrink: 1,
     },
     episodeTitle: {
         ...type.title,
@@ -411,7 +439,7 @@ const makeStyles = (colors) => StyleSheet.create({
     progressFill: { height: '100%', borderRadius: 1.5, backgroundColor: colors.accent },
 
     /* Right column */
-    right: { alignItems: 'flex-end', justifyContent: 'center', minWidth: 90 },
+    right: { alignItems: 'flex-end', justifyContent: 'center', minWidth: 90, gap: 8 },
     resumeCol: { justifyContent: 'center', paddingLeft: 4 },
     downloadedCol: { alignItems: 'flex-end', gap: 8 },
     actionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
