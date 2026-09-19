@@ -31,8 +31,7 @@ const formatRate = (rate) => `${String(Number(rate.toFixed(2)))}x`;
  *                                          past to seek into, so the slider,
  *                                          skips and times give way to LIVE
  *   { mode: 'recording', read, onGoLive }  a recording that grows while it
- *                                          plays (with a transcript, or live
- *                                          radio kept for pause / rewind).
+ *                                          plays (a station with a transcript).
  *                                          `read()` returns the live state
  *                                          { followSec, airSec, edgeSec }:
  *                                          followSec is where playback sits when

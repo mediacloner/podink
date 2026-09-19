@@ -22,11 +22,14 @@ import { getEpisodeById, getEpisodeBooks } from '../database/queries';
 import { indexEpisodeBooks } from '../services/bookIndex';
 import { getCorrectedTranscript, indexEpisodeNames } from '../services/nameIndex';
 import ProgrammeGuide from '../components/ProgrammeGuide';
+import { showAlert } from '../components/AppAlert';
+import { useMinuteClock } from '../hooks/useMinuteClock';
 import {
-    attachPlayer as attachRadioPlayer, FOLLOW_DELAY_SEC, goLive as radioGoLive, isRadioEpisode, readLiveState,
-    stopSession as stopRadioSession, useRadioSession,
+    attachPlayer as attachRadioPlayer, FOLLOW_DELAY_SEC, goLive as radioGoLive, isRadioAvailable, isRadioEpisode,
+    readLiveState, stopSession as stopRadioSession, switchToTranscript, useRadioSession,
 } from '../services/radioService';
 import { getStation, stationIdFromFeedUrl } from '../services/radioStations';
+import { stationLocalTime } from '../services/radioSchedule';
 import { artworkSource } from '../api/userAgent';
 import { buildTranscriptExport, shareText } from '../components/transcript/share';
 import ChapterSheet from '../components/transcript/ChapterSheet';
@@ -53,18 +56,54 @@ const PlayerScreen = ({ route, navigation }) => {
     epRef.current = ep;
 
     // Live radio (4.0.0): 'transcript' shows the text (arriving window by
-    // window), 'live' the programme guide. A recorded session — its row's
-    // local_audio_path is the growing local playlist — gets the full controls
-    // either way (seek anywhere, LIVE catches up); the station's own stream,
-    // played directly, has no past and shows LIVE alone.
+    // window), 'live' the programme guide with the Transcription button. The
+    // controls follow what the player holds: the session's recording (seek
+    // anywhere, LIVE catches up) or the station's own stream, which has no
+    // past and shows LIVE alone — during the switch to a transcript the
+    // stream still plays while the row already names the recording.
     const isRadio = isRadioEpisode(ep);
     const radio = useRadioSession();
     const radioSession = isRadio && radio?.episodeId === epId ? radio : null;
     const radioMode = !isRadio ? null
         : radioSession ? radioSession.mode
         : (ep.has_transcript ? 'transcript' : 'live');
-    const radioRecorded = isRadio && !!ep.local_audio_path;
+    const radioRecorded = isRadio && (radioSession ? !!radioSession.recordingLoaded : !!ep.local_audio_path);
     const radioStation = isRadio ? getStation(stationIdFromFeedUrl(ep.podcast_feed_url)) : null;
+    // The station's own wall clock in the header, on the minute (user,
+    // 2026-09-19: "I want to see here the local time of station too").
+    const nowMs = useMinuteClock(isRadio);
+    const radioLocal = radioStation?.tz ? stationLocalTime(radioStation.tz, new Date(nowMs)) : null;
+    const radioLocalDay = radioLocal
+        ? (radioLocal.dayShift > 0 ? `already ${radioLocal.weekday}` : radioLocal.dayShift < 0 ? `still ${radioLocal.weekday}` : radioLocal.weekday)
+        : '';
+
+    // The Transcription button of a station playing live: the session turns
+    // into a transcript session in place — the stream keeps playing while
+    // the first FOLLOW_DELAY_SEC are recorded and read, then the sound moves
+    // to the recording with the words on screen.
+    const [switching, setSwitching] = useState(false);
+    const startTranscription = useCallback(async () => {
+        if (switching) return;
+        setSwitching(true);
+        try {
+            await switchToTranscript();
+        } catch (e) {
+            if (e?.code === 'MODEL_NOT_DOWNLOADED') {
+                showAlert(
+                    'Speech model needed',
+                    'Transcribing live radio runs on the device and needs the speech model. Download it in Settings → Transcription, then come back.',
+                    [
+                        { text: 'Not now', style: 'cancel' },
+                        { text: 'Open Settings', onPress: () => navigation.navigate('Settings') },
+                    ],
+                );
+            } else {
+                showAlert('Could not start the transcript', e?.message || 'Please try again.');
+            }
+        } finally {
+            setSwitching(false);
+        }
+    }, [switching, navigation]);
 
     const [segments, setSegments] = useState([]);
     // Books the transcript mentions (EpisodeBooks rows) — bold titles + book card.
@@ -457,7 +496,8 @@ const PlayerScreen = ({ route, navigation }) => {
     const transcriptIncomplete = canTranscribe && !ep?.has_transcript && segments.length > 0 && !transcribing && !isQueued;
 
     // Live radio: what the empty transcript pane says while the first window
-    // records + transcribes, and the controls' LIVE state.
+    // records + transcribes (the stream keeps playing meanwhile), and the
+    // controls' LIVE state.
     let radioEmptyStatus = null;
     if (radioMode === 'transcript' && segments.length === 0) {
         if (!radioSession) {
@@ -465,9 +505,9 @@ const PlayerScreen = ({ route, navigation }) => {
         } else if (radioSession.transcriptError && !radioSession.hasText) {
             radioEmptyStatus = `The transcript could not start: ${radioSession.transcriptError}`;
         } else if (radioSession.totalSec > 0) {
-            radioEmptyStatus = `Buffering ${FOLLOW_DELAY_SEC} s of live radio so the text stays ahead of the sound — ${Math.min(FOLLOW_DELAY_SEC, Math.round(radioSession.totalSec))} s so far.`;
+            radioEmptyStatus = `Recording ${FOLLOW_DELAY_SEC} s of the station so the words stay ahead of the sound — ${Math.min(FOLLOW_DELAY_SEC, Math.round(radioSession.totalSec))} s so far. The station keeps playing until the text is ready; the sound then goes back about ${FOLLOW_DELAY_SEC} s, with the words on screen.`;
         } else {
-            radioEmptyStatus = 'Connecting to the stream…';
+            radioEmptyStatus = 'Starting the recorder and the speech engine — the station keeps playing meanwhile.';
         }
     }
     const liveControls = !isRadio ? null
@@ -527,6 +567,15 @@ const PlayerScreen = ({ route, navigation }) => {
                     <Text style={[styles.episodeTitle, headerTextStyle]} numberOfLines={2}>
                         {ep.title}
                     </Text>
+                    {!!radioLocal && (
+                        <View style={styles.radioClockRow} accessibilityLabel={`Local time in ${radioStation.city}: ${radioLocal.clock}, ${radioLocalDay}`}>
+                            <Icon name='clock' size={12} color={withAlpha(headerFg, 0.6)} />
+                            <Text style={[styles.radioClockText, headerTextStyle, { color: withAlpha(headerFg, 0.75) }]} numberOfLines={1}>
+                                <Text style={[styles.radioClockValue, { color: headerFg }]}>{radioLocal.clock}</Text>
+                                {` in ${radioStation.city} · ${radioLocalDay}`}
+                            </Text>
+                        </View>
+                    )}
                 </View>
                 {!isRadio && hasTranscript && segments.length > 0 && (
                     <TouchableOpacity
@@ -567,17 +616,44 @@ const PlayerScreen = ({ route, navigation }) => {
             <View style={styles.transcriptArea}>
                 {radioMode === 'live' ? (
                     <ScrollView contentContainerStyle={styles.livePane} showsVerticalScrollIndicator={false}>
+                        {/* The way to a transcript, from here: the station
+                            keeps playing while the first seconds are
+                            recorded and read. Android only (the recorder). */}
+                        {isRadioAvailable() && !!radioSession && (
+                            <View style={styles.transcribeBox}>
+                                <TouchableOpacity
+                                    style={[styles.transcribeBtn, { backgroundColor: withAlpha(accent, 0.14), borderColor: withAlpha(accent, 0.4) }]}
+                                    onPress={startTranscription}
+                                    disabled={switching}
+                                    activeOpacity={0.8}
+                                    accessibilityRole='button'
+                                    accessibilityLabel='Start the transcription'
+                                >
+                                    {switching
+                                        ? <ActivityIndicator size='small' color={accent} />
+                                        : <Icon name='type' size={17} color={accent} />}
+                                    <Text style={[styles.transcribeBtnText, { color: accent }]}>Transcription</Text>
+                                </TouchableOpacity>
+                                <Text style={styles.transcribeCaption}>
+                                    {`Writes the words on screen as the station plays, about ${FOLLOW_DELAY_SEC} seconds behind the air — rewind, replay a sentence, look words up, and jump back to live. The station keeps playing while the first ${FOLLOW_DELAY_SEC} seconds are recorded; the sound then goes back that far, with the text.`}
+                                </Text>
+                                {!!radioSession.transcriptError && (
+                                    <View style={styles.transcribeWarn}>
+                                        <Icon name='alert-circle' size={14} color={colors.warning} />
+                                        <Text style={styles.transcribeWarnText}>{`The transcript could not start: ${radioSession.transcriptError}`}</Text>
+                                    </View>
+                                )}
+                            </View>
+                        )}
                         <ProgrammeGuide
                             guide={radioSession?.guide || null}
                             icyTitle={radioSession?.icyTitle || null}
                             compact
                             accent={accent}
                         />
-                        <Text style={styles.liveFootnote}>
-                            {radioRecorded
-                                ? 'No transcript — but everything since you tuned in is kept: pause, skip back and forth, and tap LIVE to catch up. To read along, stop and choose “With transcript” on the station’s page.'
-                                : 'Playing the station as it airs — no transcript. To read along, stop and choose “With transcript” on the station’s page.'}
-                        </Text>
+                        {!!radioStation?.detail && (
+                            <Text style={styles.liveFootnote}>{radioStation.detail}</Text>
+                        )}
                     </ScrollView>
                 ) : (
                     <TranscriptHighlighter
@@ -638,7 +714,7 @@ const PlayerScreen = ({ route, navigation }) => {
                 </TouchableOpacity>
                 <PlayerControls
                     accent={accent}
-                    onReplaySentence={radioMode === 'live' ? null : handleReplaySentence}
+                    onReplaySentence={isRadio && !radioRecorded ? null : handleReplaySentence}
                     onRateChange={setPlaybackRate}
                     live={ep ? liveControls : undefined}
                 />
@@ -728,17 +804,32 @@ const makeStyles = (colors) => StyleSheet.create({
         justifyContent: 'center',
     },
     radioLogo: { width: '100%', height: '100%' },
+    // The station's own wall clock under the programme title.
+    radioClockRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 1 },
+    radioClockText: { fontSize: 12, lineHeight: 16 },
+    radioClockValue: { fontWeight: '700', fontVariant: ['tabular-nums'] },
 
     // ── Transcript ────────────────────────────────────────────
     transcriptArea: {
         flex: 1,
         backgroundColor: colors.bgPlayer,
     },
-    // Live radio without a transcript: the programme guide takes the pane.
+    // Live radio without a transcript: the Transcription button, then the
+    // programme guide, then the station's description take the pane.
     livePane: {
-        paddingTop: 18,
+        paddingTop: 14,
         paddingBottom: 40,
     },
+    transcribeBox: { paddingHorizontal: 24, paddingBottom: 14, gap: 8 },
+    transcribeBtn: {
+        minHeight: 48, borderRadius: radii.m, borderWidth: 0.5,
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+        paddingHorizontal: 14,
+    },
+    transcribeBtnText: { fontSize: 15, fontWeight: '700', letterSpacing: -0.1 },
+    transcribeCaption: { fontSize: 12.5, lineHeight: 17, color: colors.textMuted },
+    transcribeWarn: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
+    transcribeWarnText: { flex: 1, fontSize: 12.5, lineHeight: 17, color: colors.warning },
     liveFootnote: {
         fontSize: 13,
         lineHeight: 19,

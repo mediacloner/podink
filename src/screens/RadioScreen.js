@@ -1,10 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppState, FlatList, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, FlatList, Image, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
+import { showAlert } from '../components/AppAlert';
+import { getEpisodeById } from '../database/queries';
+import { useMinuteClock } from '../hooks/useMinuteClock';
 import { STATIONS } from '../services/radioStations';
 import { fetchGuide, formatClock, hasGuide, minutesLeft, stationLocalTime, zoneDistanceMinutes } from '../services/radioSchedule';
-import { currentProgramme, useRadioSession } from '../services/radioService';
+import { currentProgramme, FOLLOW_DELAY_SEC, startSession, useRadioSession } from '../services/radioService';
 import { radii, type, useStyles, useTheme, withAlpha } from '../theme';
 
 const GUIDE_POLL_MS = 60 * 1000;
@@ -12,13 +15,20 @@ const GUIDE_POLL_MS = 60 * 1000;
 /**
  * "Live Radio" tab: the station list, each station with the programme on air
  * — its time span, title and description — so a listener can pick by what is
- * being said rather than by the station's name. Tapping a station opens its
- * screen (the full guide with the next two, Listen / Listen with transcript).
+ * being said rather than by the station's name.
+ *
+ * Tapping a station plays it at once — the stream itself, no recorder and no
+ * delay — and opens the Player, where the station's clock, the guide and the
+ * Transcription button live (user, 2026-09-19: "when I click to station
+ * start to listen directly without recording and delay"). Tapping the
+ * programme on air unfolds what comes next, under it, in the row. The
+ * station page with its two buttons, the step between list and Player
+ * since 4.0.0, is gone.
  *
  * Every station's guide is read when the tab comes in front and then once a
  * minute while it stays there and the app is active; radioSchedule caches
- * each read for a minute, so the station screen and a playing session share
- * the same answers instead of asking again.
+ * each read for a minute, so a playing session shares the same answers
+ * instead of asking again.
  *
  * Each row also carries the station's own wall clock ("14:32 in Sydney ·
  * already Tuesday"), re-rendered on every minute boundary while the tab is in
@@ -37,6 +47,9 @@ const RadioScreen = ({ navigation }) => {
     const session = useRadioSession();
     const isFocused = useIsFocused();
     const [guides, setGuides] = useState({}); // stationId -> guide
+    const [busyId, setBusyId] = useState(null); // station being tuned in
+    const busyRef = useRef(false);
+    const [openId, setOpenId] = useState(null); // station whose coming-up list is unfolded
 
     useEffect(() => {
         if (!isFocused) return undefined;
@@ -59,17 +72,7 @@ const RadioScreen = ({ navigation }) => {
     }, [isFocused]);
 
     // The stations' local clocks: re-render on each minute boundary while in front.
-    const [nowMs, setNowMs] = useState(() => Date.now());
-    useEffect(() => {
-        if (!isFocused) return undefined;
-        let t = null;
-        const arm = () => {
-            t = setTimeout(() => { setNowMs(Date.now()); arm(); }, 60000 - (Date.now() % 60000) + 50);
-        };
-        setNowMs(Date.now());
-        arm();
-        return () => clearTimeout(t);
-    }, [isFocused]);
+    const nowMs = useMinuteClock(isFocused);
 
     // Nearest clock first; a stable sort keeps the curated order within a zone.
     // `sortTz` lets a station sort with another zone's group (Vaughan Radio,
@@ -79,12 +82,38 @@ const RadioScreen = ({ navigation }) => {
         .sort((a, b) => a.d - b.d || a.i - b.i)
         .map(x => x.st), [nowMs]);
 
+    const openPlayer = useCallback(async (episodeId) => {
+        const episode = await getEpisodeById(episodeId);
+        if (episode) navigation.navigate('Player', { episode });
+    }, [navigation]);
+
+    // A tap on a station: the one playing just opens its Player; another
+    // starts playing (the stream itself, at once) and opens the Player.
+    const tune = useCallback(async (station) => {
+        if (busyRef.current) return;
+        if (session?.stationId === station.id) { openPlayer(session.episodeId); return; }
+        busyRef.current = true;
+        setBusyId(station.id);
+        try {
+            const s = await startSession(station.id, 'live');
+            if (s) await openPlayer(s.episodeId);
+        } catch (e) {
+            showAlert('Could not start the radio', e?.message || 'Please try again.');
+        } finally {
+            busyRef.current = false;
+            setBusyId(null);
+        }
+    }, [session, openPlayer]);
+
     const renderItem = useCallback(({ item }) => {
         const active = session?.stationId === item.id;
+        const busy = busyId === item.id;
         // The session's own guide read is fresher for the station playing, and
         // it knows the stream's ICY title when the station has no guide.
         const guide = active ? (session.guide || guides[item.id]) : guides[item.id];
         const now = active ? currentProgramme(session) : (guide?.now || null);
+        const next = guide?.next || [];
+        const open = openId === item.id && next.length > 0;
         const timed = !!now && now.start > 0 && now.end > now.start;
         const left = timed && now.end > nowMs ? minutesLeft(now, nowMs) : 0;
 
@@ -105,6 +134,7 @@ const RadioScreen = ({ navigation }) => {
 
         const a11y = [
             item.name,
+            active ? 'playing' : 'tap to play',
             local ? `local time ${localLabel}` : '',
             now ? `on air: ${now.title}` : '',
             now?.description || '',
@@ -113,7 +143,8 @@ const RadioScreen = ({ navigation }) => {
             <TouchableOpacity
                 style={styles.row}
                 activeOpacity={0.7}
-                onPress={() => navigation.navigate('RadioStation', { stationId: item.id })}
+                onPress={() => tune(item)}
+                disabled={busy}
                 accessibilityRole="button"
                 accessibilityLabel={a11y}
             >
@@ -149,10 +180,29 @@ const RadioScreen = ({ navigation }) => {
                         )}
                         <Text style={styles.blurb} numberOfLines={2}>{item.blurb}</Text>
                     </View>
-                    <Icon name="chevron-right" size={18} color={colors.textFaint} style={styles.chevron} />
+                    {/* A tap plays: the glyph says so. The station playing
+                        opens its Player instead. */}
+                    <View style={styles.glyph}>
+                        {busy
+                            ? <ActivityIndicator size="small" color={colors.accent} />
+                            : active
+                                ? <Icon name="chevron-right" size={20} color={colors.textFaint} />
+                                : <Icon name="play-circle" size={24} color={colors.accent} />}
+                    </View>
                 </View>
                 {now ? (
-                    <View style={styles.onAir}>
+                    // The programme on air. A tap on it unfolds what comes
+                    // next (and folds it away again) without starting the
+                    // station: the inner press wins over the row's. With
+                    // nothing to unfold it is disabled, so the tap falls
+                    // through to the row and plays the station.
+                    <Pressable
+                        style={({ pressed }) => [styles.onAir, pressed && { opacity: 0.7 }]}
+                        onPress={() => setOpenId(prev => (prev === item.id ? null : item.id))}
+                        disabled={next.length === 0}
+                        accessibilityRole={next.length > 0 ? 'button' : undefined}
+                        accessibilityLabel={next.length > 0 ? (open ? 'Hide what comes next' : 'Show what comes next') : undefined}
+                    >
                         <View style={styles.onAirHead}>
                             <View style={styles.onAirDot} />
                             <Text style={styles.onAirTime} numberOfLines={1}>
@@ -163,15 +213,42 @@ const RadioScreen = ({ navigation }) => {
                         <Text style={styles.programmeTitle} numberOfLines={2}>{now.title}</Text>
                         {!!now.subtitle && <Text style={styles.programmeSubtitle} numberOfLines={1}>{now.subtitle}</Text>}
                         {!!now.description && (
-                            <Text style={styles.programmeDesc} numberOfLines={3}>{now.description}</Text>
+                            <Text style={styles.programmeDesc} numberOfLines={open ? 6 : 3}>{now.description}</Text>
                         )}
-                    </View>
+                        {next.length > 0 && (
+                            <View style={styles.foldRow}>
+                                <Icon name={open ? 'chevron-up' : 'chevron-down'} size={13} color={colors.accent} />
+                                <Text style={styles.foldText}>{open ? 'Hide what comes next' : 'Coming up'}</Text>
+                            </View>
+                        )}
+                        {open && (
+                            <View style={styles.nextList}>
+                                {next.map((p, i) => (
+                                    <View key={`${p.start}-${i}`} style={[styles.nextRow, i > 0 && styles.nextRowBorder]}>
+                                        <View style={styles.nextWhen}>
+                                            <Text style={styles.nextTime}>{formatClock(p.start)}</Text>
+                                            {p.end > p.start && (
+                                                <Text style={styles.nextLength}>{Math.round((p.end - p.start) / 60000)} min</Text>
+                                            )}
+                                        </View>
+                                        <View style={styles.nextBody}>
+                                            <Text style={styles.nextTitle} numberOfLines={2}>{p.title}</Text>
+                                            {!!p.subtitle && <Text style={styles.nextSubtitle} numberOfLines={1}>{p.subtitle}</Text>}
+                                            {!!p.description && (
+                                                <Text style={styles.nextDesc} numberOfLines={3}>{p.description}</Text>
+                                            )}
+                                        </View>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+                    </Pressable>
                 ) : (
                     !!empty && <Text style={styles.empty} numberOfLines={1}>{empty}</Text>
                 )}
             </TouchableOpacity>
         );
-    }, [session, guides, nowMs, styles, colors, navigation]);
+    }, [session, guides, nowMs, busyId, openId, styles, colors, tune]);
 
     return (
         <View style={styles.container}>
@@ -179,13 +256,11 @@ const RadioScreen = ({ navigation }) => {
                 data={stations}
                 keyExtractor={(s) => s.id}
                 renderItem={renderItem}
-                extraData={{ session, guides, nowMs }}
+                extraData={{ session, guides, nowMs, busyId, openId }}
                 ItemSeparatorComponent={() => <View style={styles.separator} />}
                 ListHeaderComponent={(
                     <Text style={styles.intro}>
-                        English-language talk radio, live. Listen straight away — pause, skip back and
-                        catch up as you like — or with a transcript, about 40 seconds behind the air so
-                        the words are on screen before you hear them. Rewind, replay, look words up.
+                        {`English-language talk radio, live. Tap a station and it plays at once. In the player, Transcription writes the words on screen as the station plays, about ${FOLLOW_DELAY_SEC} seconds behind the air — rewind, replay, look words up. Tap the programme on air to see what comes next.`}
                     </Text>
                 )}
                 contentContainerStyle={{ paddingBottom: 120 }}
@@ -209,7 +284,7 @@ const makeStyles = (colors) => StyleSheet.create({
     // blurb's last line; the blurb keeps two lines' height even when it has
     // one, so every station's tile is the same size.
     top: { flexDirection: 'row', alignItems: 'stretch', gap: 14 },
-    chevron: { alignSelf: 'flex-start', marginTop: 1 },
+    glyph: { alignSelf: 'flex-start', width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
     // Logos are wordmarks of very different shapes (a wide RTÉ, a round ABC):
     // a wide white tile with `contain` fits them all at a legible size. The
     // image sits in a box laid over the tile rather than in its flow, so the
@@ -240,7 +315,7 @@ const makeStyles = (colors) => StyleSheet.create({
     clockDay: { ...type.body, fontSize: 13, color: colors.accent },
     blurb: { ...type.body, color: colors.textMuted, lineHeight: 18, minHeight: 36 },
     // The programme on air, across the row: time span in the accent, title,
-    // subtitle, then the description.
+    // subtitle, then the description; "Coming up" unfolds the next ones.
     onAir: { marginTop: 2, gap: 2 },
     onAirHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 1 },
     onAirDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.danger },
@@ -249,6 +324,18 @@ const makeStyles = (colors) => StyleSheet.create({
     programmeTitle: { ...type.title, color: colors.textPrimary, lineHeight: 20 },
     programmeSubtitle: { ...type.bodyStrong, color: colors.textSecondary, lineHeight: 18 },
     programmeDesc: { ...type.body, fontSize: 13.5, color: colors.textSecondary, lineHeight: 19, marginTop: 1 },
+    foldRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+    foldText: { ...type.caption, color: colors.accent, letterSpacing: 0.3 },
+    nextList: { marginTop: 4 },
+    nextRow: { flexDirection: 'row', gap: 12, paddingVertical: 8 },
+    nextRowBorder: { borderTopWidth: 0.5, borderTopColor: colors.hairline },
+    nextWhen: { width: 48, paddingTop: 1, gap: 2 },
+    nextTime: { ...type.bodyStrong, fontSize: 13, color: colors.textSecondary, fontVariant: ['tabular-nums'] },
+    nextLength: { ...type.caption, color: colors.textMuted, letterSpacing: 0 },
+    nextBody: { flex: 1, gap: 2 },
+    nextTitle: { ...type.bodyStrong, color: colors.textPrimary, lineHeight: 19 },
+    nextSubtitle: { ...type.body, fontSize: 13, color: colors.textSecondary, lineHeight: 17 },
+    nextDesc: { ...type.body, fontSize: 13, color: colors.textMuted, lineHeight: 18 },
     empty: { ...type.body, color: colors.textFaint, lineHeight: 18, marginTop: 2, fontStyle: 'italic' },
     livePill: {
         flexDirection: 'row', alignItems: 'center', gap: 5,
