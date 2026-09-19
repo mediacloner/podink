@@ -18,6 +18,8 @@ import { onLibraryChange } from '../services/libraryEvents';
 import { artworkSource } from '../api/userAgent';
 import { log } from '../services/logService';
 import { showNotesPlainText } from '../services/showNotes';
+import { isBookTranscript, needsSync, queueVoiceSync, textDoesNotFit } from '../services/bookService';
+import { useBookSync } from '../hooks/useBookSync';
 import { type, useStyles, useTheme } from '../theme';
 
 const formatBytes = (n) => {
@@ -42,6 +44,7 @@ const CollectionScreen = ({ navigation, route }) => {
     const { bottom } = useSafeAreaInsets();
     const isFocused = useIsFocused();
     const { activeId, queuedIds } = useTranscriptionQueue();
+    const { syncingId, syncQueueIds } = useBookSync();
     const [podcast, setPodcast] = useState(null);
     const [episodes, setEpisodes] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -64,7 +67,14 @@ const CollectionScreen = ({ navigation, route }) => {
     useEffect(() => { if (isFocused) load(); }, [isFocused, load]);
     useEffect(() => onLibraryChange((payload) => {
         const t = payload?.type;
-        if (t === 'transcript-progress' || t === 'playback-progress') return;
+        if (t === 'transcript-progress' || t === 'playback-progress' || t === 'book-sync-progress') return;
+        // A whole book queued at once must not put up an alert for each
+        // chapter; a match the listener pressed for says why it could not.
+        if (t === 'book-sync-error') {
+            if (payload.ask) showAlert('The text could not be matched', payload.error || 'Please try again.');
+            load();
+            return;
+        }
         load();
     }), [load]);
 
@@ -178,6 +188,67 @@ const CollectionScreen = ({ navigation, route }) => {
         () => episodes.filter(e => queuedIds.includes(e.id) || activeId === e.id).length,
         [episodes, queuedIds, activeId],
     );
+    // Chapters whose book text is still at a guessed pace (4.8.0) — what
+    // "Match all" sends to the speech alignment queue.
+    const pendingSyncs = useMemo(
+        () => episodes.filter(e => needsSync(e) && syncingId !== e.id && !syncQueueIds.includes(e.id)),
+        [episodes, syncingId, syncQueueIds],
+    );
+    const misfits = useMemo(() => episodes.filter(textDoesNotFit).length, [episodes]);
+    // Chapters already matched: a match can go wrong (a read of the audio cut
+    // short, a chapter the narrator treats differently), and there has to be
+    // a way to ask for it again.
+    const matched = useMemo(
+        () => episodes.filter(e => isBookTranscript(e) && !textDoesNotFit(e) && !needsSync(e)),
+        [episodes],
+    );
+    const matchingHere = useMemo(
+        () => episodes.filter(e => syncingId === e.id || syncQueueIds.includes(e.id)).length,
+        [episodes, syncingId, syncQueueIds],
+    );
+    const handleSync = useCallback((episode) => { queueVoiceSync([episode], { ask: true }); }, []);
+    // A chapter whose words cannot be what its audio reads: the remedy is the
+    // editor, where the part it reads is chosen.
+    const handleRematch = useCallback((episode) => {
+        showAlert(
+            'Match it again?',
+            `"${episode.title}" already has speech-matched timing. Match the spoken words again while keeping the EPUB text?`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Match again', onPress: () => queueVoiceSync([episode], { ask: true, again: true }) },
+            ],
+        );
+    }, []);
+    const handleTextWarning = useCallback((episode) => {
+        showAlert(
+            'This may not be the right text',
+            `"${episode.title}" shows a part of the book too long or too short for its audio, so the words cannot follow the voice. Change the part it reads in Edit.`,
+            [
+                { text: 'Close', style: 'cancel' },
+                { text: 'Edit', onPress: () => navigation.navigate('CollectionEditor', { mode: 'edit', feedUrl }) },
+            ],
+        );
+    }, [navigation, feedUrl]);
+    const handleSyncAll = useCallback((again = false) => {
+        const list = again ? matched : pendingSyncs;
+        if (!list.length) return;
+        showAlert(
+            again ? 'Match them again' : 'Match the text to the voice',
+            again
+                ? `Match the spoken words again in ${list.length} ${list.length === 1 ? 'chapter' : 'chapters'}? The EPUB text stays unchanged.`
+                : `Match the spoken words to the EPUB in ${list.length} ${list.length === 1 ? 'chapter' : 'chapters'}? This runs on your device in the background and can take several minutes per chapter. The EPUB text stays unchanged.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Match',
+                    onPress: () => {
+                        log('UI', 'Match all to the voice', { feedUrl, chapters: list.length, again });
+                        queueVoiceSync(list, { ask: false, again });
+                    },
+                },
+            ],
+        );
+    }, [pendingSyncs, matched, feedUrl]);
 
     // A whole book is hours of on-device work, so it asks first; the queue
     // then runs chapter by chapter in the background (whisperService FIFO).
@@ -263,7 +334,45 @@ const CollectionScreen = ({ navigation, route }) => {
             <View style={styles.actions}>
                 <Pill variant="blue" icon="plus" label="Add files" onPress={handleAddFiles} style={styles.actionPill} />
                 <Pill variant="blue" icon="edit-2" label="Edit" onPress={handleEdit} style={styles.actionPill} />
-                {pendingTranscripts.length > 0 ? (
+                {matchingHere > 0 ? (
+                    <Pill
+                        variant="orange"
+                        icon="book-open"
+                        label={`Matching · ${matchingHere}`}
+                        trailingLoading
+                        style={styles.actionPill}
+                        accessibilityLabel={`${matchingHere} chapters are being matched to the voice`}
+                    />
+                ) : pendingSyncs.length > 0 ? (
+                    // The book's own text needs its timing before anything
+                    // else is worth doing.
+                    <Pill
+                        variant="blue"
+                        icon="book-open"
+                        label={`Match all · ${pendingSyncs.length}`}
+                        onPress={() => handleSyncAll(false)}
+                        style={styles.actionPill}
+                        accessibilityLabel={`Match the book text of ${pendingSyncs.length} chapters to the narrator`}
+                    />
+                ) : misfits > 0 ? (
+                    <Pill
+                        variant="orange"
+                        icon="alert-triangle"
+                        label={`Check text · ${misfits}`}
+                        onPress={() => navigation.navigate('CollectionEditor', { mode: 'edit', feedUrl })}
+                        style={styles.actionPill}
+                        accessibilityLabel={`${misfits} chapters show a part of the book that does not fit their audio; edit the collection`}
+                    />
+                ) : matched.length > 0 ? (
+                    <Pill
+                        variant="blue"
+                        icon="book-open"
+                        label="Match again"
+                        onPress={() => handleSyncAll(true)}
+                        style={styles.actionPill}
+                        accessibilityLabel="Match the spoken words to the book text again"
+                    />
+                ) : pendingTranscripts.length > 0 ? (
                     <Pill
                         variant="blue"
                         icon="zap"
@@ -318,13 +427,17 @@ const CollectionScreen = ({ navigation, route }) => {
                 episode={item}
                 onPress={openEpisode}
                 onTranscribe={handleTranscribe}
+                onSync={handleSync}
+                onTextWarning={handleTextWarning}
+                onRematch={handleRematch}
+                isSyncing={syncingId === item.id || syncQueueIds.includes(item.id)}
                 onCancel={handleCancel}
                 isTranscribing={activeId === item.id}
                 isQueued={queuedIds.includes(item.id) && activeId !== item.id}
                 showDownloadedPill={false}
             />
         </SwipeableRow>
-    ), [colors, openEpisode, handleTranscribe, handleCancel, handleDeleteChapter, activeId, queuedIds]);
+    ), [colors, openEpisode, handleTranscribe, handleSync, handleTextWarning, handleRematch, handleCancel, handleDeleteChapter, activeId, queuedIds, syncingId, syncQueueIds]);
 
     if (isLoading) {
         return (

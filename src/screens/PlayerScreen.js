@@ -18,6 +18,9 @@ import {
 import {
     downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
 } from '../services/episodeService';
+import {
+    getSyncingId, isBookTranscript, isSyncing, needsSync, onBookSyncChange, queueVoiceSync, textDoesNotFit,
+} from '../services/bookService';
 import { getEpisodeById, getEpisodeBooks } from '../database/queries';
 import { indexEpisodeBooks } from '../services/bookIndex';
 import { getCorrectedTranscript, indexEpisodeNames } from '../services/nameIndex';
@@ -117,6 +120,9 @@ const PlayerScreen = ({ route, navigation }) => {
     const [transcribing, setTranscribing] = useState(false);
     const [isQueued, setIsQueued] = useState(false);
     const [transcribeProgress, setTranscribeProgress] = useState(0);
+    const [bookSyncing, setBookSyncing] = useState(false);
+    const bookSyncAskedRef = useRef(false);
+    const [bookSyncPercent, setBookSyncPercent] = useState(0);
     // "Download & transcribe" from the no-transcript card of a streamed
     // episode. Keyed by id so a download started for one episode never shows
     // as in flight on another after navigating.
@@ -374,6 +380,19 @@ const PlayerScreen = ({ route, navigation }) => {
             } else if (payload.type === 'transcript-complete') {
                 schedule(true);
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
+            } else if (payload.type === 'book-sync-progress') {
+                setBookSyncPercent(payload.percent || 0);
+            } else if (payload.type === 'book-sync-done') {
+                schedule(true);
+                getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
+            } else if (payload.type === 'book-sync-error') {
+                setBookSyncing(false);
+                // Only for a match this listener asked for: a book matched
+                // chapter by chapter in the background says nothing here.
+                if (bookSyncAskedRef.current) {
+                    bookSyncAskedRef.current = false;
+                    showAlert('The text could not be matched', payload.error || 'Please try again.');
+                }
             } else if (payload.type === 'books-indexed') {
                 refetchBooks();
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
@@ -404,6 +423,25 @@ const PlayerScreen = ({ route, navigation }) => {
     }, [epId, refetchTranscript, navigation]);
 
     // ── Transcription queue state for this episode ────────────────────────────
+    // Matching the book text to the voice (bookService's own queue).
+    useEffect(() => {
+        const read = () => setBookSyncing(getSyncingId() === epId);
+        read();
+        return onBookSyncChange(read);
+    }, [epId]);
+
+    // Match a chapter once when opened. Legacy pause-based timing is only
+    // an estimate and also needs speech alignment. Keep reading while it runs.
+    const autoMatchedRef = useRef(null);
+    useEffect(() => {
+        if (autoMatchedRef.current === epId) return;
+        const row = epRef.current;
+        if (!row || row.id !== epId || !needsSync(row) || isSyncing(epId)) return;
+        autoMatchedRef.current = epId;
+        setBookSyncPercent(0);
+        queueVoiceSync([row]);
+    }, [epId, ep?.transcript_aligned, ep?.transcript_source, ep?.has_transcript]);
+
     const syncQueue = useCallback(() => {
         const active = getActiveId() === epId && getAbortingId() !== epId;
         const queued = getQueueIds().includes(epId) && !active;
@@ -489,6 +527,18 @@ const PlayerScreen = ({ route, navigation }) => {
         navigation.navigate('Settings');
     }, [navigation]);
     const canTranscribe = !!ep?.local_audio_path && !isRadio;
+    // The EPUB supplies the words; speech alignment supplies their times.
+    const bookText = isBookTranscript(ep);
+    const bookNeedsVoice = needsSync(ep);
+    const bookMisfit = textDoesNotFit(ep);
+    const handleSyncBook = useCallback(() => {
+        const row = epRef.current;
+        if (!row) return;
+        bookSyncAskedRef.current = true;
+        setBookSyncPercent(0);
+        setBookSyncing(true);
+        queueVoiceSync([row], { ask: true });
+    }, []);
     // Rows saved by a job that never finished (cancelled from a list, failed
     // part-way, the process killed): the text shows, so the no-transcript
     // card with its Transcribe button does not — offer to continue instead.
@@ -671,6 +721,12 @@ const PlayerScreen = ({ route, navigation }) => {
                         isQueued={isQueued}
                         transcribeProgress={transcribeProgress}
                         transcriptIncomplete={transcriptIncomplete}
+                        bookText={bookText}
+                        bookNeedsVoice={bookNeedsVoice}
+                        bookMisfit={bookMisfit}
+                        bookSyncing={bookSyncing}
+                        bookSyncPercent={bookSyncPercent}
+                        onSyncBook={handleSyncBook}
                         emptyStatus={radioEmptyStatus}
                         playbackRate={playbackRate}
                         episodeId={epId}

@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -375,6 +375,25 @@ const migrateToV11 = async (txn) => {
     if (!have.has('ai_model')) await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN ai_model TEXT`);
 };
 
+const migrateToV12 = async (txn) => {
+    // An audiobook imported with its EPUB (4.8.0, services/bookService.js):
+    // Podcasts.book_path is the copied .epub inside imports/<id>/ (its text,
+    // parsed once, sits beside it as book.json). On an episode,
+    // transcript_source 'book' says the Transcripts rows are the book's own
+    // words rather than the recogniser's, book_range which part of the book
+    // (bookMap.js range JSON), and transcript_aligned how those words are
+    // timed: 0 a reading pace, 1 the narrator's own pauses, 2 the text cannot
+    // be what this audio reads at all, 3 speech-matched words (bookService.js).
+    const pcols = await txn.getAllAsync(`PRAGMA table_info(Podcasts)`);
+    const phave = new Set(pcols.map(c => c.name));
+    if (!phave.has('book_path')) await txn.execAsync(`ALTER TABLE Podcasts ADD COLUMN book_path TEXT`);
+    const cols = await txn.getAllAsync(`PRAGMA table_info(Episodes)`);
+    const have = new Set(cols.map(c => c.name));
+    if (!have.has('transcript_source')) await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN transcript_source TEXT`);
+    if (!have.has('transcript_aligned')) await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN transcript_aligned INTEGER DEFAULT 0`);
+    if (!have.has('book_range')) await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN book_range TEXT`);
+};
+
 export const initDB = async () => {
     const db = await openDatabaseContext();
 
@@ -401,6 +420,7 @@ export const initDB = async () => {
         if (cur < 9) await migrateToV9(db);
         if (cur < 10) await migrateToV10(db);
         if (cur < 11) await migrateToV11(db);
+        if (cur < 12) await migrateToV12(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {
