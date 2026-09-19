@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [4.7.0] - 2026-09-19
 
 ### Added
 - **A Check button on every new episode, in the Feed and in My Podcasts, that clears its red dot.** A new episode carries a red dot; once you have looked at it and decided — download or not — a tap on *Check* takes the dot away, and that is all it does: no state is kept, and the button is gone with the dot (user: “in feed I need inside of description a button like check, to identify that I checked the podcast, to decide if download or not”; then “I prefer a checked button in My Podcasts too”; then “I don't need a special state, only that it cleans the red dot”). It sits under the Download pill, in the Feed and in My Podcasts alike (user: “put the button below download”, then “the Feed's has to be in the same place as My Podcasts”). The podcast's red count drops by one with each, and the tab's dot goes with the last of them — a download does the same, as it always has; nothing clears them on its own any more. A double check in the header of both screens clears every red dot at once, for the days when the backlog is not worth a look one by one (user: “a small icon with a double check that when you click marks all podcasts as checked”) (`components/EpisodeItem.js`, `screens/SubscribedTimeline.js`, `screens/PodcastsScreen.js`, `database/queries.js` `markAllEpisodesAsSeen`).
