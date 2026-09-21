@@ -282,6 +282,20 @@ const TranscriptHighlighter = forwardRef(({
     // "Continue" badge over the text, since the no-transcript card — the only
     // other place with a Transcribe button — is not shown once there is text.
     transcriptIncomplete = false,
+    // The book's own text as the transcript (4.8.0, bookService): `bookText`
+    // changes the in-flight wording (a sync, not a transcription), and
+    // `bookNeedsVoice` offers, over the text, to match it to the narrator's
+    // words while its times are still guessed. One button, one sentence —
+    // an earlier version put a label beside the action and read as a switch
+    // between two things (user: "I don't understand this switch").
+    bookText = false,
+    bookNeedsVoice = false,
+    // The words shown cannot be what this chapter reads (bookService): say so
+    // rather than offer a match that cannot mean anything.
+    bookMisfit = false,
+    bookSyncing = false,
+    bookSyncPercent = 0,
+    onSyncBook,
     // Live radio: what to show instead of the CTA card while the recording's
     // first window is still on its way (spinner + this text).
     emptyStatus = null,
@@ -1303,7 +1317,9 @@ const TranscriptHighlighter = forwardRef(({
                             <View style={styles.progressBadge}>
                                 <ActivityIndicator size='small' color={colors.accent} />
                                 <Text style={styles.progressBadgeText}>
-                                    {isQueued ? 'Queued for transcription' : `Transcribing… ${clampPercent(transcribeProgress)}%`}
+                                    {isQueued
+                                        ? (bookText ? 'Queued for sync' : 'Queued for transcription')
+                                        : `${bookText ? 'Syncing' : 'Transcribing'}… ${clampPercent(transcribeProgress)}%`}
                                 </Text>
                             </View>
                         </View>
@@ -1320,6 +1336,40 @@ const TranscriptHighlighter = forwardRef(({
                                 <Icon name='zap' size={14} color={colors.accent} />
                                 <Text style={styles.progressBadgeText}>Transcript incomplete</Text>
                                 <Text style={styles.resumeBadgeAction}>Continue</Text>
+                            </Pressable>
+                        </View>
+                    )}
+
+                    {!transcribing && !transcriptIncomplete && bookSyncing && (
+                        <View style={styles.progressBadgeWrap} pointerEvents='none'>
+                            <View style={styles.progressBadge}>
+                                <ActivityIndicator size='small' color={colors.accent} />
+                                <Text style={styles.progressBadgeText}>
+                                    {`Matching the text to the voice… ${clampPercent(bookSyncPercent)}%`}
+                                </Text>
+                            </View>
+                        </View>
+                    )}
+
+                    {!transcribing && !transcriptIncomplete && !bookSyncing && bookMisfit && (
+                        <View style={styles.progressBadgeWrap} pointerEvents='none'>
+                            <View style={[styles.progressBadge, styles.warnBadge]}>
+                                <Icon name='alert-triangle' size={14} color={colors.warning} />
+                                <Text style={styles.progressBadgeText}>This may not be this chapter's text</Text>
+                            </View>
+                        </View>
+                    )}
+
+                    {!transcribing && !transcriptIncomplete && !bookSyncing && !bookMisfit && bookNeedsVoice && !!onSyncBook && (
+                        <View style={styles.progressBadgeWrap} pointerEvents='box-none'>
+                            <Pressable
+                                onPress={onSyncBook}
+                                style={({ pressed }) => [styles.progressBadge, styles.resumeBadge, pressed && styles.pressedChunk]}
+                                accessibilityRole='button'
+                                accessibilityLabel='Match the book text to the spoken words'
+                            >
+                                <Icon name='book-open' size={14} color={colors.accent} />
+                                <Text style={styles.progressBadgeText}>Match the text to the voice</Text>
                             </Pressable>
                         </View>
                     )}
@@ -1752,6 +1802,7 @@ const makeStyles = (colors) => StyleSheet.create({
     },
     progressBadgeText: { fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
     resumeBadge: { borderColor: withAlpha(colors.accent, 0.5), paddingRight: 10 },
+    warnBadge: { borderColor: withAlpha(colors.warning, 0.45) },
     resumeBadgeAction: {
         fontSize: 12, fontWeight: '700', color: colors.onAccent,
         backgroundColor: colors.accent, borderRadius: radii.pill,

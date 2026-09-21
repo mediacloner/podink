@@ -186,7 +186,7 @@ export const saveLocalCollection = async ({ feed_url, title, author, description
  *  a new title is copied onto its episodes' podcast_title (the Player header,
  *  the track's artist and the Library folder all read that). */
 export const updateCollection = async (feedUrl, fields) => {
-  const allowed = ['title', 'author', 'description', 'image_url'];
+  const allowed = ['title', 'author', 'description', 'image_url', 'book_path'];
   const keys = allowed.filter(k => fields[k] !== undefined);
   if (!keys.length) return;
   const db = await openDatabaseContext();
@@ -318,6 +318,9 @@ export const saveTranscriptsIncremental = async (episodeId, segments) => {
   });
 };
 
+// SQLite allows 999 bound variables by default; four per row leaves room.
+const TRANSCRIPT_INSERT_BATCH = 200;
+
 /** End of the last saved transcript segment, in the stored time unit (ms). 0 if none. */
 export const getTranscriptLastEndMs = async (episodeId) => {
   const db = await openDatabaseContext();
@@ -352,11 +355,63 @@ export const deleteEpisodeTranscript = async (id) => {
     await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [id]);
     await db.runAsync(
       `UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL, names_indexed_at = NULL,
-              summary = NULL, ai_indexed_at = NULL, ai_model = NULL
+              summary = NULL, ai_indexed_at = NULL, ai_model = NULL,
+              transcript_source = NULL, transcript_aligned = 0
        WHERE id = ?`,
       [id]
     );
   });
+};
+
+// ─── The book's text as a transcript (services/bookService.js, 4.8.0) ───────
+
+/**
+ * Replace an episode's transcript wholesale with `rows` ({start, end, text},
+ * ms) — the book's words at estimated times, or at the recogniser's after a
+ * sync. Whatever an earlier recognition left behind about the *heard* text
+ * goes with it (names, fixes, books); the names pass is marked done, since
+ * the author's spelling needs no correcting, and the books scan runs again
+ * on the real text. `range` is the bookMap range the rows came from.
+ */
+export const replaceEpisodeTranscript = async (episodeId, rows, { source = 'book', aligned = 0, range = null } = {}) => {
+  // `aligned` is a state, not a flag: 0 the pace is guessed, 1 it came from
+  // the narrator's pauses, 2 the text cannot be what this audio reads,
+  // 3 the words have been matched to recognised speech
+  // (services/bookService.js). Storing it as a boolean turned "cannot fit"
+  // into "matched", and the chapter claimed a timing it never had.
+  const timing = Math.max(0, Math.min(3, Math.round(Number(aligned) || 0)));
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [episodeId]);
+    await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [episodeId]);
+    await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [episodeId]);
+    await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [episodeId]);
+    // A book chapter is one row per word — three thousand of them, and a
+    // sixty-chapter book is a hundred and seventy thousand. One statement per
+    // row means as many trips across the bridge, so they go in blocks.
+    for (let i = 0; i < rows.length; i += TRANSCRIPT_INSERT_BATCH) {
+      const block = rows.slice(i, i + TRANSCRIPT_INSERT_BATCH);
+      const values = block.map(() => '(?, ?, ?, ?)').join(', ');
+      const params = [];
+      for (const r of block) params.push(episodeId, r.start, r.end, r.text);
+      await db.runAsync(
+        `INSERT OR IGNORE INTO Transcripts (episode_id, start_time, end_time, text) VALUES ${values}`,
+        params
+      );
+    }
+    await db.runAsync(
+      `UPDATE Episodes SET has_transcript = ?, transcript_source = ?, transcript_aligned = ?, book_range = ?,
+              names_indexed_at = ?, books_indexed_at = NULL
+       WHERE id = ?`,
+      [rows.length ? 1 : 0, source, timing, range ? JSON.stringify(range) : null, Date.now(), episodeId]
+    );
+  });
+};
+
+/** Which part of the book an episode reads (JSON range or null), without touching its rows. */
+export const updateEpisodeBookRange = async (episodeId, range) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(`UPDATE Episodes SET book_range = ? WHERE id = ?`, [range ? JSON.stringify(range) : null, episodeId]);
 };
 
 // ─── Books mentioned in an episode (services/bookIndex.js) ───────────────────

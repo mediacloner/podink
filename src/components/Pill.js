@@ -18,6 +18,11 @@ const Pill = ({
     variant = 'blue',
     solid = false,
     bordered = true,
+    // A state rather than an action: no background, no border, no button
+    // width. A tinted capsule the same size and shape as the buttons beside
+    // it reads as one of them (user, on "Book text" next to "Match": "what
+    // is the diference between trancribe match and Book text").
+    plain = false,
     icon,
     label,
     onPress,
@@ -34,13 +39,15 @@ const Pill = ({
 
     const containerStyle = [
         styles.pill,
-        solid
-            ? { backgroundColor: tint }
-            : {
-                backgroundColor: withAlpha(tint, 0.10),
-                borderWidth: bordered ? 0.5 : 0,
-                borderColor: withAlpha(tint, 0.25),
-            },
+        plain
+            ? styles.plainPill
+            : solid
+                ? { backgroundColor: tint }
+                : {
+                    backgroundColor: withAlpha(tint, 0.10),
+                    borderWidth: bordered ? 0.5 : 0,
+                    borderColor: withAlpha(tint, 0.25),
+                },
         disabled && styles.disabled,
         style,
     ];
@@ -98,6 +105,7 @@ const styles = StyleSheet.create({
         borderRadius: radii.xl,
         minWidth: 112,
     },
+    plainPill: { backgroundColor: 'transparent', paddingHorizontal: 2, paddingVertical: 4, minWidth: 0 },
     label: { fontSize: 12, fontWeight: '600' },
     labelSolid: { fontWeight: '700' },
     disabled: { opacity: 0.45 },

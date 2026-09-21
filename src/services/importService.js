@@ -17,6 +17,13 @@
  * Google Drive and any other document provider), a folder tree, an image;
  * MediaMetadataRetriever for tags, duration and embedded art; a streaming
  * copy with progress events. Android only — isImportSupported() gates the UI.
+ *
+ * 4.8.0 — the book itself: an .epub among the picked files (or attached
+ * later) is staged, parsed and kept with the collection, and each chapter
+ * mapped to a part of it gets the book's words as its transcript at once
+ * (bookService / bookMap). A single .m4b with chapter markers is cut into
+ * one file per chapter (AudioImport.splitAudio), so the book's chapters
+ * and the audio's line up one to one.
  */
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import TrackPlayer from 'react-native-track-player';
@@ -31,6 +38,10 @@ import { notifyUserStop } from './trackPlayer';
 import { persistProgress } from './playbackService';
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
+import {
+    applyBookText, attachBook, clearBookCache, forgetBookCache, loadBook, parseRange, queueVoiceSync, stageBook,
+} from './bookService';
+import { autoMapChapters } from './bookMap';
 
 const Native = Platform.OS === 'android' ? NativeModules.AudioImport : null;
 const emitter = Native ? new NativeEventEmitter(Native) : null;
@@ -89,6 +100,44 @@ export const pickFolder = async () => {
 /** Image picker for a cover. `{uri, name}` or null. */
 export const pickImage = () => Native.pickImage();
 
+/** Document picker for one EPUB. `{uri, name, kind}` or null. */
+export const pickBook = async () => {
+    const res = await Native.pickBook();
+    return res?.uri ? res : null;
+};
+
+/** Copy a picked EPUB into the cache and parse it: `{ uri, name, book }` (bookService.stageBook). */
+export const stageBookFile = (entry) => stageBook(entry);
+
+/** bookMap.autoMapChapters, for the editor to redo the mapping when the chapter list changes. */
+export const mapChaptersToBook = (chapters, book) => autoMapChapters(chapters, book);
+
+// Files whose container can carry chapter markers (AudioImport.readChapters).
+const MP4_FAMILY = /\.(m4b|m4a|mp4)$/i;
+// A file cut at its markers: one editor chapter per marker, sharing the source uri.
+const MIN_MARKER_MS = 1000; // a marker at the very end of the file names no audio
+// How many chapters have their text matched to the voice as part of the
+// import itself — enough that the beginning of a book is exact at once.
+const PREMATCH_CHAPTERS = 3;
+const expandEmbedded = (chapters) => chapters.flatMap((ch) => {
+    if (!ch.embeddedChapters?.length) return [ch];
+    const stem = stripExtension(ch.name);
+    return ch.embeddedChapters.filter((m) => m.endMs - m.startMs >= MIN_MARKER_MS).map((m, k) => {
+        const title = (m.title || '').trim() || `Chapter ${k + 1}`;
+        return {
+            uri: ch.uri,
+            name: `${stem} - ${String(k + 1).padStart(2, '0')} ${title}.m4a`,
+            size: -1,
+            title,
+            track: k + 1,
+            durationSec: Math.max(0, Math.round((m.endMs - m.startMs) / 1000)),
+            hasCover: ch.hasCover,
+            clip: { startMs: m.startMs, endMs: m.endMs },
+            sourceName: ch.name,
+        };
+    });
+});
+
 // ─── Analysis ───────────────────────────────────────────────────────────────
 
 // Document providers that serve files from the device itself; anything else
@@ -114,12 +163,14 @@ export const analyzeSelection = async (entries, { folderName = '', onProgress, c
     const audio = entries.filter(e => e.kind === 'audio');
     const images = entries.filter(e => e.kind === 'image');
     const texts = entries.filter(e => e.kind === 'text' && /\.(nfo|txt)$/i.test(e.name || ''));
+    const bookFiles = entries.filter(e => e.kind === 'book' || /\.epub$/i.test(e.name || ''));
     if (!audio.length) {
         const err = new Error('No audio files in the selection');
         err.code = 'NO_AUDIO';
         throw err;
     }
     clearCoverCache();
+    clearBookCache();
 
     // Opening a cloud document (Google Drive, OneDrive…) makes its provider
     // download the whole file first, so reading 60 chapters' tags would pull
@@ -141,9 +192,32 @@ export const analyzeSelection = async (entries, { folderName = '', onProgress, c
             // differently from the rest (which fall back to file names).
             if (remote && audio.length > 1) tags = { ...tags, title: null, track: null, disc: null };
         }
-        items.push({ ...audio[i], tags });
+        // Chapter markers inside the file (a whole audiobook as one .m4b):
+        // two or more make it a candidate for splitting (expandEmbedded).
+        let embeddedChapters = null;
+        if (MP4_FAMILY.test(audio[i].name || '') && (!remote || i === 0)) {
+            try {
+                const marks = await Native.readChapters(audio[i].uri);
+                if (Array.isArray(marks) && marks.length >= 2) embeddedChapters = marks;
+            } catch (e) {
+                log('SERVICE', 'Import: chapter markers unreadable', { name: audio[i].name, error: e?.message || String(e) });
+            }
+        }
+        items.push({ ...audio[i], tags, embeddedChapters });
     }
     onProgress?.({ done: audio.length, total: audio.length });
+
+    // The book (4.8.0): the first EPUB in the selection, staged in the cache
+    // and parsed now so the form can show which part each chapter reads.
+    let staged = null;
+    if (bookFiles.length) {
+        onProgress?.({ done: audio.length, total: audio.length, note: 'Reading the book…' });
+        try {
+            staged = await stageBook(bookFiles[0]);
+        } catch (e) {
+            log('SERVICE', 'Import: book unreadable', { name: bookFiles[0].name, error: e?.message || String(e) });
+        }
+    }
 
     // A .nfo describes the book; a .txt only counts when it does too.
     let nfo = null;
@@ -160,11 +234,27 @@ export const analyzeSelection = async (entries, { folderName = '', onProgress, c
 
     // `context` (Add files): the collection's title and its chapters' file
     // names, so a single new file is named like its siblings were.
-    const draft = buildDraft({ items, nfo, folderName, context });
+    const draft = buildDraft({ items, nfo, folderName, context, book: staged?.book || null });
     draft.cover = pickCoverCandidate(images, draft.chapters);
     draft.images = images;
+
+    // Embedded markers ride along on the chapter they belong to; the split
+    // list is what the form shows by default when any file has them.
+    const byUri = new Map(items.map(it => [it.uri, it]));
+    draft.chapters = draft.chapters.map(ch => ({ ...ch, embeddedChapters: byUri.get(ch.uri)?.embeddedChapters || null }));
+    draft.wholeChapters = draft.chapters;
+    draft.hasEmbedded = draft.chapters.some(ch => ch.embeddedChapters);
+    draft.splitChapters = draft.hasEmbedded ? expandEmbedded(draft.chapters) : draft.chapters;
+    if (draft.hasEmbedded) draft.chapters = draft.splitChapters;
+
+    draft.book = staged?.book || null;
+    draft.bookUri = staged?.uri || null;
+    draft.bookName = staged?.name || null;
+    draft.bookRanges = draft.book ? autoMapChapters(draft.chapters, draft.book) : null;
+
     log('SERVICE', 'Import: analysed', {
         files: audio.length, images: images.length, nfo: !!nfo, title: draft.title, author: draft.author,
+        book: draft.book ? draft.book.title : null, embedded: draft.hasEmbedded ? draft.splitChapters.length : 0,
     });
     return draft;
 };
@@ -187,14 +277,19 @@ export const prepareCover = async (source) => {
 // ─── Import ─────────────────────────────────────────────────────────────────
 
 let _jobSeq = 0;
-const copyWithProgress = (srcUri, destFile, onFraction) => {
+const withProgress = (onFraction, run) => {
     const jobId = `imp${++_jobSeq}`;
     const sub = emitter?.addListener(PROGRESS_EVENT, (e) => {
         if (e?.jobId !== jobId || !onFraction) return;
         onFraction(e.total > 0 ? Math.min(1, e.copied / e.total) : 0);
     });
-    return Native.copyToFile(srcUri, destFile.uri, jobId).finally(() => sub?.remove());
+    return run(jobId).finally(() => sub?.remove());
 };
+const copyWithProgress = (srcUri, destFile, onFraction) =>
+    withProgress(onFraction, (jobId) => Native.copyToFile(srcUri, destFile.uri, jobId));
+/** One source file → its chapter files (AudioImport.splitAudio); `specs` = [{startMs, endMs, name}]. */
+const splitWithProgress = (srcUri, dir, specs, onFraction) =>
+    withProgress(onFraction, (jobId) => Native.splitAudio(srcUri, dir.uri, specs, jobId));
 
 /** Move a prepared cover into the collection folder; '' when there is none. */
 const placeCover = (dir, coverUri) => {
@@ -213,29 +308,91 @@ const placeCover = (dir, coverUri) => {
  * `startTrack`; release_date counts *down* from `baseMs` so chapter 1 is the
  * "newest" and comes first in every release-date-sorted list.
  */
-const copyChapters = async (feedUrl, dir, { title, chapters }, { startTrack, baseMs, onProgress }) => {
+const copyChapters = async (feedUrl, dir, { title, chapters, book = null, ranges = null }, { startTrack, baseMs, onProgress }) => {
     const total = chapters.length;
-    for (let i = 0; i < total; i++) {
-        const ch = chapters[i];
+    const synced = [];
+    const fileName = (track, ch, ext) => `${String(track).padStart(3, '0')}-${safeFileName(stripExtension(ch.name))}${ext}`;
+    // The row, then — when the collection has its book and this chapter a
+    // part of it — the book's words as the chapter's transcript.
+    const insertRow = async (i, ch, destUri, durationSec) => {
         const track = startTrack + i + 1;
-        const dest = new File(dir, `${String(track).padStart(3, '0')}-${safeFileName(stripExtension(ch.name))}${extOf(ch.name)}`);
-        try { if (dest.exists) dest.delete(); } catch (_) {}
-        const report = (f) => onProgress?.({ index: i, total, fileFraction: f, overall: (i + f) / total, title: ch.title });
-        report(0);
-        await copyWithProgress(ch.uri, dest, report);
+        const id = `${feedUrl}/${String(track).padStart(4, '0')}-${baseMs.toString(36)}`;
         await insertLocalEpisodes([{
-            id: `${feedUrl}/${String(track).padStart(4, '0')}-${baseMs.toString(36)}`,
+            id,
             title: (ch.title || '').trim() || `Track ${track}`,
             description: '',
             podcast_title: title,
             podcast_feed_url: feedUrl,
             release_date: new Date(baseMs - i * 1000).toISOString(),
-            local_audio_path: dest.uri,
-            duration: ch.durationSec || 0,
+            local_audio_path: destUri,
+            duration: durationSec || 0,
             track_number: track,
         }]);
+        const range = book && ranges ? ranges[i] : null;
+        if (range) {
+            onProgress?.({ index: i, total, fileFraction: 1, overall: (i + 1) / total, title: ch.title, phase: 'text' });
+            try {
+                const { misfit } = await applyBookText({ id, duration: durationSec || 0 }, book, range);
+                // The text is there to read at once, at a guessed pace; the
+                // narrator's own timing follows in the background, chapter by
+                // chapter (bookService.queueVoiceSync). A chapter whose text
+                // cannot be what it reads is left out of that — there is
+                // nothing to match it to.
+                if (!misfit) {
+                    synced.push({ id, local_audio_path: destUri, book_range: JSON.stringify(range), podcast_feed_url: feedUrl, duration: durationSec || 0 });
+                } else {
+                    log('SERVICE', 'Import: text does not fit this chapter', { id, wpm: misfit });
+                }
+            } catch (e) {
+                log('SERVICE', 'Import: book text not applied', { id, error: e?.message || String(e) });
+            }
+        }
+    };
+
+    let i = 0;
+    while (i < total) {
+        const ch = chapters[i];
+        if (ch.clip) {
+            // Consecutive markers of one source file: a single native pass
+            // writes every chapter file, then the rows follow in order.
+            let j = i;
+            while (j < total && chapters[j].clip && chapters[j].uri === ch.uri) j++;
+            const group = chapters.slice(i, j);
+            const specs = group.map((c, k) => ({
+                startMs: c.clip.startMs, endMs: c.clip.endMs, name: fileName(startTrack + i + k + 1, c, '.m4a'),
+            }));
+            const at = i;
+            const report = (f) => onProgress?.({
+                index: at, total, fileFraction: f, overall: (at + f * group.length) / total, title: ch.sourceName || ch.title, phase: 'split',
+            });
+            report(0);
+            const results = await splitWithProgress(ch.uri, dir, specs, report);
+            const byIndex = new Map((results || []).map(r => [r.index, r]));
+            for (let k = 0; k < group.length; k++) {
+                const r = byIndex.get(k);
+                if (!r) continue; // a marker with no audio in it
+                const dest = new File(dir, specs[k].name);
+                await insertRow(i + k, group[k], dest.uri, Math.round((r.durationMs || 0) / 1000) || group[k].durationSec || 0);
+            }
+            i = j;
+            continue;
+        }
+        const track = startTrack + i + 1;
+        const dest = new File(dir, fileName(track, ch, extOf(ch.name)));
+        try { if (dest.exists) dest.delete(); } catch (_) {}
+        const at = i;
+        const report = (f) => onProgress?.({ index: at, total, fileFraction: f, overall: (at + f) / total, title: ch.title, phase: 'copy' });
+        report(0);
+        await copyWithProgress(ch.uri, dest, report);
+        await insertRow(i, ch, dest.uri, ch.durationSec || 0);
         report(1);
+        i++;
     }
+    // Only the chapters about to be read. Matching costs roughly a twelfth of
+    // the playing time, so a fifteen-hour book would decode for an hour if it
+    // all went in at once; the rest is matched as each chapter is opened
+    // (PlayerScreen), or in one go from the collection's Match all.
+    if (synced.length) queueVoiceSync(synced.slice(0, PREMATCH_CHAPTERS));
 };
 
 /**
@@ -260,16 +417,26 @@ export const importCollection = async (draft, { onProgress } = {}) => {
         description: draft.description || '',
         image_url: imageUrl,
     });
+    // The book first, so every chapter row can take its text as it lands.
+    let book = null;
+    if (draft.bookUri && draft.book) {
+        try {
+            await attachBook(feedUrl, draft.bookUri, draft.book);
+            book = draft.book;
+        } catch (e) {
+            log('UI', 'Import: book not attached', { id, error: e?.message || String(e) });
+        }
+    }
     // The list can show the new (empty) collection while files stream in.
     notifyLibraryChange({ type: 'subscribe' });
     try {
-        await copyChapters(feedUrl, dir, { title, chapters: draft.chapters }, {
+        await copyChapters(feedUrl, dir, { title, chapters: draft.chapters, book, ranges: book ? draft.bookRanges : null }, {
             startTrack: 0, baseMs: Date.now(), onProgress,
         });
     } finally {
         notifyLibraryChange({ type: 'subscribe' });
     }
-    log('UI', 'Import complete', { id, chapters: draft.chapters.length });
+    log('UI', 'Import complete', { id, chapters: draft.chapters.length, book: !!book });
     return feedUrl;
 };
 
@@ -289,8 +456,10 @@ export const appendToCollection = async (feedUrl, draft, { onProgress } = {}) =>
     if (!podcast.image_url && draft.coverUri) {
         await updateCollection(feedUrl, { image_url: placeCover(dir, draft.coverUri) });
     }
+    // New files can read parts of the collection's book the editor mapped.
+    const book = draft.bookRanges ? await loadBook(feedUrl) : null;
     try {
-        await copyChapters(feedUrl, dir, { title: podcast.title, chapters: draft.chapters }, {
+        await copyChapters(feedUrl, dir, { title: podcast.title, chapters: draft.chapters, book, ranges: book ? draft.bookRanges : null }, {
             startTrack, baseMs: oldest - 1000, onProgress,
         });
     } finally {
@@ -303,9 +472,12 @@ export const appendToCollection = async (feedUrl, draft, { onProgress } = {}) =>
 /**
  * Save the editor: title / author / description, the cover (`coverUri` is
  * the current image_url to keep it, a prepareCover file to replace it, or
- * null to remove it) and renamed chapters (`[{id, title}]`).
+ * null to remove it), renamed chapters (`[{id, title}]`) and, since 4.8.0,
+ * the book: `bookUri` + `book` attach a newly staged EPUB, `bookRanges`
+ * (one per chapter, from the editor) rewrite the chapters whose part of
+ * the book changed. onProgress({index, total, title, phase: 'text'}).
  */
-export const saveCollectionEdits = async (feedUrl, { title, author, description, coverUri, chapters }) => {
+export const saveCollectionEdits = async (feedUrl, { title, author, description, coverUri, chapters, book = null, bookUri = null, bookRanges = null, onProgress }) => {
     const podcast = await getPodcastByFeedUrl(feedUrl);
     if (!podcast) throw new Error('Collection not found');
     const fields = {
@@ -323,13 +495,39 @@ export const saveCollectionEdits = async (feedUrl, { title, author, description,
         const t = (ch.title || '').trim();
         if (ch.id && t && t !== ch.originalTitle) await updateEpisodeTitle(ch.id, t);
     }
-    log('UI', 'Collection edited', { feedUrl, title: fields.title, coverChanged: fields.image_url !== undefined });
+    let attached = false;
+    if (bookUri && book) {
+        await attachBook(feedUrl, bookUri, book);
+        attached = true;
+    }
+    if (book && bookRanges) {
+        const list = chapters || [];
+        const retimed = [];
+        for (let i = 0; i < list.length; i++) {
+            const ch = list[i];
+            if (!ch.id) continue;
+            const range = bookRanges[i] || null;
+            const before = parseRange(ch.originalRange);
+            const changed = attached || JSON.stringify(range) !== JSON.stringify(before);
+            if (!changed) continue;
+            onProgress?.({ index: i, total: list.length, title: ch.title, phase: 'text' });
+            const applied = await applyBookText(
+                { id: ch.id, duration: ch.durationSec || 0, transcript_source: ch.transcriptSource }, book, range,
+            );
+            if (range && ch.localPath && !applied.misfit) {
+                retimed.push({ id: ch.id, local_audio_path: ch.localPath, book_range: JSON.stringify(range), podcast_feed_url: feedUrl, duration: ch.durationSec || 0 });
+            }
+        }
+        if (retimed.length) queueVoiceSync(retimed);
+    }
+    log('UI', 'Collection edited', { feedUrl, title: fields.title, coverChanged: fields.image_url !== undefined, book: attached });
     notifyLibraryChange({ type: 'subscribe' });
 };
 
 /** Delete a collection: its rows, its files, and the player if it is playing
  *  one of its chapters. */
 export const deleteCollection = async (feedUrl) => {
+    forgetBookCache(feedUrl);
     const episodes = await getEpisodesForCollection(feedUrl);
     const ids = new Set(episodes.map(e => e.id));
     for (const id of ids) forgetTranscription(id);

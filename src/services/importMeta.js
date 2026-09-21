@@ -241,10 +241,11 @@ export const stemsFromLocalPaths = (paths) => paths
 /**
  * Defaults for the import form. `items` are the audio entries with their
  * tags, `nfo` is parseNfo's result (or null), `folderName` the picked
- * folder's name (or ''). Everything is editable afterwards; this only has to
+ * folder's name (or ''), `book` the parsed EPUB's `{title, author}` when one
+ * came with the files. Everything is editable afterwards; this only has to
  * be a good first guess.
  */
-export const buildDraft = ({ items, nfo = null, folderName = '', context = null }) => {
+export const buildDraft = ({ items, nfo = null, folderName = '', context = null, book = null }) => {
     const ordered = orderChapters(items);
     const tag = (key) => mostCommon(ordered.map(it => it.tags?.[key]));
     const titles = chapterTitles(ordered, {
@@ -253,12 +254,15 @@ export const buildDraft = ({ items, nfo = null, folderName = '', context = null 
     });
     const single = ordered.length === 1;
 
+    // The EPUB's own title and author (4.8.0) rank after the .nfo (the
+    // user's notes about this copy) and before the audio tags.
     const title = nfo?.title
+        || book?.title
         || tag('album')
         || (single ? (ordered[0].tags?.title || cleanName(ordered[0].name)) : folderName)
         || (ordered[0] ? cleanName(ordered[0].name) : '')
         || 'Imported audio';
-    const author = nfo?.author || tag('albumArtist') || tag('artist') || tag('author') || tag('writer') || tag('composer') || '';
+    const author = nfo?.author || book?.author || tag('albumArtist') || tag('artist') || tag('author') || tag('writer') || tag('composer') || '';
 
     const parts = [];
     if (nfo?.narrator) parts.push(`Read by ${nfo.narrator}`);

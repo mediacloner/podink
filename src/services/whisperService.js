@@ -17,6 +17,11 @@
  *   - Background safety: Android foreground service + WakeLock
  *   - Persistence: queue survives app restart and restoreQueue re-enqueues
  *     episodes that are still downloaded but untranscribed
+ *   - Align mode (4.8.0, entry.align): a chapter whose transcript is its
+ *     book's text (bookService) is decoded the same way, but nothing is
+ *     saved per window — the heard words only lend their times to the
+ *     book's words at the end (bookService.alignEpisodeWithAsr). No resume,
+ *     no marker, the book rows untouched until the sync succeeds.
  */
 
 import { ASR } from '@siteed/sherpa-onnx.rn';
@@ -36,6 +41,7 @@ import { indexEpisodeBooks } from './bookIndex';
 import { analyzeIfAuto } from './aiService';
 import { log } from './logService';
 import { splitSentences } from './sentenceBoundary';
+import { alignEpisodeWithAsr } from './bookService';
 
 const DEFAULT_TIMEOUT_MS    = 10 * 60 * 1000; // 10 minutes for short/unknown episodes
 const MIN_AUDIO_SIZE        = 4096;             // 4 KB minimum
@@ -441,8 +447,8 @@ const _persistQueue = () => {
     // while its old process is still winding down as the active entry.
     const seen = new Set();
     const items = [
-        ...(_activeEntry ? [{ id: _activeEntry.id, audioFilePath: _activeEntry.audioFilePath }] : []),
-        ..._queue.map(e => ({ id: e.id, audioFilePath: e.audioFilePath })),
+        ...(_activeEntry ? [{ id: _activeEntry.id, audioFilePath: _activeEntry.audioFilePath, align: !!_activeEntry.align }] : []),
+        ..._queue.map(e => ({ id: e.id, audioFilePath: e.audioFilePath, align: !!e.align })),
     ].filter(it => !seen.has(it.id) && seen.add(it.id));
     AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(items)).catch(() => {});
 };
@@ -509,6 +515,7 @@ const _process = async (entry) => {
 
     const jobId     = `${entry.id}:${Date.now()}`;
     const markerKey = `${JOB_MARKER_PREFIX}${entry.id}`;
+    const alignMode = !!entry.align;
     let timeoutTimer = null;
     let windowSub    = null;
 
@@ -536,7 +543,7 @@ const _process = async (entry) => {
         // same model; otherwise wipe the partial rows and start at 0.
         const hasOptionsApi = !!(SherpaNative && typeof SherpaNative.recognizeFromFileWithOptions === 'function');
         let resumeMs = 0;
-        if (hasOptionsApi) {
+        if (hasOptionsApi && !alignMode) {
             try {
                 const rawMarker = await AsyncStorage.getItem(markerKey);
                 const marker = rawMarker ? JSON.parse(rawMarker) : null;
@@ -547,21 +554,22 @@ const _process = async (entry) => {
         }
         if (resumeMs > 0) {
             log('SERVICE', 'Resuming from partial transcript', { id: entry.id, resumeMs });
-        } else {
+        } else if (!alignMode) {
             // Clear any partial transcript from a previous incompatible attempt
             await deleteEpisodeTranscript(entry.id);
         }
-        await AsyncStorage.setItem(markerKey, JSON.stringify({ modelKey: _ctxModel })).catch(() => {});
+        if (!alignMode) await AsyncStorage.setItem(markerKey, JSON.stringify({ modelKey: _ctxModel })).catch(() => {});
 
         const nativePath = fileUriToPath(entry.audioFilePath);
         const durationMs = (entry.durationSec || 0) * 1000;
 
-        _startFg('Transcribing podcasts', 'Processing audio\u2026', entry.durationSec || 0);
+        _startFg('Transcribing podcasts', alignMode ? 'Syncing the book text\u2026' : 'Processing audio\u2026', entry.durationSec || 0);
 
         // Per-window streaming: native emits one event per ~29s decoded window.
         // Saves are serialized through a promise chain so windows commit in
         // order; stale events (other jobs, post-abort) are dropped by jobId.
         let windowsReceived = 0;
+        let hasWordTiming = true;
         let lastNotifAt = Date.now();
         let saveChain = Promise.resolve();
         const collected = [];
@@ -570,6 +578,7 @@ const _process = async (entry) => {
         windowSub = DeviceEventEmitter.addListener(WINDOW_EVENT, (ev) => {
             if (!ev || ev.jobId !== jobId || myAbort.current) return;
             windowsReceived += 1;
+            if (ev.text?.trim() && !ev.segments?.length) hasWordTiming = false;
             _lastProgressAt = Date.now();
             const segs = dropSeamDuplicate(_windowToSegments(ev), seamTail, ev);
             if (segs.length) {
@@ -578,7 +587,7 @@ const _process = async (entry) => {
             }
             saveChain = saveChain.then(async () => {
                 if (myAbort.current || segs.length === 0) return;
-                await saveTranscriptsIncremental(entry.id, segs);
+                if (!alignMode) await saveTranscriptsIncremental(entry.id, segs);
                 collected.push(...segs);
             }).catch((err) => {
                 log('SERVICE', 'Incremental save failed', { id: entry.id, error: err?.message || String(err) });
@@ -670,7 +679,7 @@ const _process = async (entry) => {
                 }));
             }).filter(s => s.text.length > 0);
             segments = subSegs;
-            await saveTranscriptsIncremental(entry.id, segments);
+            if (!alignMode) await saveTranscriptsIncremental(entry.id, segments);
         } else if (resumeMs === 0) {
             // Text-only fallback smears timestamps across the full duration —
             // only valid when this job covered the whole episode (no resume).
@@ -688,13 +697,23 @@ const _process = async (entry) => {
                 segs = segs.map((s, i) => ({ start: i * 1000, end: i * 1000 + 999, text: s.text }));
             }
             segments = segs;
-            await saveTranscriptsIncremental(entry.id, segments);
+            if (!alignMode) await saveTranscriptsIncremental(entry.id, segments);
         } else {
             segments = [];
         }
 
-        await finalizeTranscript(entry.id);
-        await AsyncStorage.removeItem(markerKey).catch(() => {});
+        if (alignMode) {
+            // The book's words take the heard words' times; the heard words
+            // themselves are not kept. Throws (and leaves the estimate) when
+            // the audio does not read this text.
+            if (!windowsReceived || !hasWordTiming) {
+                throw new Error('The speech model did not return word timestamps. Choose a model with word timing in Settings and try again.');
+            }
+            await alignEpisodeWithAsr(entry.id, segments);
+        } else {
+            await finalizeTranscript(entry.id);
+            await AsyncStorage.removeItem(markerKey).catch(() => {});
+        }
 
         if (entry.onProgress) { try { entry.onProgress(100); } catch (_) {} }
         try { notifyLibraryChange({ type: 'transcript-complete', episodeId: entry.id }); } catch (_) {}
@@ -708,7 +727,10 @@ const _process = async (entry) => {
         // switch is off, there is no key, or the request failed — then the
         // scan runs here instead, on the transcript as recognised.
         const scanBooks = () => indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
-        analyzeIfAuto(entry.id).then(done => { if (!done) scanBooks(); }, scanBooks);
+        // Book text needs no assistant pass (nothing was misheard); the books
+        // it mentions are still worth finding.
+        if (alignMode) scanBooks();
+        else analyzeIfAuto(entry.id).then(done => { if (!done) scanBooks(); }, scanBooks);
 
         log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length });
         entry.resolve(segments);
@@ -832,8 +854,11 @@ AppState.addEventListener('change', (state) => {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /** `front` puts the job ahead of everything waiting — for a job that was
- *  interrupted mid-way (live radio) and should be the first to resume. */
-export const enqueueTranscription = async (id, audioFilePath, onProgress, onStart, durationSec = 0, { front = false } = {}) => {
+ *  interrupted mid-way (live radio) and should be the first to resume.
+ *  `align` syncs a book-text transcript instead of writing a new one (see
+ *  the file comment); an interrupted job restarts with its alignment mode
+ *  intact, leaving the existing EPUB text visible until it succeeds. */
+export const enqueueTranscription = async (id, audioFilePath, onProgress, onStart, durationSec = 0, { front = false, align = false } = {}) => {
     await validateAudio(audioFilePath);
 
     const isAborting = _activeId === id && _abort?.current;
@@ -849,7 +874,7 @@ export const enqueueTranscription = async (id, audioFilePath, onProgress, onStar
     }
 
     return new Promise((resolve, reject) => {
-        const entry = { id, audioFilePath, onProgress, onStart, durationSec, resolve, reject };
+        const entry = { id, audioFilePath, onProgress, onStart, durationSec, align, resolve, reject };
         if (front) _queue.unshift(entry); else _queue.push(entry);
         _persistQueue();
         _notify();
@@ -919,9 +944,8 @@ export const resetService = async () => {
     _notify();
 };
 
-/** Re-enqueue persisted queue items whose episodes are still downloaded and
- *  still lack a transcript, then auto-start. Items whose episodes were
- *  deleted or already finished are dropped. */
+/** Restore unfinished transcription and book alignment jobs. Book jobs retain
+ *  their existing transcript until the restarted alignment succeeds. */
 export const restoreQueue = async () => {
     log('SYSTEM', 'restoreQueue');
     _running = false; _activeId = null; _activeEntry = null;
@@ -940,10 +964,12 @@ export const restoreQueue = async () => {
         if (!item?.id) continue;
         try {
             const ep = await getEpisodeById(item.id);
-            if (!ep || !ep.is_downloaded || !ep.local_audio_path || ep.has_transcript) continue;
+            if (!ep || !ep.is_downloaded || !ep.local_audio_path) continue;
+            const align = !!item.align && ep.transcript_source === 'book';
+            if (ep.has_transcript && !align) continue;
             // Fire-and-forget: the returned promise resolves only when the
             // transcription finishes; completion is broadcast via libraryEvents.
-            enqueueTranscription(item.id, ep.local_audio_path, null, null, ep.duration || 0)
+            enqueueTranscription(item.id, ep.local_audio_path, null, null, ep.duration || 0, { align })
                 .catch(() => {});
             restored += 1;
         } catch (_) {}

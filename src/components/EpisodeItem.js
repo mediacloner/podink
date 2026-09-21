@@ -8,6 +8,7 @@ import Pill from './Pill';
 import ShowNotes from './ShowNotes';
 import { type, useStyles, useTheme } from '../theme';
 import { onTranscriptProgress, getLastProgress } from '../services/whisperService';
+import { isBookTranscript, needsSync, textDoesNotFit } from '../services/bookService';
 import { artworkSource } from '../api/userAgent';
 
 // "1h 23m" / "45 min" / "<1 min". Whole minutes throughout, so 1h 59m 40s
@@ -26,6 +27,17 @@ const EpisodeItem = ({
     onPress,
     onDownload,
     onTranscribe,
+    // Book text (4.8.0): match it to the narrator's pauses. A different job
+    // from transcribing — no speech model, seconds rather than minutes.
+    onSync,
+    isSyncing = false,
+    // Tapped on a chapter whose book text cannot be what its audio reads.
+    onTextWarning,
+    // Tapped on a chapter already matched: a match can come out wrong, so the
+    // finished state offers to redo it. It stays a plain label rather than a
+    // capsule — an action you reach for only when something looks off should
+    // not sit there looking like the buttons beside it.
+    onRematch,
     onCancel,
     onDelete,
     isTranscribing,
@@ -288,13 +300,43 @@ const EpisodeItem = ({
                                         onPress={() => onTranscribe(episode)}
                                         accessibilityLabel="Transcribe episode"
                                     />
-                                ) : episode.has_transcript ? (
+                                ) : isSyncing ? (
+                                    <Pill
+                                        variant="orange"
+                                        icon="book-open"
+                                        label="Matching…"
+                                        trailingLoading
+                                        accessibilityLabel="Matching the book text to the voice"
+                                    />
+                                ) : onTextWarning && textDoesNotFit(episode) ? (
+                                    <Pill
+                                        variant="orange"
+                                        icon="alert-triangle"
+                                        label="Check text"
+                                        onPress={() => onTextWarning(episode)}
+                                        accessibilityLabel="This chapter's text may not be the part of the book it reads"
+                                    />
+                                ) : onSync && needsSync(episode) ? (
                                     <Pill
                                         variant="blue"
-                                        bordered={false}
-                                        icon="align-left"
-                                        label="Transcript"
-                                        accessibilityLabel="Transcript available"
+                                        icon="book-open"
+                                        label="Match voice"
+                                        onPress={() => onSync(episode)}
+                                        accessibilityLabel="Match the book text to the narrator's voice"
+                                    />
+                                ) : episode.has_transcript ? (
+                                    // Said, not offered — though a matched
+                                    // chapter answers a tap with the option
+                                    // to have its timing read again.
+                                    <Pill
+                                        variant="blue"
+                                        plain
+                                        icon={isBookTranscript(episode) ? 'book-open' : 'align-left'}
+                                        label={isBookTranscript(episode) ? 'Book text' : 'Transcript'}
+                                        onPress={onRematch && isBookTranscript(episode) ? () => onRematch(episode) : undefined}
+                                        accessibilityLabel={isBookTranscript(episode)
+                                            ? 'Book text, matched to the voice. Match it again'
+                                            : 'Transcript available'}
                                     />
                                 ) : null}
 

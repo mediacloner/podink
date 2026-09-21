@@ -182,7 +182,10 @@ export const reportDownloadError = (e) => {
  */
 export const transcribeEpisode = (episode, { onStart } = {}) => {
     if (!episode?.local_audio_path) return Promise.reject(new Error('Audio file not found'));
-    return enqueueTranscription(episode.id, episode.local_audio_path, null, onStart, episode.duration || 0);
+    // A chapter reading its book's text (4.8.0): the same decode, but its
+    // result only times the book's words (whisperService align mode).
+    const align = episode.transcript_source === 'book';
+    return enqueueTranscription(episode.id, episode.local_audio_path, null, onStart, episode.duration || 0, { align });
 };
 
 /**
