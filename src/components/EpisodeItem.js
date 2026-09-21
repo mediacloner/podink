@@ -360,20 +360,25 @@ const EpisodeItem = ({
                 )}
             </TouchableOpacity>
 
-            {/* Bottom strip. With expandOnPress the whole row is the toggle, so
-                the strip is a purely visual affordance (no second tab stop);
-                otherwise it's the tap target (hitSlop -> 44px). */}
+            {/* Bottom strip. With expandOnPress the whole row is the toggle and
+                the strip repeats it: the arrow is where a finger goes to
+                unfold, so it has to answer (until 4.8.0 it let the tap fall
+                through to nothing). It stays out of the accessibility tree —
+                the row already announces the expanded state, so no second tab
+                stop. Otherwise it's the tap target (hitSlop -> 44px). */}
             {expandOnPress ? (
-                <View
+                <TouchableOpacity
+                    onPress={toggleExpand}
                     style={[styles.expandStrip, expanded && styles.expandStripOpen]}
-                    pointerEvents="none"
+                    activeOpacity={0.6}
+                    hitSlop={{ top: 6, bottom: 6 }}
                     accessible={false}
                     importantForAccessibility="no-hide-descendants"
                 >
                     <Animated.View style={chevronStyle}>
                         <Icon name="chevron-down" size={15} color={colors.textFaint} />
                     </Animated.View>
-                </View>
+                </TouchableOpacity>
             ) : (
                 <TouchableOpacity
                     onPress={toggleExpand}
