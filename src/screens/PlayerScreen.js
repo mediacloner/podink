@@ -3,7 +3,6 @@ import {
     View, StyleSheet, Text, Image,
     ActivityIndicator, TouchableOpacity, ScrollView,
 } from 'react-native';
-import { useKeepAwake } from 'expo-keep-awake';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import TrackPlayer, { State } from 'react-native-track-player';
 import { Feather as Icon } from '@expo/vector-icons';
@@ -27,6 +26,7 @@ import { getCorrectedTranscript, indexEpisodeNames } from '../services/nameIndex
 import ProgrammeGuide from '../components/ProgrammeGuide';
 import { showAlert } from '../components/AppAlert';
 import { useMinuteClock } from '../hooks/useMinuteClock';
+import { useScreenAwake } from '../hooks/useScreenAwake';
 import {
     attachPlayer as attachRadioPlayer, FOLLOW_DELAY_SEC, goLive as radioGoLive, isRadioAvailable, isRadioEpisode,
     readLiveState, stopSession as stopRadioSession, switchToTranscript, useRadioSession,
@@ -46,7 +46,7 @@ const LIVE_REFETCH_MIN_MS = 1500;
 const PlayerScreen = ({ route, navigation }) => {
     const { colors, isDark } = useTheme();
     const styles = useStyles(makeStyles);
-    useKeepAwake();
+    useScreenAwake();
     const episodeParam = route.params.episode;
     const epId = episodeParam.id;
     const insets = useSafeAreaInsets();
