@@ -31,7 +31,7 @@ import { searchGoodreads } from '../api/goodreads';
 import { searchOpenLibraryByTitle } from '../api/openLibrary';
 import { searchITunes } from '../api/itunes';
 import { getTmdbKey, searchTmdb } from '../api/tmdb';
-import { fetchWikipediaSummary, searchWikipediaTitles } from '../api/wikipedia';
+import { fetchWikipediaSummary, largeImage, searchWikipediaTitles } from '../api/wikipedia';
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
@@ -181,7 +181,7 @@ const fromWikipedia = async (entity, signal) => {
     return {
         source: 'wikipedia',
         sourceUrl: page.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(String(page.title).replace(/ /g, '_'))}`,
-        imageUrl: page.original?.uri || page.thumbnail?.uri || null,
+        imageUrl: largeImage(page, 640) || page.thumbnail?.uri || null,
         subtitle: page.description || '',
         blurb: page.extract || '',
     };

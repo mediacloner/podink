@@ -113,13 +113,16 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings
                                 accessibilityRole='button'
                                 accessibilityLabel={`${item.canonical}, ${TYPE_LABEL[item.type]}`}
                             >
-                                {item.image_url ? (
-                                    <Image source={{ uri: item.image_url }} style={st.thumb} accessibilityIgnoresInvertColors />
-                                ) : (
-                                    <View style={[st.thumb, st.thumbEmpty]}>
-                                        <Icon name={TYPE_ICON[item.type] || 'tag'} size={14} color={colors.textMuted} />
-                                    </View>
-                                )}
+                                <View style={[st.thumb, st.thumbEmpty]}>
+                                    <Icon name={TYPE_ICON[item.type] || 'tag'} size={14} color={colors.textMuted} />
+                                    {!!item.image_url && (
+                                        <Image
+                                            source={{ uri: item.image_url }}
+                                            style={st.thumbImage}
+                                            accessibilityIgnoresInvertColors
+                                        />
+                                    )}
+                                </View>
                                 <View style={{ flex: 1 }}>
                                     <Text style={st.name} numberOfLines={1}>{item.canonical}</Text>
                                     <Text style={st.meta} numberOfLines={1}>
@@ -151,6 +154,7 @@ const makeStyles = (colors) => StyleSheet.create({
     rowBorder: { borderTopWidth: 0.5, borderTopColor: colors.hairline },
     thumb: { width: 38, height: 38, borderRadius: 6, backgroundColor: colors.hairlineFaint },
     thumbEmpty: { alignItems: 'center', justifyContent: 'center' },
+    thumbImage: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 6 },
     name: { fontSize: 15, fontWeight: '600', color: colors.textPrimary },
     meta: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
     time: { fontSize: 12, color: colors.textMuted, fontVariant: ['tabular-nums'] },
