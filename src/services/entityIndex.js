@@ -31,7 +31,7 @@ import { searchGoodreads } from '../api/goodreads';
 import { searchOpenLibraryByTitle } from '../api/openLibrary';
 import { searchITunes } from '../api/itunes';
 import { getTmdbKey, searchTmdb } from '../api/tmdb';
-import { fetchWikipediaSummary, lookupWikipedia } from '../api/wikipedia';
+import { fetchWikipediaSummary, searchWikipediaTitles } from '../api/wikipedia';
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
@@ -136,13 +136,51 @@ const accept = (raw, rows) => {
 
 // ─── Catalogues ──────────────────────────────────────────────────────────────
 
+// Words from the episode's own hint that a page about the right thing would
+// use. Without this the lookup is a bare title, and a bare title is how
+// "Stern" the dealer becomes the back of a boat and "Mango" a fruit.
+const HINT_STOP = new Set([
+    'this', 'that', 'they', 'them', 'their', 'there', 'then', 'with', 'from', 'about', 'into', 'over',
+    'episode', 'programme', 'show', 'said', 'says', 'called', 'known', 'mentioned', 'talks', 'talked',
+    'discussed', 'presenter', 'guest', 'host', 'also', 'more', 'much', 'very', 'what', 'when', 'where',
+    'which', 'who', 'whom', 'been', 'being', 'have', 'has', 'had', 'the',
+]);
+const hintWords = (hint) => [...new Set(String(hint || '').toLowerCase().match(/[a-z]{4,}/g) || [])]
+    .filter(w => !HINT_STOP.has(w));
+
+/** True when the page looks like the thing the episode was talking about. */
+const agrees = (page, hint) => {
+    const words = hintWords(hint);
+    if (!words.length) return true;                 // nothing to check it against
+    const hay = `${page.description || ''} ${page.extract || ''}`.toLowerCase();
+    return words.some(w => hay.includes(w.slice(0, Math.max(4, w.length - 2))));
+};
+
 const fromWikipedia = async (entity, signal) => {
-    const page = await lookupWikipedia([entity.canonical, entity.surface], { signal })
-        || await fetchWikipediaSummary(entity.canonical, 'en', signal);
+    const seen = new Set();
+    const consider = async (title) => {
+        const key = String(title).toLowerCase();
+        if (!title || seen.has(key)) return null;
+        seen.add(key);
+        const page = await fetchWikipediaSummary(title, 'en', signal).catch(() => null);
+        // A disambiguation page is not an answer — it is the question again.
+        if (!page || page.disambiguation) return null;
+        return agrees(page, entity.hint) ? page : null;
+    };
+
+    let page = await consider(entity.canonical);
+    if (!page) {
+        const titles = await searchWikipediaTitles(`${entity.canonical} ${entity.hint}`.trim(), { limit: 4, signal })
+            .catch(() => []);
+        for (const title of titles) {
+            page = await consider(title);
+            if (page) break;
+        }
+    }
     if (!page) return null;
     return {
         source: 'wikipedia',
-        sourceUrl: `https://en.wikipedia.org/wiki/${encodeURIComponent(String(page.title).replace(/ /g, '_'))}`,
+        sourceUrl: page.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(String(page.title).replace(/ /g, '_'))}`,
         imageUrl: page.original?.uri || page.thumbnail?.uri || null,
         subtitle: page.description || '',
         blurb: page.extract || '',

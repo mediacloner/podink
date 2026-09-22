@@ -65,6 +65,19 @@ export const fetchWikipediaSummary = async (title, lang = 'en', signal) => {
     };
 };
 
+/** Titles Wikipedia's own search returns for a query, best first. Used when
+ *  an exact title is the wrong sense of a word — "Stern" the ship's back
+ *  rather than Stern the dealer — so the episode's own hint can be searched
+ *  with (services/entityIndex.js). */
+export const searchWikipediaTitles = async (query, { lang = 'en', limit = 5, signal } = {}) => {
+    const q = String(query || '').trim();
+    if (!q) return [];
+    const url = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&format=json`
+        + `&srlimit=${limit}&srsearch=${encodeURIComponent(q)}`;
+    const d = await getJson(url, signal);
+    return (d?.query?.search || []).map(r => r.title).filter(Boolean);
+};
+
 const titleCase = (s) => s.split(' ').map(w => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ');
 
 // Wikimedia thumbnails are sized by the URL: `…/thumb/a/ab/Name.jpg/320px-Name.jpg`
