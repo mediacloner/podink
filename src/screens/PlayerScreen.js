@@ -37,7 +37,7 @@ import { artworkSource } from '../api/userAgent';
 import { buildTranscriptExport, shareText } from '../components/transcript/share';
 import ChapterSheet from '../components/transcript/ChapterSheet';
 import { extractColor, softenForHeader } from '../services/colorExtractor';
-import { useTheme, useStyles, radii, withAlpha } from '../theme';
+import { useTheme, useStyles, radii, withAlpha, THEMES } from '../theme';
 
 // Minimum gap between transcript re-fetches while live transcription streams
 // 'transcript-progress' events — keeps chunk rebuilds >= 1.5s apart.
@@ -657,7 +657,11 @@ const PlayerScreen = ({ route, navigation }) => {
                         accessibilityRole='button'
                         accessibilityLabel='Stop the radio'
                     >
-                        <Icon name='power' size={18} color={withAlpha(headerFg, 0.75)} />
+                        {/* Red, whatever the header's tint: the bright red of the
+                            dark palette on a dark header, the paper theme's own
+                            on a light one (user: "the button of shutdown in radio
+                            have to be in red"). */}
+                        <Icon name='power' size={18} color={headerIsDark ? THEMES.dark.danger : colors.danger} />
                     </TouchableOpacity>
                 )}
             </View>
