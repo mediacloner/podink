@@ -43,7 +43,7 @@ export const TYPE_ICON = {
     person: 'user', place: 'map-pin', book: 'book', film: 'film', tv: 'tv', album: 'disc',
 };
 
-const MAX_PER_PART = 25;
+const MAX_PER_PART = 40;
 const RESOLVE_AT_ONCE = 4;
 
 const INSTRUCTIONS = `You list what a podcast episode names: the people, places, books, films, television programmes and records its speakers talk about, from an automatic transcript with one sentence per line.
@@ -57,7 +57,7 @@ For each one give:
 
 Include what the speakers name and actually talk about. Leave out the presenter, the guests and the programme itself; a place named only to locate another place; a figure of speech; anything you cannot point to in the text. A recogniser misspelling belongs in "surface" with the true spelling in "canonical" — that pairing is the point of the list.
 
-At most ${MAX_PER_PART} for this text, the ones a listener might want to look up. Return an empty list when there is nothing worth listing.`;
+At most ${MAX_PER_PART} for this text, the ones a listener might want to look up. Cover every kind that appears — a programme or a record named once still belongs on the list — rather than listing more of one kind. Return an empty list when there is nothing worth listing.`;
 
 const SCHEMA = {
     type: 'object',
@@ -156,28 +156,48 @@ const agrees = (page, hint) => {
     return words.some(w => hay.includes(w.slice(0, Math.max(4, w.length - 2))));
 };
 
+// What a page about a person, or a place, says about itself. "Stern" the
+// ship's back and "Mango" the fruit fail these; Naissus the city passes.
+const KIND_MARKERS = {
+    person: /\b(emperor|empress|king|queen|prince|princess|saint|bishop|pope|politician|president|minister|actor|actress|singer|musician|composer|writer|author|poet|novelist|historian|philosopher|scientist|footballer|player|manager|comedian|presenter|journalist|businessman|businesswoman|general|consul|caesar|born|died|\d{3,4}\s*[\u2013-]\s*(?:c\.\s*)?\d{3,4})\b/i,
+    place: /\b(city|town|village|capital|country|region|province|county|state|island|river|bridge|mountain|lake|sea|district|municipality|settlement|kingdom|empire|colony|site|ruins|castle|cathedral|church|palace|square|street)\b/i,
+};
+const looksLike = (page, type) => {
+    const re = KIND_MARKERS[type];
+    return !re || re.test(`${page.description || ''} ${String(page.extract || '').slice(0, 400)}`);
+};
+
 const fromWikipedia = async (entity, signal) => {
-    const seen = new Set();
-    const consider = async (title) => {
-        const key = String(title).toLowerCase();
-        if (!title || seen.has(key)) return null;
-        seen.add(key);
+    const wanted = entity.canonical.toLowerCase();
+    const summary = async (title) => {
         const page = await fetchWikipediaSummary(title, 'en', signal).catch(() => null);
         // A disambiguation page is not an answer — it is the question again;
         // nor is a list ("Fausta" → a page of everyone called Fausta).
-        if (!page || isListPage(page)) return null;
-        return agrees(page, entity.hint) ? page : null;
+        return page && !isListPage(page) && looksLike(page, entity.type) ? page : null;
     };
 
-    let page = await consider(entity.canonical);
+    // The article of that exact name, when the episode's hint fits it.
+    const exact = await summary(entity.canonical);
+    let page = exact && agrees(exact, entity.hint) ? exact : null;
+
+    // Otherwise what Wikipedia's search makes of the name and the hint
+    // together — but only a hit that carries the name it was searched for:
+    // "Naissus, Constantine's birthplace" must not become Helena's article
+    // because Helena's article says "Constantine".
     if (!page) {
-        const titles = await searchWikipediaTitles(`${entity.canonical} ${entity.hint}`.trim(), { limit: 4, signal })
+        const titles = await searchWikipediaTitles(`${entity.canonical} ${entity.hint}`.trim(), { limit: 5, signal })
             .catch(() => []);
         for (const title of titles) {
-            page = await consider(title);
-            if (page) break;
+            const t = String(title).toLowerCase();
+            if (t === wanted || !(t.includes(wanted) || wanted.includes(t))) continue;
+            const candidate = await summary(title);
+            if (candidate && agrees(candidate, entity.hint)) { page = candidate; break; }
         }
     }
+
+    // Failing both, the exact article stands on its own when it is plainly
+    // the right kind of thing — a city is a city whatever the hint said.
+    if (!page && exact) page = exact;
     if (!page) return null;
     return {
         source: 'wikipedia',
