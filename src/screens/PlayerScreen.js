@@ -20,7 +20,7 @@ import {
 import {
     getSyncingId, isBookTranscript, isSyncing, needsSync, onBookSyncChange, queueVoiceSync, textDoesNotFit,
 } from '../services/bookService';
-import { getEpisodeById, getEpisodeBooks, getMaiTranscript } from '../database/queries';
+import { getEpisodeById, getEpisodeBooks, getEpisodeEntities, getMaiTranscript } from '../database/queries';
 import CloudTranscriptSheet from '../components/transcript/CloudTranscriptSheet';
 import EntitiesSheet from '../components/transcript/EntitiesSheet';
 import EntitySheet from '../components/transcript/EntitySheet';
@@ -119,6 +119,8 @@ const PlayerScreen = ({ route, navigation }) => {
     const [entityCard, setEntityCard] = useState(null);   // { entity, startMs } over the list
     // Books the transcript mentions (EpisodeBooks rows) — bold titles + book card.
     const [books, setBooks] = useState([]);
+    // What the episode names (EpisodeEntities), marked in the text like books.
+    const [entities, setEntities] = useState([]);
     const [chapterSheet, setChapterSheet] = useState(false);   // the summary-and-chapters card
     const [transcriptLoading, setTranscriptLoading] = useState(false);
     const [audioStatus, setAudioStatus] = useState('');
@@ -356,6 +358,10 @@ const PlayerScreen = ({ route, navigation }) => {
         getEpisodeBooks(epId).then(rows => { if (alive) setBooks(rows); }).catch(() => {});
         return () => { alive = false; };
     }, [epId]);
+    const refetchEntities = useCallback(async () => {
+        try { setEntities(await getEpisodeEntities(epId)); } catch (_) {}
+    }, [epId]);
+    useEffect(() => { setEntities([]); refetchEntities(); }, [refetchEntities]);
     useEffect(() => {
         // Not while the text is still growing: the finished job scans it.
         if (!ep || !segments.length || ep.books_indexed_at || isRadio || transcribing || isQueued) return;
@@ -413,6 +419,8 @@ const PlayerScreen = ({ route, navigation }) => {
                     bookSyncAskedRef.current = false;
                     showAlert('The text could not be matched', payload.error || 'Please try again.');
                 }
+            } else if (payload.type === 'entities-indexed') {
+                refetchEntities();
             } else if (payload.type === 'books-indexed') {
                 refetchBooks();
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
@@ -440,7 +448,7 @@ const PlayerScreen = ({ route, navigation }) => {
             unsub();
             if (st.timer) clearTimeout(st.timer);
         };
-    }, [epId, refetchTranscript, refetchMai, navigation]);
+    }, [epId, refetchTranscript, refetchMai, refetchEntities, navigation]);
 
     // ── Transcription queue state for this episode ────────────────────────────
     // Matching the book text to the voice (bookService's own queue).
@@ -773,6 +781,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         episodeTitle={ep.title}
                         podcastTitle={ep.podcast_title}
                         books={books}
+                        entities={entities}
                     />
                 )}
 

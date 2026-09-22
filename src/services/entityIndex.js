@@ -35,23 +35,23 @@ import { fetchWikipediaSummary, isListPage, searchWikipediaTitles } from '../api
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
-export const ENTITY_TYPES = ['person', 'place', 'book', 'film', 'tv', 'album'];
+export const ENTITY_TYPES = ['person', 'place', 'book', 'film', 'tv', 'podcast', 'album'];
 export const TYPE_LABEL = {
-    person: 'Person', place: 'Place', book: 'Book', film: 'Film', tv: 'Television', album: 'Record',
+    person: 'Person', place: 'Place', book: 'Book', film: 'Film', tv: 'Television', podcast: 'Podcast', album: 'Record',
 };
 export const TYPE_ICON = {
-    person: 'user', place: 'map-pin', book: 'book', film: 'film', tv: 'tv', album: 'disc',
+    person: 'user', place: 'map-pin', book: 'book', film: 'film', tv: 'tv', podcast: 'mic', album: 'disc',
 };
 
 const MAX_PER_PART = 40;
 const RESOLVE_AT_ONCE = 4;
 
-const INSTRUCTIONS = `You list what a podcast episode names: the people, places, books, films, television programmes and records its speakers talk about, from an automatic transcript with one sentence per line.
+const INSTRUCTIONS = `You list what a podcast episode names: the people, places, books, films, television programmes, other podcasts and records its speakers talk about, from an automatic transcript with one sentence per line.
 
 For each one give:
 - "surface": the words exactly as the transcript has them, copied character for character, at most six words. Where the transcript spells it several ways, use the first.
 - "canonical": what the thing is really called, spelled properly.
-- "type": one of person, place, book, film, tv, album.
+- "type": one of person, place, book, film, tv, podcast, album. A podcast is a podcast, not television, even when it is only trailed.
 - "hint": what this episode says about it, in a few words — an author, a year, a director, a country, a role. This is what tells one thing of the same name from another, so write what would let a librarian pick the right one: "the 1965 Herbert novel", "the Roman emperor", "Villeneuve's adaptation".
 - "context": the transcript line it appears in, copied as written.
 
@@ -255,11 +255,14 @@ const fromOpenLibrary = async (entity, said, signal) => {
     };
 };
 
+const APPLE_ENTITY = { album: 'album', tv: 'tvSeason', podcast: 'podcast' };
+const APPLE_SOURCE = { album: 'applemusic', tv: 'appletv', podcast: 'applepodcasts' };
+
 const fromITunes = async (entity, kind, signal) => {
     const term = kind === 'album' && entity.hint
         ? `${entity.canonical} ${entity.hint.split(/[,;(]/)[0]}`.trim()
         : entity.canonical;
-    const apple = kind === 'album' ? 'album' : 'tvSeason';
+    const apple = APPLE_ENTITY[kind];
     let best = null;
     for (const country of ['GB', 'US']) {           // the podcasts are mostly British
         const hits = await searchITunes(term, apple, { country, signal }).catch(() => []);
@@ -267,13 +270,14 @@ const fromITunes = async (entity, kind, signal) => {
         if (best) break;
     }
     if (!best) return null;
-    const sameName = best.subtitle && best.subtitle.toLowerCase() === best.title.replace(/,?\s*season \d+.*$/i, '').toLowerCase();
+    const sameName = best.subtitle && best.subtitle.toLowerCase() === best.title.replace(/,?\s*(?:season|series) \d+.*$/i, '').toLowerCase();
     return {
-        source: kind === 'album' ? 'applemusic' : 'appletv',
+        source: APPLE_SOURCE[kind],
         sourceUrl: best.url,
         imageUrl: best.imageUrl,
         subtitle: kind === 'album' ? best.subtitle : (sameName ? '' : best.subtitle),
-        facts: [best.year, best.genre, best.tracks ? `${best.tracks} ${kind === 'album' ? 'tracks' : 'episodes'}` : '']
+        facts: [kind === 'podcast' ? '' : best.year, best.genre,
+            best.tracks && kind !== 'podcast' ? `${best.tracks} ${kind === 'album' ? 'tracks' : 'episodes'}` : '']
             .filter(Boolean).join(' \u00b7 '),
         blurb: best.blurb,
     };
@@ -310,6 +314,9 @@ export const resolveEntity = async (entity, { tmdbKey = '', said = '', signal } 
         }
         if (entity.type === 'album') {
             return (await fromITunes(entity, 'album', signal)) || (await fromWikipedia(entity, signal));
+        }
+        if (entity.type === 'podcast') {
+            return (await fromITunes(entity, 'podcast', signal)) || (await fromWikipedia(entity, signal));
         }
         if (entity.type === 'tv') {
             return (tmdbKey ? await fromTmdb(entity, 'tv', tmdbKey, signal) : null)

@@ -14,7 +14,7 @@ import { ENTITY_TYPES, TYPE_ICON, TYPE_LABEL, indexEpisodeEntities, isIndexingEn
 import { formatClock } from '../../services/sentenceBoundary';
 import { imageSourceFor } from '../../api/wikipedia';
 
-const PLURAL = { person: 'People', place: 'Places', book: 'Books', film: 'Films', tv: 'Television', album: 'Records' };
+const PLURAL = { person: 'People', place: 'Places', book: 'Books', film: 'Films', tv: 'Television', podcast: 'Podcasts', album: 'Records' };
 
 const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings }) => {
     const { colors } = useTheme();

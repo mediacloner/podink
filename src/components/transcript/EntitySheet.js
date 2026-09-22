@@ -24,7 +24,7 @@ const FOLD_CHARS = 420;
 
 const SOURCE_LABEL = {
     goodreads: 'Goodreads', openlibrary: 'Open Library', wikipedia: 'Wikipedia',
-    applemusic: 'Apple Music', appletv: 'Apple TV', tmdb: 'TMDB',
+    applemusic: 'Apple Music', appletv: 'Apple TV', applepodcasts: 'Apple Podcasts', tmdb: 'TMDB',
 };
 
 /** Where this kind of thing can be opened, beyond whoever answered. */
@@ -34,7 +34,8 @@ const elsewhere = (entity) => {
         case 'book': return { label: 'Goodreads', url: `https://www.goodreads.com/search?q=${q}` };
         case 'film':
         case 'tv': return { label: 'IMDb', url: `https://www.imdb.com/find/?q=${q}&s=tt` };
-        case 'album': return { label: 'Spotify', url: `https://open.spotify.com/search/${q}` };
+        case 'album':
+        case 'podcast': return { label: 'Spotify', url: `https://open.spotify.com/search/${q}` };
         default: return { label: 'Wikipedia', url: `https://en.wikipedia.org/wiki/Special:Search?search=${q}` };
     }
 };

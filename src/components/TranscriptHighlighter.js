@@ -31,6 +31,7 @@ import PositionFeeder from './transcript/PositionFeeder';
 import TranslationModal from './transcript/TranslationModal';
 import WordPopover from './transcript/WordPopover';
 import BookSheet from './transcript/BookSheet';
+import EntitySheet from './transcript/EntitySheet';
 import { buildBookMarks } from '../services/bookText';
 import { isSentenceEnd } from '../services/sentenceBoundary';
 
@@ -311,6 +312,11 @@ const TranscriptHighlighter = forwardRef(({
     // EpisodeBooks rows (services/bookIndex.js): their titles are set in
     // bold wherever the transcript says them, and a tap opens the book card.
     books = EMPTY_BOOKS,
+    // EpisodeEntities rows (services/entityIndex.js): the people, places,
+    // films and the rest the episode names, marked the same way and opening
+    // their own card (user: "the names of list should have highlighted in
+    // transcription and when clic go to card").
+    entities = EMPTY_BOOKS,
 }, ref) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -966,12 +972,22 @@ const TranscriptHighlighter = forwardRef(({
     // ── Book marks: word globalIndex → EpisodeBooks id (0 = plain word) ──────
     // One typed array for the whole transcript, rebuilt when the text or the
     // book list changes; every Chunk reads its own words from it.
-    const wordBook = useMemo(
-        () => (books?.length && computed.chunks.length ? buildBookMarks(computed.chunks, books) : NO_MARKS),
-        [computed, books],
-    );
+    // Entities share the array as negative ids: the matcher wants a title and
+    // the spellings that were heard, which an entity has too. Books go first,
+    // so a title wins where the two overlap.
+    const wordBook = useMemo(() => {
+        if (!computed.chunks.length || (!books?.length && !entities?.length)) return NO_MARKS;
+        const marked = [
+            ...(books || []),
+            ...(entities || []).filter(e => Number(e.id) > 0)
+                .map(e => ({ id: -Number(e.id), title: e.canonical, heard_as: [e.surface] })),
+        ];
+        return buildBookMarks(computed.chunks, marked);
+    }, [computed, books, entities]);
     const booksRef = useRef(books);
     useEffect(() => { booksRef.current = books; }, [books]);
+    const entitiesRef = useRef(entities);
+    useEffect(() => { entitiesRef.current = entities; }, [entities]);
 
     // ── Pause while looking up (Settings toggle) ─────────────────────────────
     // Opening a word or sentence card pauses playback; closing it resumes —
@@ -1089,12 +1105,30 @@ const TranscriptHighlighter = forwardRef(({
 
     // ── Book card (tap on a bold title) ──────────────────────────────────────
     const [bookSheet, setBookSheet] = useState(null);
+    const [entitySheet, setEntitySheet] = useState(null);
     const onBookPress = useCallback((bookId, startMs) => {
-        const book = (booksRef.current || []).find(b => Number(b.id) === Number(bookId));
+        const id = Number(bookId);
+        if (id < 0) {                                  // a person, a place, a film…
+            const entity = (entitiesRef.current || []).find(e => Number(e.id) === -id);
+            if (!entity) return;
+            setEntitySheet({ entity, startMs: Math.round(startMs || 0) });
+            pauseForLookup();
+            return;
+        }
+        const book = (booksRef.current || []).find(b => Number(b.id) === id);
         if (!book) return;
         setBookSheet({ book, startMs: Math.round(startMs || 0) });
         pauseForLookup();
     }, [pauseForLookup]);
+    const closeEntitySheet = useCallback(() => {
+        setEntitySheet(null);
+        resumeAfterLookup();
+    }, [resumeAfterLookup]);
+    const onEntityReplay = useCallback((ms) => {
+        setEntitySheet(null);
+        doSeek(ms);
+        resumeAfterLookup();
+    }, [doSeek, resumeAfterLookup]);
     const closeBookSheet = useCallback(() => {
         setBookSheet(null);
         resumeAfterLookup();
@@ -1286,6 +1320,7 @@ const TranscriptHighlighter = forwardRef(({
                 onReplay={onWordReplay}
             />
             <BookSheet data={bookSheet} onClose={closeBookSheet} onReplay={onBookReplay} />
+            <EntitySheet data={entitySheet} onClose={closeEntitySheet} onReplay={onEntityReplay} />
 
             {statusPane ?? (
                 <>
