@@ -372,8 +372,19 @@ const TranslationModal = ({
         </TouchableOpacity>
     );
 
+    // Pulling the card up unfolds the lines before the sentence, the same
+    // as the "Show context" link; once they are out the pull does nothing.
+    const onPullUp = useCallback(() => setExpanded(true), []);
+
     return (
-        <SheetModal visible={visible} onClose={onClose} header={header} footer={footer} maxHeight='85%'>
+        <SheetModal
+            visible={visible}
+            onClose={onClose}
+            header={header}
+            footer={footer}
+            maxHeight='85%'
+            onPullUp={hasContext && !expanded ? onPullUp : undefined}
+        >
             {/* Context pairs — English + translation side by side */}
             {expanded && hasContext && translatedCtx.map((translated, i) => (
                 <View key={i} style={ms.contextBlock}>

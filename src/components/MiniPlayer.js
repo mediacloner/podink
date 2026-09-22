@@ -11,6 +11,7 @@ import { getEpisodeById } from '../database/queries';
 import { persistProgress } from '../services/playbackService';
 import { notifyUserStop } from '../services/trackPlayer';
 import { artworkSource } from '../api/userAgent';
+import { getStation } from '../services/radioStations';
 import { radii, withAlpha, useStyles, useTheme } from '../theme';
 
 // ─── MiniPlayer ───────────────────────────────────────────────────────────────
@@ -32,6 +33,9 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
     const isPlaying = state === State.Playing;
     const isBusy    = state === State.Buffering || state === State.Loading;
     const hasTrack  = !!track;
+    // A live-radio track names its station (buildRadioTrack), so its logo can
+    // be drawn from the bundled asset rather than the artwork RNTP hands back.
+    const station   = track?.stationId ? getStation(track.stationId) : null;
     const [tabsActive, setTabsActive] = useState(true);
     // No userHasPlayed gate needed here — the parent (TabNavigator) only
     // mounts this component after onUserPlay fires, so we can trust that
@@ -171,8 +175,16 @@ const MiniPlayer = ({ bottomOffset = 0, stackNavigation }) => {
         >
             <Pressable style={styles.card} onPress={openPlayer}>
 
-                {/* Artwork */}
-                {artworkUri ? (
+                {/* Artwork. A station's logo is a wordmark of any shape, often
+                    dark on transparent, so it gets the same white `contain`
+                    tile as the radio list and the Player: `cover` in the
+                    square cropped RTÉ to "IC/DIO" and lost the BBC's black
+                    blocks against a dark card. */}
+                {station?.logo ? (
+                    <View style={styles.logoTile}>
+                        <Image source={station.logo} style={styles.logo} resizeMode="contain" accessibilityIgnoresInvertColors />
+                    </View>
+                ) : artworkUri ? (
                     <Image source={artworkSource(artworkUri)} style={styles.artwork} />
                 ) : (
                     <View style={[styles.artwork, styles.artworkFallback]}>
@@ -276,6 +288,19 @@ const makeStyles = (colors) => StyleSheet.create({
         alignItems:      'center',
         justifyContent:  'center',
     },
+    // The station's logo tile: the Player's 88×56 brought to the card's 52 px
+    // row. A bundled image defaults to its own pixel size, hence the explicit
+    // full-tile size on the image.
+    logoTile: {
+        width:           82,
+        height:          52,
+        borderRadius:    radii.s,
+        backgroundColor: '#FFFFFF',
+        padding:         7,
+        alignItems:      'center',
+        justifyContent:  'center',
+    },
+    logo: { width: '100%', height: '100%' },
     rightControls: {
         flexDirection: 'row',
         alignItems:    'center',

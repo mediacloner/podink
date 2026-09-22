@@ -12,6 +12,10 @@ import { radii, withAlpha, useTheme, useStyles } from '../../theme';
 // (px/s) the sheet dismisses; anything less springs back into place.
 const CLOSE_DISTANCE = 120;
 const CLOSE_VELOCITY = 800;
+// Pull-up thresholds (sheets with `onPullUp`): an upward drag this far, or an
+// upward fling this fast, while the body sits at its top.
+const PULL_UP_DISTANCE = 48;
+const PULL_UP_VELOCITY = 600;
 
 // Where the card parks until it has been measured — below any screen edge.
 const OFFSCREEN = Dimensions.get('screen').height;
@@ -42,9 +46,15 @@ const FOOTER_GAP = 20;
 //    normally; upward drags fail the pan at once so they never fight the
 //    scroll. This replaces a JS PanResponder that Android's ScrollView beat
 //    to the gesture whenever the content overflowed.
+//  - `onPullUp` (optional) makes the sheet answer an upward drag as well: a
+//    pull past PULL_UP_DISTANCE, or an upward fling, with the body still at
+//    its top calls it once per gesture (the translation card unfolds the
+//    lines before the sentence — user, 2026-09-22: "if I move the popover
+//    up you show the context"). A body that scrolls under the finger is a
+//    scroll, not a pull: the check reads the scroll offset as it goes.
 // `scrollRef` (optional) receives the body ScrollView so a caller can scroll
 // its content into view (the word card jumps to a phrasal verb's definition).
-const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '85%', scrollRef }) => {
+const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '85%', scrollRef, onPullUp }) => {
     const st = useStyles(makeStyles);
     const { bottom, top } = useSafeAreaInsets();
     const [mounted, setMounted] = useState(visible);
@@ -91,11 +101,15 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
     const sheetHeight = useSharedValue(0);
     const scrollY = useSharedValue(0);
     const dragFromTop = useSharedValue(false);
+    const pulledUp = useSharedValue(false);
 
     const visibleRef = useRef(visible);
     const enteredRef = useRef(false);
     const onCloseRef = useRef(onClose);
     useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+    const onPullUpRef = useRef(onPullUp);
+    useEffect(() => { onPullUpRef.current = onPullUp; }, [onPullUp]);
+    const hasPullUp = !!onPullUp;
 
     // Content frozen at the moment of closing, rendered while sliding out.
     const shownRef = useRef({ header, footer, children });
@@ -103,6 +117,7 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
     const shown = visible ? { header, footer, children } : shownRef.current;
 
     const requestClose = useCallback(() => { onCloseRef.current?.(); }, []);
+    const requestPullUp = useCallback(() => { onPullUpRef.current?.(); }, []);
     // Reached from the exit animation's completion; a re-open that interrupted
     // the exit has already flipped `visible` back and must keep the sheet.
     const unmount = useCallback(() => { if (!visibleRef.current) setMounted(false); }, []);
@@ -147,31 +162,43 @@ const SheetModal = ({ visible, onClose, header, footer, children, maxHeight = '8
     }, [backdrop, sheetHeight, translateY]);
 
     const nativeScroll = useMemo(() => Gesture.Native(), []);
-    const pan = useMemo(() => Gesture.Pan()
+    const pan = useMemo(() => {
         // Off while closing, so a stray drag can't interrupt the exit.
-        .enabled(visible)
-        .activeOffsetY(8)
-        .failOffsetY(-8)
-        .simultaneousWithExternalGesture(nativeScroll)
-        .onBegin(() => { dragFromTop.value = scrollY.value <= 0; })
-        .onUpdate((e) => {
-            if (dragFromTop.value) translateY.value = Math.max(0, e.translationY);
-        })
-        .onEnd((e) => {
-            if (!dragFromTop.value) return;
-            if (translateY.value > CLOSE_DISTANCE || e.velocityY > CLOSE_VELOCITY) {
-                runOnJS(requestClose)();
-            } else {
-                translateY.value = withSpring(0, SPRING);
-            }
-        })
-        .onFinalize((_, success) => {
-            // Cancelled mid-drag (not a normal release): snap back.
-            if (!success && dragFromTop.value && translateY.value > 0) {
-                translateY.value = withSpring(0, SPRING);
-            }
-        }),
-    [visible, nativeScroll, dragFromTop, scrollY, translateY, requestClose]);
+        const base = Gesture.Pan().enabled(visible).simultaneousWithExternalGesture(nativeScroll);
+        // Without a pull-up handler an upward drag fails the pan at once, so
+        // it never fights the body's scroll; with one it stays alive upward
+        // too and the scroll offset tells a pull from a scroll.
+        const g = hasPullUp ? base.activeOffsetY([-8, 8]) : base.activeOffsetY(8).failOffsetY(-8);
+        return g
+            .onBegin(() => { dragFromTop.value = scrollY.value <= 0; pulledUp.value = false; })
+            .onUpdate((e) => {
+                if (!dragFromTop.value) return;
+                if (e.translationY >= 0) {
+                    translateY.value = e.translationY;
+                } else if (hasPullUp && !pulledUp.value && scrollY.value <= 0 && e.translationY < -PULL_UP_DISTANCE) {
+                    pulledUp.value = true;
+                    runOnJS(requestPullUp)();
+                }
+            })
+            .onEnd((e) => {
+                if (!dragFromTop.value) return;
+                if (translateY.value > CLOSE_DISTANCE || e.velocityY > CLOSE_VELOCITY) {
+                    runOnJS(requestClose)();
+                } else {
+                    if (hasPullUp && !pulledUp.value && scrollY.value <= 0 && e.velocityY < -PULL_UP_VELOCITY) {
+                        pulledUp.value = true;
+                        runOnJS(requestPullUp)();
+                    }
+                    translateY.value = withSpring(0, SPRING);
+                }
+            })
+            .onFinalize((_, success) => {
+                // Cancelled mid-drag (not a normal release): snap back.
+                if (!success && dragFromTop.value && translateY.value > 0) {
+                    translateY.value = withSpring(0, SPRING);
+                }
+            });
+    }, [visible, hasPullUp, nativeScroll, dragFromTop, pulledUp, scrollY, translateY, requestClose, requestPullUp]);
 
     // Bottom clearance belongs to whichever is last: the footer when there is
     // one, otherwise the body. Lifted over the keyboard there is no bar to

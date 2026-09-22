@@ -1,6 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## [4.8.1] - 2026-09-22
+
+### Added
+- **Pull the translation card up to read the lines before.** Dragging the sentence card upward unfolds the two paragraphs before it with their translations, the same as the *Show context* link; dragging down still closes it (user: “in translation of sentence if I move the popover up you show the context”).
+
+### Fixed
+- **A station's logo in the mini player sits whole on a white tile.** The card drew the live-radio artwork like podcast art, filling a 52 px square, so a wide wordmark was cropped to its middle (RTÉ read as “IC/DIO”) and the BBC's dark blocks vanished against a dark card. Radio tracks now carry their station and the card draws the bundled logo the way the station list and the Player do (user: “the radio when you have a secondary player don't show correctly the logos”).
+
+## [4.8.0] - 2026-09-21
 
 ### Sync correction
 - EPUB sync now matches recognised speech to the book instead of declaring a pause-based guess synced. The displayed words still come from the EPUB. Previously pause-matched chapters are offered for re-sync and sync automatically when opened. The sync dialog describes the longer on-device processing time, and an interrupted active speech-alignment job retains its alignment mode on restart.

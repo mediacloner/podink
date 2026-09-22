@@ -199,8 +199,12 @@ export const buildRadioTrack = (episode) => {
         title:   episode.title,
         artist:  episode.podcast_title,
         // The bundled logo (RNTP resolves a require()d asset to a URI) for
-        // the notification and the MiniPlayer.
+        // the notification.
         artwork: station?.logo || episode.image_url || undefined,
+        // Custom fields ride along on the track (RNTP hands the original item
+        // back from getActiveTrack), so the MiniPlayer can find the station
+        // and draw its logo on a tile instead of the cropped artwork.
+        stationId: station?.id,
     };
     if (episode.local_audio_path) {
         track.url = episode.local_audio_path;
