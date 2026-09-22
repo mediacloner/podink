@@ -44,11 +44,11 @@ export const AI_MODEL_KEY = '@ai_model';
 export const AI_AUTO_KEY = '@ai_auto_analyze';      // '1' | '0'; absent = off
 export const AI_FIX_KEY = '@ai_fix_transcript';     // '1' | '0'; absent = on
 
-// Prices per million tokens (OpenAI's page, 2026-09-11) — for the log line
+// Prices per million tokens (checked 2026-09-22) — for the log line
 // and the "about a cent" hint, not for billing.
 export const AI_MODELS = [
     { id: 'gpt-5.6-luna', label: 'Luna', tier: 'Budget', inPerM: 0.20, outPerM: 1.20, recommended: true },
-    { id: 'gpt-5.6-terra', label: 'Terra', tier: 'Mid-range', inPerM: 2.00, outPerM: 12.00 },
+    { id: 'gpt-5.6-sol', label: 'Sol', tier: 'Flagship', inPerM: 2.00, outPerM: 10.00 },
 ];
 export const DEFAULT_AI_MODEL = AI_MODELS[0].id;
 

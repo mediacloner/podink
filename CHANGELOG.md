@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **The assistant's second model is Sol, not Terra.** The picker offered Luna and Terra, and Terra was the wrong one to keep: OpenAI charges the same $2.00 a million tokens to read either, and $10.00 against Terra's $12.00 to write — with Sol the flagship of the series and Terra explicitly the step below it. So the mid tier cost more than the top one for exactly the work this app asks of it (user: “could be is better luna and sol”). An hour of audio reads for about 8 cents on Sol where Terra wanted 9, and the punctuation pass, which re-emits every word it is given, is 14 % cheaper on the model that is also the better one. Anyone who had chosen Terra falls back to Luna, which is where the recommendation has always pointed.
+
 ## [5.0.0] - 2026-09-22
 
 ### Added
