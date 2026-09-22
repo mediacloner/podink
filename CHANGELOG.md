@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Slide a sentence to the left to play on from it.** A slide to the right opens the translation card; its mirror now does what the double tap does — goes to the start of that sentence and plays — with a play mark fading in at the right as the words follow the thumb, so a paused reader can start from any line with one sure gesture instead of two taps timed right (user: “when slide from the right to the left in sentences start in this position”).
+
 ### Changed
 - **The stop button of a radio station is a red disc.** The power icon in the Player header was drawn in the header's text colour like the other controls; it now sits light on a solid red disc in either theme, whatever the header's tint (user: “the button of shutdown in radio have to be in red”, then “I can't see very clear, can you invert the button”).
 
