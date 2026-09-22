@@ -173,8 +173,13 @@ const looksLike = (page, type) => {
     return !re || re.test(`${page.description || ''} ${String(page.extract || '').slice(0, 400)}`);
 };
 
+// A title without its bracketed qualifier: "Constantine (film)" and the
+// model's "Constantine (2005 film)" are the same name, and the comparison
+// below must see that they are.
+const bareTitle = (t) => String(t || '').toLowerCase().replace(/\s*\([^)]*\)\s*$/, '').trim();
+
 const fromWikipedia = async (entity, signal) => {
-    const wanted = entity.canonical.toLowerCase();
+    const wanted = bareTitle(entity.canonical);
     const summary = async (title) => {
         const page = await fetchWikipediaSummary(title, 'en', signal).catch(() => null);
         // A disambiguation page is not an answer — it is the question again;
@@ -194,8 +199,9 @@ const fromWikipedia = async (entity, signal) => {
         const titles = await searchWikipediaTitles(`${entity.canonical} ${entity.hint}`.trim(), { limit: 5, signal })
             .catch(() => []);
         for (const title of titles) {
-            const t = String(title).toLowerCase();
-            if (t === wanted || !(t.includes(wanted) || wanted.includes(t))) continue;
+            if (String(title).toLowerCase() === entity.canonical.toLowerCase()) continue;   // already tried
+            const t = bareTitle(title);
+            if (!(t.includes(wanted) || wanted.includes(t))) continue;
             const candidate = await summary(title);
             if (candidate && agrees(candidate, entity.hint)) { page = candidate; break; }
         }
