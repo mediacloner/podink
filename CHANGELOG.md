@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [5.0.0] - 2026-09-22
 
 ### Added
 - **Slide a sentence to the left to play on from it.** A slide to the right opens the translation card; its mirror now does what the double tap does — goes to the start of that sentence and plays — with a play mark fading in at the right as the words follow the thumb, so a paused reader can start from any line with one sure gesture instead of two taps timed right (user: “when slide from the right to the left in sentences start in this position”).
