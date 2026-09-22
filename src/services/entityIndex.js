@@ -326,13 +326,18 @@ export const resolveEntity = async (entity, { tmdbKey = '', said = '', signal } 
         }
         if (entity.type === 'tv') {
             const screen = (tmdbKey ? await fromTmdb(entity, 'tv', tmdbKey, signal) : null)
-                || (await fromITunes(entity, 'tv', signal));
+                || (await fromITunes(entity, 'tv', signal))
+                || (await fromWikipedia(entity, signal));
             if (screen) return screen;
-            // Not on any screen, but on Apple Podcasts: the model called a
-            // podcast television. The answer carries the corrected kind.
+            // Known to no screen catalogue and not to Wikipedia either, but on
+            // Apple Podcasts: the model called a podcast television, and the
+            // answer carries the corrected kind. Wikipedia has to come first —
+            // "Live at the Apollo" is a BBC programme Apple TV does not list
+            // and a podcast Apple does, and only the encyclopaedia knows which
+            // one the comedian was on.
             const pod = await fromITunes(entity, 'podcast', signal);
             if (pod) return { ...pod, type: 'podcast' };
-            return await fromWikipedia(entity, signal);
+            return null;
         }
         if (entity.type === 'film') {
             return (tmdbKey ? await fromTmdb(entity, 'movie', tmdbKey, signal) : null)
