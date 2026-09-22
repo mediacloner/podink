@@ -17,7 +17,7 @@
  * wrote them against the phone's text, so only one side could use them.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getEpisodeById, getMaiTranscript, getTranscriptsForEpisode } from '../database/queries';
+import { getEpisodeById, getMaiTranscript, getTranscriptsForEpisode, recordApiSpend } from '../database/queries';
 import { chaptersAndSummary, episodeNotes } from './aiService';
 import { applyNameCorrections, findNameCorrections, nameCandidates } from './nameText';
 import { showNotesPlainText } from './showNotes';
@@ -120,7 +120,14 @@ export const testMaiChapters = async (episode, onResult = () => {}) => {
                 const pass = await chaptersAndSummary({
                     ep, rows: source.rows, notes, request: openRouterRequest(key, model.id),
                 });
-                result = { ...head, summary: pass.summary, chapters: pass.chapters, cost: dollars(model, pass.usage) };
+                const cost = dollars(model, pass.usage);
+                result = { ...head, summary: pass.summary, chapters: pass.chapters, cost };
+                await recordApiSpend({
+                    provider: 'openrouter', service: 'comparison', model: model.id,
+                    episodeId: ep.id, episodeTitle: ep.title, source: ep.podcast_title,
+                    tokensIn: pass.usage.input, tokensCached: pass.usage.cached,
+                    tokensOut: pass.usage.output, cost,
+                });
             } catch (error) {
                 result = { ...head, error: error?.message || 'Provider returned an error' };
             }

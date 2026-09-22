@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -411,6 +411,78 @@ const migrateToV12 = async (txn) => {
     if (!have.has('book_range')) await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN book_range TEXT`);
 };
 
+const migrateToV15 = async (txn) => {
+    // Statistics (5.1.0, screens/StatsScreen.js): what was really listened to,
+    // and what the paid passes cost.
+    //
+    // ListeningLog is one row per day per thing heard, added to as it is heard
+    // (services/statsService.js): `seconds` is audio that actually went past —
+    // a seek forward is not listening — and `real_seconds` the time it took at
+    // the chosen speed. No FOREIGN KEY on purpose: what someone listened to on
+    // a Tuesday stays true after the episode is deleted or the podcast
+    // unsubscribed, so the titles are copied in. A live-radio item_id is
+    // 'radio:<station>' rather than the session's own id, which changes every
+    // time the station is opened and is deleted on the next launch.
+    //
+    // ApiSpend is one row per paid request the app made — the assistant, the
+    // punctuation pass, a cloud transcription, a comparison — with the tokens
+    // or the audio seconds it was billed for. The money was spent whatever
+    // happens to the episode afterwards, so these rows have no FOREIGN KEY
+    // either.
+    //
+    // StatsMeta.since is the moment measuring began (this upgrade). Anything
+    // before it can only be estimated from what the library remembers — an
+    // episode's length and when it was last heard — and the screen says so;
+    // the boundary keeps the two from ever counting the same listening twice.
+    await txn.execAsync(`
+        CREATE TABLE IF NOT EXISTS ListeningLog (
+            day TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'rss',
+            title TEXT,
+            source TEXT,
+            feed_url TEXT,
+            seconds REAL NOT NULL DEFAULT 0,
+            real_seconds REAL NOT NULL DEFAULT 0,
+            first_at INTEGER,
+            last_at INTEGER,
+            PRIMARY KEY (day, item_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_listening_day ON ListeningLog(day);
+        CREATE TABLE IF NOT EXISTS ApiSpend (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            at INTEGER NOT NULL,
+            day TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            service TEXT NOT NULL,
+            model TEXT,
+            episode_id TEXT,
+            episode_title TEXT,
+            source TEXT,
+            tokens_in INTEGER DEFAULT 0,
+            tokens_cached INTEGER DEFAULT 0,
+            tokens_out INTEGER DEFAULT 0,
+            audio_seconds REAL,
+            cost_usd REAL NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_spend_day ON ApiSpend(day, at);
+        CREATE TABLE IF NOT EXISTS StatsMeta (key TEXT PRIMARY KEY, value TEXT);
+    `);
+    // The cloud transcriptions already run carry the real price OpenRouter
+    // charged for them (MaiTranscriptRuns, v13), so they enter the ledger as
+    // measured spend rather than as an estimate.
+    await txn.execAsync(
+        `INSERT INTO ApiSpend (at, day, provider, service, model, episode_id, episode_title, audio_seconds, cost_usd)
+         SELECT r.created_at,
+                strftime('%Y-%m-%d', r.created_at / 1000, 'unixepoch', 'localtime'),
+                'openrouter', 'transcription', r.model, r.episode_id, e.title,
+                r.audio_seconds, COALESCE(r.cost_usd, 0)
+           FROM MaiTranscriptRuns r
+           LEFT JOIN Episodes e ON e.id = r.episode_id`
+    );
+    await txn.runAsync(`INSERT OR REPLACE INTO StatsMeta (key, value) VALUES ('since', ?)`, [String(Date.now())]);
+};
+
 export const initDB = async () => {
     const db = await openDatabaseContext();
 
@@ -452,6 +524,7 @@ export const initDB = async () => {
             CREATE INDEX IF NOT EXISTS idx_mai_segments ON MaiTranscriptSegments(episode_id, start_time);
         `);
         if (cur < 14) await migrateToV14(db);
+        if (cur < 15) await migrateToV15(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

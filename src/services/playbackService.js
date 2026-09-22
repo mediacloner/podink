@@ -2,6 +2,7 @@ import TrackPlayer, { Event, State } from 'react-native-track-player';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { savePlayPosition, markEpisodePlayed, setEpisodeDurationIfMissing } from '../database/queries';
 import { notifyLibraryChange } from './libraryEvents';
+import { flushListening, noteProgress } from './statsService';
 
 // Centralized play-position persistence (contract 9): the 1s
 // PlaybackProgressUpdated events (interval set in trackPlayer.js) are
@@ -116,8 +117,28 @@ const saveCurrentPositionNow = async ({ ended = false } = {}) => {
     } catch (_) {}
 };
 
+// The track the progress ticks belong to. The tick itself carries an index
+// into the live queue, not the track, and the statistics meter needs the id,
+// the title and the station on every one of them — asking the player for it
+// once a second would double the bridge traffic of playback. The event that
+// fires on every change is the cheap way to keep it; a cold JS reload
+// mid-session arrives without one, so the first tick fills it in.
+let activeTrack = null;
+const currentTrack = async () => {
+    if (activeTrack) return activeTrack;
+    try { activeTrack = await TrackPlayer.getActiveTrack(); } catch (_) {}
+    return activeTrack;
+};
+
 export default async function() {
     TrackPlayer.addEventListener(Event.RemotePlay, () => TrackPlayer.play());
+
+    TrackPlayer.addEventListener(Event.PlaybackActiveTrackChanged, ({ track }) => {
+        // The episode being counted has changed: what was heard of the last
+        // one belongs to it, not to this one (services/statsService.js).
+        flushListening();
+        activeTrack = track || null;
+    });
 
     TrackPlayer.addEventListener(Event.RemotePause, async () => {
         await TrackPlayer.pause();
@@ -156,6 +177,9 @@ export default async function() {
         // swapped-in episode B. saveCurrentPositionNow reads position + active
         // track together, so id and position always match the current track.
         if (!e.position || e.position <= 0) return;
+        // How much of the episode actually went past, a second at a time
+        // (the statistics screen); in memory, written every half minute.
+        noteProgress(await currentTrack(), e.position);
         const now = Date.now();
         if (now - lastSaveTs < SAVE_THROTTLE_MS) return;
         await saveCurrentPositionNow();
@@ -168,6 +192,9 @@ export default async function() {
     // end-of-episode) so resume is accurate even if the process is later killed.
     TrackPlayer.addEventListener(Event.PlaybackState, ({ state }) => {
         if (state === State.Paused || state === State.Stopped || state === State.Ended) {
+            // Nothing is being heard from here until the next tick, so close
+            // the stretch the meter is counting and write it down.
+            flushListening();
             // Ended = the queue actually finished — mark the episode listened
             // even if the reported position/duration snapshot is unreliable.
             saveCurrentPositionNow({ ended: state === State.Ended });

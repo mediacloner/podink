@@ -24,7 +24,7 @@
  * getTranscriptsForEpisode reads in preference; Transcripts.text keeps the
  * recogniser's own, so the search index and any later re-run still see it.
  */
-import { getEpisodeById, getTranscriptsForEpisode, saveRepunctuation } from '../database/queries';
+import { getEpisodeById, getTranscriptsForEpisode, recordApiSpend, saveRepunctuation } from '../database/queries';
 import { assistantRequest, costOf } from './aiService';
 import { splitSentences } from './sentenceBoundary';
 import { notifyLibraryChange } from './libraryEvents';
@@ -179,6 +179,13 @@ export const repunctuateEpisode = async (episodeId, { request, model, onProgress
 
     if (updates.length) await saveRepunctuation(episodeId, updates);
     const cost = modelId ? costOf(modelId, usage) : 0;
+    // A pass on someone else's model (the sheet's comparison) is billed by
+    // whoever that model is behind; the assistant's own is OpenAI's.
+    await recordApiSpend({
+        provider: request ? 'openrouter' : 'openai', service: 'punctuation', model: modelId,
+        episodeId, episodeTitle: ep.title, source: ep.podcast_title,
+        tokensIn: usage.input, tokensCached: usage.cached, tokensOut: usage.output, cost,
+    });
     log('SERVICE', 'Repunctuation finished', {
         id: episodeId, title: ep.title, model: modelId, regions: regions.length,
         repaired: regions.length - rejected, rejected, rows: updates.length,

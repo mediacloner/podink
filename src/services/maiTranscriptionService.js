@@ -3,7 +3,7 @@
 import { NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
-import { saveMaiTranscript } from '../database/queries';
+import { recordApiSpend, saveMaiTranscript } from '../database/queries';
 import { notifyLibraryChange } from './libraryEvents';
 
 export const OPENROUTER_KEY = '@openrouter_transcription_key';
@@ -110,6 +110,13 @@ export const testMaiTranscription = async (episode, onProgress = () => {}) => {
         }
         if (controller.signal.aborted) throw new Error('MAI test cancelled');
         await saveMaiTranscript(episode.id, segments, { costUsd, audioSeconds });
+        // OpenRouter prices this one itself, by the second of audio it heard;
+        // the statistics screen shows it beside the token-priced passes.
+        await recordApiSpend({
+            provider: 'openrouter', service: 'transcription', model: MAI_MODEL,
+            episodeId: episode.id, episodeTitle: episode.title, source: episode.podcast_title,
+            audioSeconds, cost: costUsd,
+        });
         notifyLibraryChange({ type: 'mai-transcript-complete', episodeId: episode.id });
         return { costUsd, segments: segments.length };
     } finally {

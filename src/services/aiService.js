@@ -27,7 +27,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { requestJson } from '../api/openai';
-import { getEpisodeById, isRadioFeedUrl, replaceEpisodeAnalysis } from '../database/queries';
+import { getEpisodeById, isRadioFeedUrl, recordApiSpend, replaceEpisodeAnalysis } from '../database/queries';
 import { getNameCorrectedTranscript, indexEpisodeNames } from './nameIndex';
 import { indexEpisodeBooks } from './bookIndex';
 import { countPhrase, normalizePhrase } from './nameText';
@@ -84,14 +84,19 @@ export const formatDollars = (d) => {
     if (d < 0.095) return `about ${Math.max(1, Math.round(d * 100))} cent${Math.round(d * 100) === 1 ? '' : 's'}`;
     return `about $${d.toFixed(2)}`;
 };
-/** What a run on an episode of this length should cost, as a phrase. */
-export const estimateEpisodeCost = (model, durationSec, { fixes = true } = {}) => {
+/** What a run on an episode of this length should cost, in dollars. Also
+ *  what the statistics screen prices a run made before the spend ledger
+ *  existed at — the model that wrote it and the length of the episode are
+ *  all that is left of it. */
+export const estimateEpisodeDollars = (model, durationSec, { fixes = true } = {}) => {
     const minutes = Math.max(1, (durationSec || 3600) / 60);
     const inputTokens = minutes * 150 * 1.35 + 600;         // ~150 words a minute, ~1.35 tokens a word
     const passes = fixes ? 2 : 1;
     const outputTokens = 1200 + (fixes ? 1500 : 0);
-    return formatDollars(dollars(model, { input: inputTokens * passes, output: outputTokens, cached: 0 }));
+    return dollars(model, { input: inputTokens * passes, output: outputTokens, cached: 0 });
 };
+/** The same figure as a phrase. */
+export const estimateEpisodeCost = (model, durationSec, opts) => formatDollars(estimateEpisodeDollars(model, durationSec, opts));
 
 // ─── Prompts ─────────────────────────────────────────────────────────────────
 
@@ -205,6 +210,13 @@ export const translateParagraphs = async ({ paragraphs, lang, before = '', signa
         maxOutputTokens: 1600, signal,
     });
     const out = Array.isArray(json?.translations) ? json.translations.map(t => String(t || '').trim()) : [];
+    // Small beside a whole episode, but there are many of them — the
+    // statistics screen is where a month of translating adds up.
+    await recordApiSpend({
+        provider: 'openai', service: 'translation', model,
+        tokensIn: usage.input, tokensCached: usage.cached, tokensOut: usage.output,
+        cost: dollars(model, usage),
+    });
     log('SERVICE', 'Context translation', {
         lang, model, paragraphs: parts.length, returned: out.length,
         contextChars: ctx.length, tokensIn: usage.input, tokensOut: usage.output,
@@ -455,6 +467,13 @@ export const analyzeEpisode = (episodeId, { force = false } = {}) => {
 
         await replaceEpisodeAnalysis(episodeId, { summary, chapters, fixes, model });
         const cost = dollars(model, usage);
+        // The statistics screen adds up what the assistant has cost
+        // (schema v15); the log line below is for one run, this is for the month.
+        await recordApiSpend({
+            provider: 'openai', service: 'assistant', model, episodeId, episodeTitle: ep.title,
+            source: ep.podcast_title, tokensIn: usage.input, tokensCached: usage.cached,
+            tokensOut: usage.output, cost,
+        });
         log('SYSTEM', 'Episode assistant finished', {
             id: episodeId, title: ep.title, model, parts: parts.length, sentences: sentences.length,
             chapters: chapters.length, fixes: fixes.length, notApplied: fixes.filter(f => !f.applied).length,

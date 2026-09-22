@@ -491,6 +491,18 @@ const SettingsScreen = () => {
                     <Icon name="chevron-right" size={15} color={colors.textFaint} style={{ marginLeft: 'auto' }} />
                 </TouchableOpacity>
 
+                <TouchableOpacity
+                    style={[styles.settingRow, styles.rowBorder]}
+                    onPress={() => navigation.navigate('Stats')}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel="Open your listening and spending statistics"
+                >
+                    <Icon name="bar-chart-2" size={15} color={colors.accent} />
+                    <Text style={styles.settingTitle}>Statistics</Text>
+                    <Icon name="chevron-right" size={15} color={colors.textFaint} style={{ marginLeft: 'auto' }} />
+                </TouchableOpacity>
+
                 <View style={[styles.settingBlock, styles.rowBorder]}>
                     <View style={styles.settingHead}>
                         <Icon name="globe" size={15} color={colors.accent} />
