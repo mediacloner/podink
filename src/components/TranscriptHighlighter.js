@@ -1780,13 +1780,20 @@ const Word = React.memo(({
     const bookText = isNameMark(bookId) ? colors.nameInk : colors.textPrimary;
     const animStyle = useAnimatedStyle(() => {
         if (isBook) {
-            return {
-                color: bookText,
-                backgroundColor: bookBand,
-                textShadowColor: 'transparent',
+            // The band stays, so the mark reads as one thing before and after
+            // it is said — but the word being spoken lights up like any other
+            // (user: "when pass by highlight dont illuminate"). Future and
+            // spoken words share the band's ink; only the active one changes.
+            const style = {
+                color: interpolateColor(colorState.value, [1, 2], [bookText, transcriptActive]),
+                textShadowColor: interpolateColor(colorState.value, [1, 2], ['transparent', transcriptGlow]),
                 textShadowOffset: { width: 0, height: 0 },
-                textShadowRadius: 0,
+                textShadowRadius: interpolate(colorState.value, [1, 2], [0, transcriptGlowRadius], 'clamp'),
+                backgroundColor: hasHighlight
+                    ? interpolateColor(colorState.value, [1, 2], [bookBand, highlightOn])
+                    : bookBand,
             };
+            return style;
         }
         const style = {
             color: interpolateColor(colorState.value, [0, 1, 2], [transcriptFuture, transcriptSpoken, transcriptActive]),
