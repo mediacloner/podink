@@ -337,12 +337,39 @@ export const finalizeTranscript = async (episodeId) => {
   await db.runAsync(`UPDATE Episodes SET has_transcript = 1 WHERE id = ?`, [episodeId]);
 };
 
+/** `text` is the repaired wording when the punctuation pass has written one
+ *  (services/repunctuate.js), the recogniser's otherwise; `text_raw` is always
+ *  what the recogniser wrote, which is what the search index holds. */
 export const getTranscriptsForEpisode = async (episodeId) => {
   const db = await openDatabaseContext();
   return db.getAllAsync(
-    'SELECT * FROM Transcripts WHERE episode_id = ? ORDER BY start_time ASC',
+    `SELECT id, episode_id, start_time, end_time,
+            COALESCE(text_fixed, text) AS text, text AS text_raw
+       FROM Transcripts WHERE episode_id = ? ORDER BY start_time ASC`,
     [episodeId]
   );
+};
+
+/** The punctuation pass's answer: one repaired wording per row it changed.
+ *  Transcripts.text keeps the recogniser's words either way. */
+export const saveRepunctuation = async (episodeId, rows) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    for (const r of rows) {
+      await db.runAsync('UPDATE Transcripts SET text_fixed = ? WHERE id = ? AND episode_id = ?',
+        [r.text, r.id, episodeId]);
+    }
+    await db.runAsync('UPDATE Episodes SET repunctuated_at = ? WHERE id = ?', [Date.now(), episodeId]);
+  });
+};
+
+/** Back to the recogniser's own punctuation. */
+export const clearRepunctuation = async (episodeId) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync('UPDATE Transcripts SET text_fixed = NULL WHERE episode_id = ?', [episodeId]);
+    await db.runAsync('UPDATE Episodes SET repunctuated_at = NULL WHERE id = ?', [episodeId]);
+  });
 };
 
 /** A completed cloud comparison is swapped atomically; failed runs leave the
@@ -392,7 +419,7 @@ export const deleteEpisodeTranscript = async (id, { includeMai = false } = {}) =
     await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [id]);
     await db.runAsync(
       `UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL, names_indexed_at = NULL,
-              summary = NULL, ai_indexed_at = NULL, ai_model = NULL,
+              summary = NULL, ai_indexed_at = NULL, ai_model = NULL, repunctuated_at = NULL,
               transcript_source = NULL, transcript_aligned = 0
        WHERE id = ?`,
       [id]

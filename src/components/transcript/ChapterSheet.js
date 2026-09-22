@@ -18,6 +18,7 @@ import SheetModal, { SheetIconButton } from './SheetModal';
 import { shareText } from './share';
 import { getEpisodeChapters, getEpisodeFixes, getMaiTranscript } from '../../database/queries';
 import { testMaiChapters } from '../../services/maiChapterTest';
+import { findLooseRegions, repunctuateEpisode } from '../../services/repunctuate';
 import {
     analyzeEpisode, estimateEpisodeCost, getAIModel, getOpenAIKey, isAnalyzing, isFixTranscriptOn, modelInfo,
 } from '../../services/aiService';
@@ -28,7 +29,7 @@ const POSITION_POLL_MS = 1000;
 
 const KIND_LABEL = { name: 'name', title: 'title', place: 'place', word: 'word' };
 
-const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => {
+const ChapterSheet = ({ visible, onClose, episode, segments = [], onSeek, onOpenSettings }) => {
     const { colors } = useTheme();
     const st = useStyles(makeStyles);
     const epId = episode?.id;
@@ -42,6 +43,9 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
     const [error, setError] = useState(null);        // { message, kind }
     const [showFixes, setShowFixes] = useState(false);
     const [positionMs, setPositionMs] = useState(0);
+    const [punctRunning, setPunctRunning] = useState(false);
+    const [punctPercent, setPunctPercent] = useState(0);
+    const [punctDone, setPunctDone] = useState(null);   // { rows, rejected }
     const [hasMai, setHasMai] = useState(false);
     const [maiComparison, setMaiComparison] = useState([]);
     const [maiRunning, setMaiRunning] = useState(false);
@@ -66,6 +70,7 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
         setRunning(isAnalyzing(epId));
         getMaiTranscript(epId).then(r => setHasMai(r.segments.length > 0)).catch(() => setHasMai(false));
         setMaiComparison([]);
+        setPunctDone(null);
     }, [visible, epId, load]);
 
     // A pass that lands while the sheet is open (this button, or the
@@ -111,6 +116,24 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
             setRunning(false);
         }
     }, [epId, running, load]);
+
+    // Stretches the recogniser ran together — counted from the text the reader
+    // shows, repaired from the rows behind it (services/repunctuate.js).
+    const looseCount = useMemo(() => (segments.length ? findLooseRegions(segments).length : 0), [segments]);
+    const tidyPunctuation = useCallback(async () => {
+        if (!epId || punctRunning) return;
+        setError(null);
+        setPunctRunning(true);
+        setPunctPercent(0);
+        try {
+            const r = await repunctuateEpisode(epId, { onProgress: setPunctPercent });
+            setPunctDone(r);
+        } catch (e) {
+            setError({ message: e?.message || 'The punctuation pass failed.', kind: e?.kind });
+        } finally {
+            setPunctRunning(false);
+        }
+    }, [epId, punctRunning]);
 
     const info = modelInfo(model);
     const compareMai = useCallback(async () => {
@@ -272,6 +295,28 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
                     {!!caption && <Text style={st.caption}>{caption}</Text>}
                 </View>
             ) : null}
+
+            {(looseCount > 0 || punctDone) && !running && (
+                <TouchableOpacity
+                    style={[st.fixHead, { marginTop: 16 }]}
+                    onPress={tidyPunctuation}
+                    disabled={punctRunning}
+                    activeOpacity={0.7}
+                    accessibilityRole='button'
+                    accessibilityLabel='Repair the punctuation of the long stretches'
+                >
+                    <Icon name='align-left' size={13} color={colors.textMuted} />
+                    <Text style={st.fixHeadText}>
+                        {punctRunning
+                            ? `Repairing punctuation… ${punctPercent}%`
+                            : punctDone
+                                ? `Punctuation · ${punctDone.rows} word${punctDone.rows === 1 ? '' : 's'} repunctuated${punctDone.rejected ? `, ${punctDone.rejected} stretch${punctDone.rejected === 1 ? '' : 'es'} left alone` : ''}`
+                                : `Punctuation · ${looseCount} long stretch${looseCount === 1 ? '' : 'es'} — tap to repair`}
+                    </Text>
+                    <View style={{ flex: 1 }} />
+                    {punctRunning && <ActivityIndicator size='small' color={colors.textMuted} />}
+                </TouchableOpacity>
+            )}
 
             {hasMai && (
                 <View style={{ gap: 12, marginTop: 20 }}>

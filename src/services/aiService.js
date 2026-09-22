@@ -386,6 +386,19 @@ export const chaptersAndSummary = async ({ ep, rows, notes = '', request, prepar
     };
 };
 
+/** The assistant's own request path, for a pass that runs outside
+ *  analyzeEpisode (services/repunctuate.js): the listener's key, the model
+ *  they chose, the shape chaptersAndSummary and requestJson both speak. */
+export const assistantRequest = async () => {
+    const apiKey = await getOpenAIKey();
+    if (!apiKey) throw tagged('nokey', 'Add your OpenAI API key in Settings \u2192 Episode assistant first.');
+    const model = await getAIModel();
+    return { model, request: (req) => requestJson({ apiKey, model, ...req }) };
+};
+
+/** What a run cost, in dollars, from the tokens it used. */
+export const costOf = (model, usage) => dollars(model, usage);
+
 /**
  * Summary, chapters and (when the switch is on) fixes for one episode,
  * written to the database. Resolves { summary, chapters, fixes, cost } or

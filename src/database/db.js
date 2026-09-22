@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -375,6 +375,23 @@ const migrateToV11 = async (txn) => {
     if (!have.has('ai_model')) await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN ai_model TEXT`);
 };
 
+const migrateToV14 = async (txn) => {
+    // Punctuation repair (services/repunctuate.js): the recogniser sometimes
+    // runs a minute of speech into one sentence and drops the capitals with
+    // it. A model puts the punctuation back — the words themselves are never
+    // touched — and the repaired wording is kept beside the recogniser's in
+    // Transcripts.text_fixed, which getTranscriptsForEpisode reads in
+    // preference. Episodes.repunctuated_at is when the pass last ran.
+    const cols = await txn.getAllAsync(`PRAGMA table_info(Transcripts)`);
+    if (!cols.some(c => c.name === 'text_fixed')) {
+        await txn.execAsync(`ALTER TABLE Transcripts ADD COLUMN text_fixed TEXT`);
+    }
+    const ecols = await txn.getAllAsync(`PRAGMA table_info(Episodes)`);
+    if (!ecols.some(c => c.name === 'repunctuated_at')) {
+        await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN repunctuated_at INTEGER`);
+    }
+};
+
 const migrateToV12 = async (txn) => {
     // An audiobook imported with its EPUB (4.8.0, services/bookService.js):
     // Podcasts.book_path is the copied .epub inside imports/<id>/ (its text,
@@ -434,6 +451,7 @@ export const initDB = async () => {
             );
             CREATE INDEX IF NOT EXISTS idx_mai_segments ON MaiTranscriptSegments(episode_id, start_time);
         `);
+        if (cur < 14) await migrateToV14(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

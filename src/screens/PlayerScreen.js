@@ -394,6 +394,8 @@ const PlayerScreen = ({ route, navigation }) => {
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
             } else if (payload.type === 'mai-transcript-complete') {
                 refetchMai().catch(() => {});
+            } else if (payload.type === 'transcript-repunctuated') {
+                schedule(true);
             } else if (payload.type === 'book-sync-progress') {
                 setBookSyncPercent(payload.percent || 0);
             } else if (payload.type === 'book-sync-done') {
@@ -848,6 +850,7 @@ const PlayerScreen = ({ route, navigation }) => {
                     visible={chapterSheet}
                     onClose={() => setChapterSheet(false)}
                     episode={ep}
+                    segments={displaySegments}
                     onSeek={seekFromChapter}
                     onOpenSettings={openSettingsFromSheet}
                 />
