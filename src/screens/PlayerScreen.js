@@ -22,6 +22,8 @@ import {
 } from '../services/bookService';
 import { getEpisodeById, getEpisodeBooks, getMaiTranscript } from '../database/queries';
 import CloudTranscriptSheet from '../components/transcript/CloudTranscriptSheet';
+import EntitiesSheet from '../components/transcript/EntitiesSheet';
+import EntitySheet from '../components/transcript/EntitySheet';
 import { buildTranscriptExport, shareText } from '../components/transcript/share';
 import { indexEpisodeBooks } from '../services/bookIndex';
 import { getCorrectedTranscript, indexEpisodeNames } from '../services/nameIndex';
@@ -113,6 +115,8 @@ const PlayerScreen = ({ route, navigation }) => {
     const [mai, setMai] = useState({ run: null, segments: [] });   // the cloud transcript, when one was paid for
     const [viewMai, setViewMai] = useState(false);
     const [cloudSheet, setCloudSheet] = useState(false);
+    const [entitiesSheet, setEntitiesSheet] = useState(false);
+    const [entityCard, setEntityCard] = useState(null);   // { entity, startMs } over the list
     // Books the transcript mentions (EpisodeBooks rows) — bold titles + book card.
     const [books, setBooks] = useState([]);
     const [chapterSheet, setChapterSheet] = useState(false);   // the summary-and-chapters card
@@ -659,6 +663,17 @@ const PlayerScreen = ({ route, navigation }) => {
                 )}
                 {!isRadio && hasTranscript && displaySegments.length > 0 && (
                     <TouchableOpacity
+                        onPress={() => setEntitiesSheet(true)}
+                        hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                        style={styles.radioStop}
+                        accessibilityRole='button'
+                        accessibilityLabel='What this episode names'
+                    >
+                        <Icon name='tag' size={18} color={withAlpha(headerFg, 0.75)} />
+                    </TouchableOpacity>
+                )}
+                {!isRadio && hasTranscript && displaySegments.length > 0 && (
+                    <TouchableOpacity
                         onPress={() => setChapterSheet(true)}
                         hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
                         style={styles.radioStop}
@@ -817,6 +832,18 @@ const PlayerScreen = ({ route, navigation }) => {
                         refetchTranscript();
                         getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
                     }}
+                />
+                <EntitiesSheet
+                    visible={entitiesSheet && !entityCard}
+                    onClose={() => setEntitiesSheet(false)}
+                    episode={ep}
+                    onOpenEntity={setEntityCard}
+                    onOpenSettings={openSettingsFromSheet}
+                />
+                <EntitySheet
+                    data={entityCard}
+                    onClose={() => setEntityCard(null)}
+                    onReplay={(ms) => { setEntityCard(null); setEntitiesSheet(false); seekFromChapter(ms); }}
                 />
                 <ChapterSheet
                     visible={chapterSheet}
