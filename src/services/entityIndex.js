@@ -181,16 +181,28 @@ const fromWikipedia = async (entity, signal) => {
     return {
         source: 'wikipedia',
         sourceUrl: page.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(String(page.title).replace(/ /g, '_'))}`,
-        imageUrl: largeImage(page, 640) || page.thumbnail?.uri || null,
+        imageUrl: largeImage(page, 640)?.uri || page.thumbnail?.uri || null,
         subtitle: page.description || '',
         blurb: page.extract || '',
     };
 };
 
-const fromGoodreads = async (entity, signal) => {
+// A title alone is not enough for a book: "Chi Rho" the symbol has a thriller
+// of the same name on Goodreads. The match must name an author the episode
+// itself said — in the hint, the quoted line or anywhere in the transcript.
+const surname = (author) => {
+    const parts = String(author || '').toLowerCase().replace(/[^\p{L}\s'-]/gu, '').trim().split(/\s+/);
+    const last = parts[parts.length - 1] || '';
+    return last.length >= 3 ? last : '';
+};
+const authorWasSaid = (author, entity, said) => {
+    const last = surname(author);
+    return !!last && `${entity.hint} ${entity.context} ${said}`.toLowerCase().includes(last);
+};
+
+const fromGoodreads = async (entity, said, signal) => {
     const hits = await searchGoodreads(entity.canonical, signal).catch(() => []);
-    const hint = entity.hint.toLowerCase();
-    const best = hits.find(h => h.author && hint.includes(h.author.split(' ').pop().toLowerCase())) || hits[0];
+    const best = hits.find(h => authorWasSaid(h.author, entity, said));
     if (!best) return null;
     return {
         source: 'goodreads',
@@ -204,11 +216,12 @@ const fromGoodreads = async (entity, signal) => {
     };
 };
 
-const fromOpenLibrary = async (entity, signal) => {
+const fromOpenLibrary = async (entity, said, signal) => {
     const docs = await searchOpenLibraryByTitle(entity.canonical, signal, { limit: 5 }).catch(() => []);
-    const best = Array.isArray(docs) ? docs[0] : null;
+    const firstAuthor = (d) => (Array.isArray(d?.author_name) ? d.author_name[0] : d?.author_name);
+    const best = (Array.isArray(docs) ? docs : []).find(d => authorWasSaid(firstAuthor(d), entity, said));
     if (!best) return null;
-    const author = Array.isArray(best.author_name) ? best.author_name[0] : best.author_name;
+    const author = firstAuthor(best);
     return {
         source: 'openlibrary',
         sourceUrl: best.key ? `https://openlibrary.org${best.key}` : null,
@@ -222,15 +235,22 @@ const fromITunes = async (entity, kind, signal) => {
     const term = kind === 'album' && entity.hint
         ? `${entity.canonical} ${entity.hint.split(/[,;(]/)[0]}`.trim()
         : entity.canonical;
-    const hits = await searchITunes(term, kind === 'album' ? 'album' : 'tvSeason', { signal }).catch(() => []);
-    const best = hits[0];
+    const apple = kind === 'album' ? 'album' : 'tvSeason';
+    let best = null;
+    for (const country of ['GB', 'US']) {           // the podcasts are mostly British
+        const hits = await searchITunes(term, apple, { country, signal }).catch(() => []);
+        best = hits.find(h => h.title.toLowerCase().startsWith(entity.canonical.toLowerCase().slice(0, 12))) || hits[0];
+        if (best) break;
+    }
     if (!best) return null;
+    const sameName = best.subtitle && best.subtitle.toLowerCase() === best.title.replace(/,?\s*season \d+.*$/i, '').toLowerCase();
     return {
         source: kind === 'album' ? 'applemusic' : 'appletv',
         sourceUrl: best.url,
         imageUrl: best.imageUrl,
-        subtitle: best.subtitle,
-        facts: [best.year, best.genre, best.tracks ? `${best.tracks} tracks` : ''].filter(Boolean).join(' · '),
+        subtitle: kind === 'album' ? best.subtitle : (sameName ? '' : best.subtitle),
+        facts: [best.year, best.genre, best.tracks ? `${best.tracks} ${kind === 'album' ? 'tracks' : 'episodes'}` : '']
+            .filter(Boolean).join(' \u00b7 '),
         blurb: best.blurb,
     };
 };
@@ -257,11 +277,11 @@ const fromTmdb = async (entity, kind, apiKey, signal) => {
  * catalogued, and falls back to Wikipedia, which knows nearly everything
  * without knowing what it looks like.
  */
-export const resolveEntity = async (entity, { tmdbKey = '', signal } = {}) => {
+export const resolveEntity = async (entity, { tmdbKey = '', said = '', signal } = {}) => {
     try {
         if (entity.type === 'book') {
-            return (await fromGoodreads(entity, signal))
-                || (await fromOpenLibrary(entity, signal))
+            return (await fromGoodreads(entity, said, signal))
+                || (await fromOpenLibrary(entity, said, signal))
                 || (await fromWikipedia(entity, signal));
         }
         if (entity.type === 'album') {
@@ -328,11 +348,12 @@ export const indexEpisodeEntities = (episodeId, { request, model, onProgress = (
 
         // The catalogues, a few at a time so none of them is hammered.
         const tmdbKey = await getTmdbKey();
+        const said = rows.map(r => String(r.text || '')).join(' ').toLowerCase();
         let resolved = 0;
         for (let i = 0; i < entities.length; i += RESOLVE_AT_ONCE) {
             const block = entities.slice(i, i + RESOLVE_AT_ONCE);
             await Promise.all(block.map(async (e) => {
-                const r = await resolveEntity(e, { tmdbKey });
+                const r = await resolveEntity(e, { tmdbKey, said });
                 if (r) { Object.assign(e, r, { resolvedAt: Date.now() }); resolved += 1; }
                 else e.resolvedAt = Date.now();
             }));
