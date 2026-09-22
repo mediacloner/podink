@@ -9,7 +9,7 @@ import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } fr
 import { Feather as Icon } from '@expo/vector-icons';
 import { radii, useStyles, useTheme, withAlpha } from '../../theme';
 import SheetModal, { SheetIconButton } from './SheetModal';
-import { getEpisodeEntities } from '../../database/queries';
+import { getEpisodeBooks, getEpisodeEntities } from '../../database/queries';
 import { ENTITY_TYPES, TYPE_ICON, TYPE_LABEL, indexEpisodeEntities, isIndexingEntities } from '../../services/entityIndex';
 import { formatClock } from '../../services/sentenceBoundary';
 import { imageSourceFor } from '../../api/wikipedia';
@@ -22,6 +22,7 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings
     const epId = episode?.id;
 
     const [rows, setRows] = useState([]);
+    const [books, setBooks] = useState([]);       // EpisodeBooks — the title scan's route
     const [running, setRunning] = useState(false);
     const [percent, setPercent] = useState(0);
     const [error, setError] = useState(null);
@@ -29,6 +30,7 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings
     const load = useCallback(async () => {
         if (!epId) return;
         try { setRows(await getEpisodeEntities(epId)); } catch (_) { setRows([]); }
+        try { setBooks(await getEpisodeBooks(epId)); } catch (_) { setBooks([]); }
     }, [epId]);
 
     useEffect(() => {
@@ -53,16 +55,40 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings
         }
     }, [epId, running, load]);
 
-    const groups = useMemo(() => ENTITY_TYPES
-        .map(type => ({ type, items: rows.filter(r => r.type === type) }))
-        .filter(g => g.items.length), [rows]);
+    // Books come by two routes — the title scan (EpisodeBooks) and the entity
+    // pass — and the list badge counts the union of the two, once per title.
+    // The Books group here is that same union, so the badge, this list and
+    // the bold titles in the text all say the same number (user: "in list of
+    // podcast identify the book and put 2 meanwhile inside appear 3"). A
+    // scanned book that the pass did not name is shown in the entity's shape.
+    const groups = useMemo(() => {
+        const named = new Set(rows.filter(r => r.type === 'book').map(r => String(r.canonical).toLowerCase()));
+        const scannedOnly = (books || [])
+            .filter(b => b.first_ms != null && !named.has(String(b.title).toLowerCase()))
+            .map(b => ({
+                id: `book-${b.id}`, type: 'book', canonical: b.title, surface: b.title, hint: '', context: '',
+                first_ms: b.first_ms, source: b.source || 'openlibrary',
+                source_url: b.goodreads_url || b.openlibrary_url || null, image_url: b.cover_url || null,
+                subtitle: b.author ? `by ${b.author}` : '',
+                facts: [b.year, b.pages ? `${b.pages} pages` : ''].filter(Boolean).join(' \u00b7 '),
+                blurb: b.description || '', rating: b.rating, ratings_count: b.ratings_count,
+            }));
+        return ENTITY_TYPES
+            .map(type => ({
+                type,
+                items: type === 'book'
+                    ? [...rows.filter(r => r.type === 'book'), ...scannedOnly].sort((a, b) => (a.first_ms ?? 0) - (b.first_ms ?? 0))
+                    : rows.filter(r => r.type === type),
+            }))
+            .filter(g => g.items.length);
+    }, [rows, books]);
 
     const header = (
         <View style={st.labelRow}>
             <Icon name='tag' size={13} color={colors.textMuted} />
             <Text style={st.label}>What this episode names</Text>
             <View style={{ flex: 1 }} />
-            {rows.length > 0 && !running && <SheetIconButton icon='refresh-cw' label='Look again' onPress={run} />}
+            {(rows.length > 0 || episode?.entities_indexed_at) && !running && <SheetIconButton icon='refresh-cw' label='Look again' onPress={run} />}
         </View>
     );
 
@@ -89,7 +115,7 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings
                 </View>
             )}
 
-            {!rows.length && !running && (
+            {!rows.length && !episode?.entities_indexed_at && !running && (
                 <View style={{ gap: 14 }}>
                     <Text style={st.body}>
                         The people, places, books, films, programmes and records this episode talks about — each looked up where that kind of thing is catalogued, so a misheard name still finds the right one. About a cent for an hour of audio.
