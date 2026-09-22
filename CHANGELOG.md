@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [5.5.0] - 2026-09-22
 
 ### Added
 - **A page that counts the listening that really happened, and what the cloud cost to help it along.** The library has always known where someone got to in an episode, which says nothing about how much of it went past their ears: an hour replayed twice, an advert skipped and a download never opened all leave the same trace (user: “I want a page of stadistics of real listening and spend money in api's”). The player's own progress ticks are now counted instead — the audio that actually advanced between one tick and the next, and the real time it took at the chosen speed, with a skip, a rewind, a stall and a spell of the app being away all worth nothing — and written to the day they belong to every half minute (`services/statsService.js`, schema v15 `ListeningLog`). Settings → Learning → Statistics shows the total over 7 days, 30 days or all time, a bar a day (a bar a month over all time), the podcasts, audiobooks and stations it went to, and — where the speed is not 1× — how much of the listener's own day that came to. Beside it, every paid request the app has made: the episode assistant, the punctuation repair, a cloud transcription, a comparison and the translation card's context passes each write their tokens and their price as they run (`ApiSpend`), so the page can say what a month came to, what each service's share of it was, and what it works out at an hour of listening. Live radio is counted under the station rather than the session, whose row is thrown away at the next launch.
