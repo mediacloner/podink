@@ -63,7 +63,10 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
 
     if (!entity) return <SheetModal visible={false} onClose={onClose} />;
 
+    // The kind's own site, unless that is where the answer already came from —
+    // a person found on Wikipedia does not need a second Wikipedia button.
     const other = elsewhere(entity);
+    const showOther = !entity.source_url || SOURCE_LABEL[entity.source] !== other.label;
     const heardDiffers = entity.surface && entity.surface.toLowerCase() !== entity.canonical.toLowerCase();
     const rating = entity.rating != null ? Number(entity.rating) : null;
     const portrait = entity.type === 'person' || entity.type === 'place';
@@ -97,16 +100,18 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
                     </Text>
                 </TouchableOpacity>
             )}
-            <TouchableOpacity
-                style={[st.actionBtn, st.actionBtnGhost]}
-                onPress={() => openUrl(other.url)}
-                activeOpacity={0.8}
-                accessibilityRole='link'
-                accessibilityLabel={`Open on ${other.label}`}
-            >
-                <Icon name='external-link' size={14} color={colors.accent} />
-                <Text style={[st.actionText, { color: colors.accent }]} numberOfLines={1}>{other.label}</Text>
-            </TouchableOpacity>
+            {showOther && (
+                <TouchableOpacity
+                    style={[st.actionBtn, st.actionBtnGhost]}
+                    onPress={() => openUrl(other.url)}
+                    activeOpacity={0.8}
+                    accessibilityRole='link'
+                    accessibilityLabel={`Open on ${other.label}`}
+                >
+                    <Icon name='external-link' size={14} color={colors.accent} />
+                    <Text style={[st.actionText, { color: colors.accent }]} numberOfLines={1}>{other.label}</Text>
+                </TouchableOpacity>
+            )}
             {data?.startMs != null && !!onReplay && (
                 <TouchableOpacity
                     style={[st.actionBtn, st.replayBtn]}
