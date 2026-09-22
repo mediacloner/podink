@@ -603,16 +603,19 @@ const PlayerScreen = ({ route, navigation }) => {
     // The header gets a softened version of the cover colour (hue kept,
     // saturation capped, lightness pinned to a theme band) — the raw colour
     // was fine as an accent but far too loud as a full-width surface.
-    const headerTint = colorInfo ? softenForHeader(colorInfo.bgColor, isDark) : null;
-    const headerBg = headerTint?.hex ?? colors.surfaceElevated;
-    // Header text must read against the artwork tint, not the theme. The dark
-    // theme keeps its always-white text; paper flips to cream on dark tints.
-    // The drop-shadow exists only to lift text off a dark tint, so it is
-    // *added* there rather than removed elsewhere: on Android a
-    // `textShadowColor: 'transparent'` override still drew the default dark
-    // shadow, which is what smudged the Paper header.
-    const headerIsDark = headerTint ? headerTint.isDark : isDark;
-    const headerFg = !isDark && headerIsDark ? colors.onAccent : colors.textPrimary;
+    // The header is the paper header in both themes — the same tint band and
+    // the same inks whatever the page below it is doing (user: "I want the
+    // same colors of the header on player for light theme and dark, have to
+    // preserve light theme"). So the paper palette is used here by name.
+    const headerTint = colorInfo ? softenForHeader(colorInfo.bgColor, false) : null;
+    const headerBg = headerTint?.hex ?? THEMES.paper.surfaceElevated;
+    // Header text must read against the artwork tint, not the theme: paper
+    // ink on a light tint, cream on a dark one. The drop-shadow exists only to
+    // lift text off a dark tint, so it is *added* there rather than removed
+    // elsewhere: on Android a `textShadowColor: 'transparent'` override still
+    // drew the default dark shadow, which is what smudged the Paper header.
+    const headerIsDark = headerTint ? headerTint.isDark : false;
+    const headerFg = headerIsDark ? THEMES.paper.onAccent : THEMES.paper.textPrimary;
     const headerTextStyle = [
         { color: headerFg },
         headerIsDark && styles.headerTextShadow,

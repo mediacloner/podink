@@ -266,6 +266,15 @@ const keyExtractor = (item) => item.id;
 const EMPTY_BOOKS = Object.freeze([]);
 const NO_MARKS = new Int32Array(0);
 
+// An entity's mark id: negative, so a tap knows it is not an EpisodeBooks row,
+// and past ENTITY_BOOK_OFFSET when the entity is a book, so the band knows to
+// stay purple. Ids are small integers; Int32 has room to spare.
+const ENTITY_BOOK_OFFSET = 1000000000;
+const encodeEntityId = (e) => -(Number(e.id) + (e.type === 'book' ? ENTITY_BOOK_OFFSET : 0));
+const decodeEntityId = (id) => { const raw = -Number(id); return raw >= ENTITY_BOOK_OFFSET ? raw - ENTITY_BOOK_OFFSET : raw; };
+/** True for a mark that is a name rather than a book, from either path. */
+const isNameMark = (id) => { const n = Number(id); return n < 0 && -n < ENTITY_BOOK_OFFSET; };
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const TranscriptHighlighter = forwardRef(({
@@ -974,13 +983,15 @@ const TranscriptHighlighter = forwardRef(({
     // book list changes; every Chunk reads its own words from it.
     // Entities share the array as negative ids: the matcher wants a title and
     // the spellings that were heard, which an entity has too. Books go first,
-    // so a title wins where the two overlap.
+    // so a title wins where the two overlap. A book the entity pass found is
+    // still a book — it keeps the purple band whichever path found it — so
+    // the kind rides in the id (encodeEntityId).
     const wordBook = useMemo(() => {
         if (!computed.chunks.length || (!books?.length && !entities?.length)) return NO_MARKS;
         const marked = [
             ...(books || []),
             ...(entities || []).filter(e => Number(e.id) > 0)
-                .map(e => ({ id: -Number(e.id), title: e.canonical, heard_as: [e.surface] })),
+                .map(e => ({ id: encodeEntityId(e), title: e.canonical, heard_as: [e.surface] })),
         ];
         return buildBookMarks(computed.chunks, marked);
     }, [computed, books, entities]);
@@ -1109,7 +1120,8 @@ const TranscriptHighlighter = forwardRef(({
     const onBookPress = useCallback((bookId, startMs) => {
         const id = Number(bookId);
         if (id < 0) {                                  // a person, a place, a film…
-            const entity = (entitiesRef.current || []).find(e => Number(e.id) === -id);
+            const entityId = decodeEntityId(id);
+            const entity = (entitiesRef.current || []).find(e => Number(e.id) === entityId);
             if (!entity) return;
             setEntitySheet({ entity, startMs: Math.round(startMs || 0) });
             pauseForLookup();
@@ -1700,7 +1712,7 @@ const Chunk = React.memo(({
                         return (
                             <Text key={run.key}>
                                 <Text
-                                    style={run.bookId < 0 ? styles.nameTitle : styles.bookTitle}
+                                    style={isNameMark(run.bookId) ? styles.nameTitle : styles.bookTitle}
                                     suppressHighlighting
                                     onPress={() => onBookPress(run.bookId, run.startMs)}
                                 >
@@ -1762,10 +1774,10 @@ const Word = React.memo(({
     // band. Decided inside the animated style — an animated colour applied
     // natively wins over any static style in the array.
     const isBook = !!bookId;
-    const bookBand = Number(bookId) < 0
+    const bookBand = isNameMark(bookId)
         ? withAlpha(colors.nameBand, colors.nameBandAlpha)
         : withAlpha(colors.purple, 0.26);
-    const bookText = colors.textPrimary;
+    const bookText = isNameMark(bookId) ? colors.nameInk : colors.textPrimary;
     const animStyle = useAnimatedStyle(() => {
         if (isBook) {
             return {
@@ -1845,7 +1857,7 @@ const makeStyles = (colors) => StyleSheet.create({
     // purple behind the words, text in the primary colour — bold alone
     // vanished in the dimmed past/future text of both themes.
     bookTitle: { backgroundColor: withAlpha(colors.purple, 0.26), color: colors.textPrimary, fontWeight: '600' },
-    nameTitle: { backgroundColor: withAlpha(colors.nameBand, colors.nameBandAlpha), color: colors.textPrimary, fontWeight: '600' },
+    nameTitle: { backgroundColor: withAlpha(colors.nameBand, colors.nameBandAlpha), color: colors.nameInk, fontWeight: '600' },
 
     keypointRow: {
         flexDirection: 'row',
