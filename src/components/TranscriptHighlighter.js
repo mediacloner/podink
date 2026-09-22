@@ -135,10 +135,13 @@ import FollowPill from './transcript/FollowPill';
 const CHUNK_MARGIN = 10;                 // matches sentenceWrap.marginBottom
 // Swipe-to-translate (user, 2026-09-10: the long-press it replaced "is slow
 // to take a complete translation of sentence"): a thumb slid left to right
-// across a sentence opens the translation card. Finger travel in dp.
-const SWIPE_START = 10;   // rightward travel before the sentence claims the touch
-const SWIPE_TRIGGER = 34; // TOTAL finger travel that opens the translation
-const SWIPE_FLICK = 22;   // …or this much with a quick flick (vx > SWIPE_FLICK_VX dp/ms)
+// across a sentence opens the translation card. The mirror gesture, right to
+// left, plays on from the sentence (user, 2026-09-22: "when slide from the
+// right to the left in sentences start in this position") — the same as the
+// double tap, for a thumb already sliding. Finger travel in dp, either way.
+const SWIPE_START = 10;   // sideways travel before the sentence claims the touch
+const SWIPE_TRIGGER = 34; // TOTAL finger travel that fires the action
+const SWIPE_FLICK = 22;   // …or this much with a quick flick (|vx| > SWIPE_FLICK_VX dp/ms)
 const SWIPE_FLICK_VX = 0.35;
 const SWIPE_MAX = 44;     // how far the sentence itself slides, rubber-banded
 const SWIPE_SPRING = { damping: 18, stiffness: 240, mass: 0.6 };
@@ -1507,24 +1510,30 @@ const Chunk = React.memo(({
     }, [takeDoubleTap, onWordPress]);
     const handleTranslate = useCallback(() => onTranslate(text, chunkIndex), [onTranslate, text, chunkIndex]);
 
-    // ── Swipe right → translate ───────────────────────────────────────────────
+    // ── Swipe right → translate · swipe left → play on from here ─────────────
     // A PanResponder, like the Library's SwipeableRow: the wrapper claims the
-    // touch once the finger has travelled SWIPE_START to the right and more
+    // touch once the finger has travelled SWIPE_START sideways and more
     // across than down (a vertical drag stays a scroll — Android's ScrollView
     // takes real vertical movement natively in any case). The Pressable
     // underneath gives the touch up, which cancels its tap.
-    // The sentence follows the thumb a little, rubber-banded, with a globe
-    // fading in at its left; the card opens the moment the travel passes
-    // SWIPE_TRIGGER — under the thumb, without waiting for the finger to
-    // lift (user, 2026-09-12: "I need to move too much the thumb to run
-    // translation") — or on release after a short quick flick. It is the only
-    // way into the translation card: the long-press it replaced is gone, so a
-    // finger resting on a sentence no longer competes with the tap and the
-    // double tap (user, 2026-09-12: "tap and double tap some is confuse at the
-    // moment, you can eliminate long press to sentences").
+    // The sentence follows the thumb a little, rubber-banded, with a glyph
+    // fading in on the side it slides away from — a globe at the left for the
+    // translation, a play mark at the right for playback; the action fires
+    // the moment the travel passes SWIPE_TRIGGER — under the thumb, without
+    // waiting for the finger to lift (user, 2026-09-12: "I need to move too
+    // much the thumb to run translation") — or on release after a short quick
+    // flick. The slide is the only way into the translation card: the
+    // long-press it replaced is gone, so a finger resting on a sentence no
+    // longer competes with the tap and the double tap (user, 2026-09-12: "tap
+    // and double tap some is confuse at the moment, you can eliminate long
+    // press to sentences"). Sliding left does what the double tap does — seek
+    // here and play — so a paused reader can start from any sentence with
+    // one sure gesture instead of two taps timed right.
     const swipeX = useSharedValue(0);
     const translateRef = useRef(handleTranslate);
     translateRef.current = handleTranslate;
+    const playFromRef = useRef(() => {});
+    playFromRef.current = () => onDoublePress(item.startMs);
     const firedRef = useRef(false);
     // PanResponder zeroes dx when it grants the responder, so the travel
     // already made by then — everything up to SWIPE_START, and however much
@@ -1532,43 +1541,62 @@ const Chunk = React.memo(({
     // added back. Without it the thresholds below are thresholds on top of an
     // unknown head start, which is what made the swipe feel so long.
     const grantAtRef = useRef(0);
-    const swipePan = useMemo(() => PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onMoveShouldSetPanResponder: (_, g) => {
-            const take = g.dx > SWIPE_START && g.dx > Math.abs(g.dy) * 1.5;
-            if (take) grantAtRef.current = g.dx;
-            return take;
-        },
-        onPanResponderGrant: () => { firedRef.current = false; },
-        onPanResponderMove: (_, g) => {
-            if (firedRef.current) return;   // card already open under the thumb
-            const travel = grantAtRef.current + g.dx;
-            if (travel >= SWIPE_TRIGGER) {
-                firedRef.current = true;
-                swipeX.value = withSpring(0, SWIPE_SPRING);
-                translateRef.current();
-                return;
-            }
-            swipeX.value = travel <= 0 ? 0 : SWIPE_MAX * (1 - Math.exp(-travel / SWIPE_MAX));
-        },
-        onPanResponderRelease: (_, g) => {
-            if (firedRef.current) return;
+    // The travel keeps its sign: positive is a slide to the right (translate),
+    // negative a slide to the left (play from here). A thumb that sets off
+    // one way and comes back simply follows, and fires whichever side it
+    // reaches first.
+    const swipePan = useMemo(() => {
+        const fire = (travel) => {
+            firedRef.current = true;
             swipeX.value = withSpring(0, SWIPE_SPRING);
-            if (grantAtRef.current + g.dx >= SWIPE_FLICK && g.vx > SWIPE_FLICK_VX) translateRef.current();
-        },
-        onPanResponderTerminate: () => { swipeX.value = withSpring(0, SWIPE_SPRING); },
-    }), [swipeX]);
+            if (travel > 0) translateRef.current(); else playFromRef.current();
+        };
+        return PanResponder.create({
+            onStartShouldSetPanResponder: () => false,
+            onMoveShouldSetPanResponder: (_, g) => {
+                const take = Math.abs(g.dx) > SWIPE_START && Math.abs(g.dx) > Math.abs(g.dy) * 1.5;
+                if (take) grantAtRef.current = g.dx;
+                return take;
+            },
+            onPanResponderGrant: () => { firedRef.current = false; },
+            onPanResponderMove: (_, g) => {
+                if (firedRef.current) return;   // already fired under the thumb
+                const travel = grantAtRef.current + g.dx;
+                if (Math.abs(travel) >= SWIPE_TRIGGER) { fire(travel); return; }
+                const eased = SWIPE_MAX * (1 - Math.exp(-Math.abs(travel) / SWIPE_MAX));
+                swipeX.value = travel < 0 ? -eased : eased;
+            },
+            onPanResponderRelease: (_, g) => {
+                if (firedRef.current) return;
+                swipeX.value = withSpring(0, SWIPE_SPRING);
+                const travel = grantAtRef.current + g.dx;
+                if (Math.abs(travel) >= SWIPE_FLICK && Math.abs(g.vx) > SWIPE_FLICK_VX && Math.sign(g.vx) === Math.sign(travel)) {
+                    fire(travel);
+                }
+            },
+            onPanResponderTerminate: () => { swipeX.value = withSpring(0, SWIPE_SPRING); },
+        });
+    }, [swipeX]);
     const swipeStyle = useAnimatedStyle(() => ({ transform: [{ translateX: swipeX.value }] }));
+    // Each glyph answers to its own direction of slide: the globe to the
+    // right-going (positive) travel, the play mark to the left-going.
     const swipeIconStyle = useAnimatedStyle(() => ({
         opacity: interpolate(swipeX.value, [3, SWIPE_MAX * 0.35], [0, 1], 'clamp'),
         transform: [{ scale: interpolate(swipeX.value, [3, SWIPE_MAX * 0.42], [0.7, 1], 'clamp') }],
     }));
-    // The globe sits in the list's left gutter (contentContainer padding), so
-    // it never overlaps the words as they slide.
+    const playIconStyle = useAnimatedStyle(() => ({
+        opacity: interpolate(-swipeX.value, [3, SWIPE_MAX * 0.35], [0, 1], 'clamp'),
+        transform: [{ scale: interpolate(-swipeX.value, [3, SWIPE_MAX * 0.42], [0.7, 1], 'clamp') }],
+    }));
+    // The glyphs sit in the list's side gutters (contentContainer padding), so
+    // they never overlap the words as they slide.
     const withSwipe = (sentence) => (
         <View {...swipePan.panHandlers}>
             <Animated.View style={[styles.swipeIcon, swipeIconStyle]} pointerEvents="none">
                 <Icon name="globe" size={18} color={colors.accent} />
+            </Animated.View>
+            <Animated.View style={[styles.swipeIconRight, playIconStyle]} pointerEvents="none">
+                <Icon name="play" size={18} color={colors.accent} />
             </Animated.View>
             <Animated.View style={swipeStyle}>{sentence}</Animated.View>
         </View>
@@ -1770,8 +1798,11 @@ const makeStyles = (colors) => StyleSheet.create({
 
     sentenceWrap: { marginBottom: CHUNK_MARGIN },
     pressedChunk: { opacity: 0.65 },
-    // Swipe-to-translate glyph, in the 24 px gutter left of the words.
+    // Swipe glyphs, in the 24 px gutters either side of the words: the globe
+    // (slide right, translate) on the left, the play mark (slide left, play
+    // on from here) on the right.
     swipeIcon: { position: 'absolute', left: -22, top: 0, bottom: CHUNK_MARGIN, justifyContent: 'center' },
+    swipeIconRight: { position: 'absolute', right: -22, top: 0, bottom: CHUNK_MARGIN, justifyContent: 'center' },
     // A book title inside a sentence: a highlighter band in the palette's
     // purple behind the words, text in the primary colour — bold alone
     // vanished in the dimmed past/future text of both themes.
