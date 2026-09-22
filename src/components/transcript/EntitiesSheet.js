@@ -119,7 +119,8 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings
                                     {!!item.image_url && (
                                         <Image
                                             source={imageSourceFor(item.image_url)}
-                                            style={st.thumbImage}
+                                            style={[st.thumbImage, item.type === 'person' && st.thumbFace]}
+                                            resizeMode='cover'
                                             accessibilityIgnoresInvertColors
                                         />
                                     )}
@@ -156,6 +157,9 @@ const makeStyles = (colors) => StyleSheet.create({
     thumb: { width: 38, height: 38, borderRadius: 6, backgroundColor: colors.hairlineFaint },
     thumbEmpty: { alignItems: 'center', justifyContent: 'center' },
     thumbImage: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 6 },
+    // A portrait is taller than the box, so the box shows its top — a face
+    // sits in the upper part of nearly every painting, bust and photograph.
+    thumbFace: { bottom: undefined, height: 62 },
     name: { fontSize: 15, fontWeight: '600', color: colors.textPrimary },
     meta: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
     time: { fontSize: 12, color: colors.textMuted, fontVariant: ['tabular-nums'] },

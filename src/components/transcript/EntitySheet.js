@@ -132,11 +132,14 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
         <SheetModal visible={visible} onClose={onClose} header={header} footer={footer} maxHeight='88%'>
             <View style={st.head}>
                 {entity.image_url ? (
-                    <Image
-                        source={imageSourceFor(entity.image_url)}
-                        style={[st.image, portrait && st.imagePortrait]}
-                        accessibilityIgnoresInvertColors
-                    />
+                    <View style={[st.image, portrait && st.imagePortrait, st.imageClip]}>
+                        <Image
+                            source={imageSourceFor(entity.image_url)}
+                            style={[st.imageFill, entity.type === 'person' && st.imageFace]}
+                            resizeMode='cover'
+                            accessibilityIgnoresInvertColors
+                        />
+                    </View>
                 ) : (
                     <View style={[st.image, portrait && st.imagePortrait, st.imageEmpty]}>
                         <Icon name={TYPE_ICON[entity.type] || 'tag'} size={22} color={colors.textMuted} />
@@ -200,6 +203,9 @@ const makeStyles = (colors) => StyleSheet.create({
     image: { width: 84, height: 126, borderRadius: 10, backgroundColor: colors.hairlineFaint },
     imagePortrait: { width: 96, height: 96, borderRadius: 48 },
     imageEmpty: { alignItems: 'center', justifyContent: 'center', borderWidth: 0.5, borderColor: colors.hairline },
+    imageClip: { overflow: 'hidden' },
+    imageFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+    imageFace: { bottom: undefined, height: 150 },   // the top of a portrait, where the face is
     ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap' },
     rating: { color: colors.textPrimary, fontSize: 17, fontWeight: '700' },
     muted: { color: colors.textSecondary, fontSize: 14 },

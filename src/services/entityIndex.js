@@ -31,7 +31,7 @@ import { searchGoodreads } from '../api/goodreads';
 import { searchOpenLibraryByTitle } from '../api/openLibrary';
 import { searchITunes } from '../api/itunes';
 import { getTmdbKey, searchTmdb } from '../api/tmdb';
-import { fetchWikipediaSummary, largeImage, searchWikipediaTitles } from '../api/wikipedia';
+import { fetchWikipediaSummary, searchWikipediaTitles } from '../api/wikipedia';
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
@@ -181,7 +181,10 @@ const fromWikipedia = async (entity, signal) => {
     return {
         source: 'wikipedia',
         sourceUrl: page.url || `https://en.wikipedia.org/wiki/${encodeURIComponent(String(page.title).replace(/ /g, '_'))}`,
-        imageUrl: largeImage(page, 640)?.uri || page.thumbnail?.uri || null,
+        // The summary's own thumbnail: about 330 px, already rendered and
+        // cached. Asking for another width gets HTTP 400 from thumb.wikimedia.org
+        // (2026-09-22), which is why nine of eleven emperors had no face.
+        imageUrl: page.thumbnail?.uri || null,
         subtitle: page.description || '',
         blurb: page.extract || '',
     };
