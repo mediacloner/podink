@@ -34,6 +34,24 @@ const LONG_WORDS = 35;          // a sentence past this has lost a full stop
 const LONG_MS = 15000;          // …or this long, when the speaker is slow
 const UNBROKEN_WORDS = 25;      // …or this long with no comma at all
 const REGION_MAX_WORDS = 400;   // one request's worth
+
+// A full stop the recogniser put in the middle of a thought — "a
+// well-educated man who is. steadily getting thicker" — shows as a stop
+// followed by a lowercase word. The reader already reads across it, but the
+// dot stays in the text (user: "there are a sentence with a dot in the
+// middle"). Abbreviations and initialisms end in a dot legitimately.
+const ABBREVIATIONS = new Set([
+    'mr', 'mrs', 'ms', 'dr', 'prof', 'st', 'mt', 'ft', 'gen', 'sgt', 'capt', 'lt', 'col', 'rev', 'hon',
+    'jr', 'sr', 'vs', 'no', 'etc', 'approx', 'dept', 'est', 'vol', 'fig', 'ch', 'pp', 'ed', 'op',
+]);
+const isMidStop = (word, next) => {
+    if (!next || !/^["'“‘(]*\p{Ll}/u.test(next)) return false;
+    const m = /^["'“‘(]*(.+?)[.!?]["'”’)]*$/u.exec(word);
+    if (!m) return false;
+    const core = m[1];
+    if (/^(?:\p{L}\.)+\p{L}?$/u.test(core) || /\d$/.test(core)) return false;   // e.g., U.S., 3.
+    return core.length >= 2 && !ABBREVIATIONS.has(core.toLowerCase().replace(/\.$/, ''));
+};
 const INSTRUCTIONS = `You restore the punctuation of an automatic transcript of an English podcast. The recogniser sometimes runs a minute of speech into a single sentence, loses the capital letters with it, or ends a sentence in the middle of one.
 
 Return the same words, in the same order, punctuated and capitalised as a careful editor would: full stops and question marks where the sentences end, commas where the speaker breaks, a capital at the start of each sentence and on names. Split a long run into the sentences it is really made of, and join what was cut in the middle of a thought.
@@ -60,13 +78,15 @@ const sentencesFromRows = (rows) => {
         words: ws.length,
         text: ws.map(w => w.text).join(' '),
         ms: (rows[ws[ws.length - 1].row]?.end_time || 0) - (rows[ws[0].row]?.start_time || 0),
+        midStops: ws.reduce((n, w, i) => n + (i + 1 < ws.length && isMidStop(w.text, ws[i + 1].text) ? 1 : 0), 0),
     }));
 };
 
-/** A sentence the recogniser plainly ran together. */
+/** A sentence the recogniser plainly ran together — or cut in the middle. */
 const isLoose = (s) => s.words > LONG_WORDS
     || (s.words > 12 && s.ms > LONG_MS)
-    || (s.words > UNBROKEN_WORDS && !/[,;:—–]/.test(s.text.slice(0, -1)));
+    || (s.words > UNBROKEN_WORDS && !/[,;:—–]/.test(s.text.slice(0, -1)))
+    || s.midStops > 0;
 
 /**
  * Row ranges worth sending, each with the sentence either side of it for

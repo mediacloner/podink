@@ -311,7 +311,7 @@ const ChapterSheet = ({ visible, onClose, episode, segments = [], onSeek, onOpen
                             ? `Repairing punctuation… ${punctPercent}%`
                             : punctDone
                                 ? `Punctuation · ${punctDone.rows} word${punctDone.rows === 1 ? '' : 's'} repunctuated${punctDone.rejected ? `, ${punctDone.rejected} stretch${punctDone.rejected === 1 ? '' : 'es'} left alone` : ''}`
-                                : `Punctuation · ${looseCount} long stretch${looseCount === 1 ? '' : 'es'} — tap to repair`}
+                                : `Punctuation · ${looseCount} stretch${looseCount === 1 ? '' : 'es'} to repair — tap`}
                     </Text>
                     <View style={{ flex: 1 }} />
                     {punctRunning && <ActivityIndicator size='small' color={colors.textMuted} />}
