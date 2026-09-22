@@ -38,9 +38,18 @@ export const isYouTubeFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feed
 // Every episode row carries its collection's kind and author, so screens can
 // tell a chapter of an imported book (no feed, no re-download, its file *is*
 // the episode) from a podcast episode without a second query.
+// books_count is the books the episode names by either route — the title scan
+// (EpisodeBooks) and the entity pass (EpisodeEntities, type book) — counted
+// once per title, so the badge on the list agrees with what the episode shows
+// inside (user: "in list of podcast identify the book and put 2 meanwhile
+// inside appear 3").
 const EPISODE_WITH_IMAGE = `
   SELECT e.*, p.image_url, p.kind AS podcast_kind, p.author AS podcast_author,
-         (SELECT COUNT(*) FROM EpisodeBooks b WHERE b.episode_id = e.id AND b.first_ms IS NOT NULL) AS books_count
+         (SELECT COUNT(*) FROM (
+            SELECT lower(b.title) AS t FROM EpisodeBooks b WHERE b.episode_id = e.id AND b.first_ms IS NOT NULL
+            UNION
+            SELECT lower(x.canonical) FROM EpisodeEntities x WHERE x.episode_id = e.id AND x.type = 'book'
+          )) AS books_count
   FROM Episodes e
   LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
 `;

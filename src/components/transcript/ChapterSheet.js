@@ -303,7 +303,7 @@ const ChapterSheet = ({ visible, onClose, episode, segments = [], onSeek, onOpen
                     disabled={punctRunning}
                     activeOpacity={0.7}
                     accessibilityRole='button'
-                    accessibilityLabel='Repair the punctuation of the long stretches'
+                    accessibilityLabel='Repair the punctuation of the stretches that need it'
                 >
                     <Icon name='align-left' size={13} color={colors.textMuted} />
                     <Text style={st.fixHeadText}>
