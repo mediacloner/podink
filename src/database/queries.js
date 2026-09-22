@@ -396,6 +396,67 @@ export const saveMaiTranscript = async (episodeId, segments, { costUsd = null, a
   });
 };
 
+/**
+ * The cloud transcript becomes the episode's own text: the recogniser's rows
+ * are replaced by it, and everything that was read out of them — the names,
+ * the assistant's corrections, chapters, summary, the books scan — is cleared
+ * so the passes run again on what is now there. The cloud copy stays in its
+ * own table: it was paid for, while the phone's can be made again for
+ * nothing. Resolves the number of rows written.
+ */
+export const promoteMaiTranscript = async (episodeId) => {
+  const db = await openDatabaseContext();
+  const source = await db.getAllAsync(
+    'SELECT start_time, end_time, text FROM MaiTranscriptSegments WHERE episode_id = ? ORDER BY start_time',
+    [episodeId]
+  );
+  if (!source.length) throw new Error('There is no cloud transcript for this episode.');
+  // Transcripts is unique on (episode_id, start_time, end_time), so a repeated
+  // start is nudged a millisecond along rather than dropping the line.
+  let last = -1;
+  const rows = [];
+  for (const r of source) {
+    const text = String(r.text || '').trim();
+    if (!text) continue;
+    const start = Math.max(Number(r.start_time) || 0, last + 1);
+    last = start;
+    rows.push({ start, end: Math.max(start + 1, Number(r.end_time) || 0), text });
+  }
+  if (!rows.length) throw new Error('The cloud transcript is empty.');
+  await runInTxn(db, async () => {
+    await db.runAsync('DELETE FROM Transcripts WHERE episode_id = ?', [episodeId]);
+    for (let i = 0; i < rows.length; i += TRANSCRIPT_INSERT_BATCH) {
+      const block = rows.slice(i, i + TRANSCRIPT_INSERT_BATCH);
+      const params = [];
+      for (const r of block) params.push(episodeId, r.start, r.end, r.text);
+      await db.runAsync(
+        `INSERT INTO Transcripts (episode_id, start_time, end_time, text) VALUES ${block.map(() => '(?, ?, ?, ?)').join(', ')}`,
+        params
+      );
+    }
+    for (const table of ['EpisodeNames', 'EpisodeFixes', 'EpisodeChapters', 'EpisodeBooks']) {
+      await db.runAsync(`DELETE FROM ${table} WHERE episode_id = ?`, [episodeId]);
+    }
+    await db.runAsync(
+      `UPDATE Episodes SET has_transcript = 1, transcript_source = 'cloud', transcript_aligned = 0,
+              names_indexed_at = NULL, books_indexed_at = NULL, summary = NULL,
+              ai_indexed_at = NULL, ai_model = NULL, repunctuated_at = NULL
+         WHERE id = ?`,
+      [episodeId]
+    );
+  });
+  return rows.length;
+};
+
+/** Throws the paid-for copy away, without touching the episode's own text. */
+export const deleteMaiTranscript = async (episodeId) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync('DELETE FROM MaiTranscriptSegments WHERE episode_id = ?', [episodeId]);
+    await db.runAsync('DELETE FROM MaiTranscriptRuns WHERE episode_id = ?', [episodeId]);
+  });
+};
+
 export const getMaiTranscript = async (episodeId) => {
   const db = await openDatabaseContext();
   const [run, segments] = await Promise.all([

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **The cloud transcript can become the episode's own text.** Reading it beside the phone's was as far as it went; now *Use this text* puts it in place of the transcript, and everything that was read out of the old one — the names, the assistant's corrections, the chapters, the summary, the books it named — is cleared so the passes run again on what is now there (`queries.promoteMaiTranscript`, `Episodes.transcript_source` = 'cloud'). The paid-for copy stays in its own table afterwards, since the phone's can be made again for nothing, and the search index follows the swap. The two blue words above the transcript are gone with it: a cloud button in the Player header opens a sheet that names both texts with their word counts, the day the cloud one was made and what it cost, moves the reader between them, runs the transcription behind a progress bar that can be stopped, and offers to throw the copy away (`components/transcript/CloudTranscriptSheet.js`) (user: “I want that implement this transcription like a option when I have trouble with the first local iteration. You can put on player.”, then “I want to improve the rewrite transcription with cloud model to modern UI”).
+
 ### Changed
 - **The assistant's second model is Sol, not Terra.** The picker offered Luna and Terra, and Terra was the wrong one to keep: OpenAI charges the same $2.00 a million tokens to read either, and $10.00 against Terra's $12.00 to write — with Sol the flagship of the series and Terra explicitly the step below it. So the mid tier cost more than the top one for exactly the work this app asks of it (user: “could be is better luna and sol”). An hour of audio reads for about 8 cents on Sol where Terra wanted 9, and the punctuation pass, which re-emits every word it is given, is 14 % cheaper on the model that is also the better one. Anyone who had chosen Terra falls back to Luna, which is where the recommendation has always pointed.
 
