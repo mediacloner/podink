@@ -15,12 +15,14 @@ import {
     getAbortingId, getActiveId, getQueueIds, onQueueChange, onTranscriptProgress,
 } from '../services/whisperService';
 import {
-    downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
+    downloadEpisode, isImportedEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
 } from '../services/episodeService';
 import {
     getSyncingId, isBookTranscript, isSyncing, needsSync, onBookSyncChange, queueVoiceSync, textDoesNotFit,
 } from '../services/bookService';
-import { getEpisodeById, getEpisodeBooks } from '../database/queries';
+import { getEpisodeById, getEpisodeBooks, getMaiTranscript } from '../database/queries';
+import CloudTranscriptSheet from '../components/transcript/CloudTranscriptSheet';
+import { buildTranscriptExport, shareText } from '../components/transcript/share';
 import { indexEpisodeBooks } from '../services/bookIndex';
 import { getCorrectedTranscript, indexEpisodeNames } from '../services/nameIndex';
 import ProgrammeGuide from '../components/ProgrammeGuide';
@@ -34,7 +36,6 @@ import {
 import { getStation, stationIdFromFeedUrl } from '../services/radioStations';
 import { stationLocalTime } from '../services/radioSchedule';
 import { artworkSource } from '../api/userAgent';
-import { buildTranscriptExport, shareText } from '../components/transcript/share';
 import ChapterSheet from '../components/transcript/ChapterSheet';
 import { extractColor, softenForHeader } from '../services/colorExtractor';
 import { useTheme, useStyles, radii, withAlpha, THEMES } from '../theme';
@@ -109,6 +110,9 @@ const PlayerScreen = ({ route, navigation }) => {
     }, [switching, navigation]);
 
     const [segments, setSegments] = useState([]);
+    const [mai, setMai] = useState({ run: null, segments: [] });   // the cloud transcript, when one was paid for
+    const [viewMai, setViewMai] = useState(false);
+    const [cloudSheet, setCloudSheet] = useState(false);
     // Books the transcript mentions (EpisodeBooks rows) — bold titles + book card.
     const [books, setBooks] = useState([]);
     const [chapterSheet, setChapterSheet] = useState(false);   // the summary-and-chapters card
@@ -324,6 +328,14 @@ const PlayerScreen = ({ route, navigation }) => {
         return () => { alive = false; };
     }, [epId]);
 
+    const refetchMai = useCallback(async () => {
+        const result = await getMaiTranscript(epId);
+        setMai(result);
+        if (!result.segments.length) setViewMai(false);
+        else if (!epRef.current?.has_transcript) setViewMai(true);
+    }, [epId]);
+    useEffect(() => { refetchMai().catch(() => {}); }, [refetchMai]);
+
     // ── Books mentioned ──────────────────────────────────────────────────────
     // Rows come from the last scan; an episode with text that was never
     // scanned (transcribed before this existed, or scanned offline) is scanned
@@ -380,6 +392,10 @@ const PlayerScreen = ({ route, navigation }) => {
             } else if (payload.type === 'transcript-complete') {
                 schedule(true);
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
+            } else if (payload.type === 'mai-transcript-complete') {
+                refetchMai().catch(() => {});
+            } else if (payload.type === 'transcript-repunctuated') {
+                schedule(true);
             } else if (payload.type === 'book-sync-progress') {
                 setBookSyncPercent(payload.percent || 0);
             } else if (payload.type === 'book-sync-done') {
@@ -420,7 +436,7 @@ const PlayerScreen = ({ route, navigation }) => {
             unsub();
             if (st.timer) clearTimeout(st.timer);
         };
-    }, [epId, refetchTranscript, navigation]);
+    }, [epId, refetchTranscript, refetchMai, navigation]);
 
     // ── Transcription queue state for this episode ────────────────────────────
     // Matching the book text to the voice (bookService's own queue).
@@ -508,13 +524,16 @@ const PlayerScreen = ({ route, navigation }) => {
         transcriptRef.current?.replaySentence();
     }, []);
 
-    const hasTranscript = !!ep?.has_transcript || segments.length > 0;
-    // Header share glyph: the whole transcript as text, one timed line per
-    // sentence, through the system share sheet (notes, mail, an assistant).
+    const displaySegments = viewMai && mai.segments.length ? mai.segments : segments;
+    const hasTranscript = !!ep?.has_transcript || displaySegments.length > 0;
+    // The whole transcript as text, one timed line per sentence, through the
+    // system share sheet (notes, mail, an assistant) — from the transcript
+    // card, where the text itself is chosen (user: "eliminate sharing text
+    // icon its not necessary", then "include inside of cloud transcription").
     const shareTranscript = useCallback(() => {
-        if (!ep || !segments.length) return;
-        shareText(buildTranscriptExport(ep, segments), 'Share transcript');
-    }, [ep, segments]);
+        if (!ep || !displaySegments.length) return;
+        shareText(buildTranscriptExport(ep, displaySegments), 'Share transcript');
+    }, [ep, displaySegments]);
     // A chapter tapped in the sheet: the transcript's own seek (it also
     // re-engages follow mode and moves the player).
     const seekFromChapter = useCallback((ms) => {
@@ -627,7 +646,18 @@ const PlayerScreen = ({ route, navigation }) => {
                         </View>
                     )}
                 </View>
-                {!isRadio && hasTranscript && segments.length > 0 && (
+                {!isRadio && (displaySegments.length > 0 || (!isImportedEpisode(ep) && !!ep?.local_audio_path)) && (
+                    <TouchableOpacity
+                        onPress={() => setCloudSheet(true)}
+                        hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                        style={styles.radioStop}
+                        accessibilityRole='button'
+                        accessibilityLabel='Cloud transcription'
+                    >
+                        <Icon name='cloud' size={18} color={withAlpha(headerFg, viewMai ? 1 : 0.75)} />
+                    </TouchableOpacity>
+                )}
+                {!isRadio && hasTranscript && displaySegments.length > 0 && (
                     <TouchableOpacity
                         onPress={() => setChapterSheet(true)}
                         hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
@@ -636,17 +666,6 @@ const PlayerScreen = ({ route, navigation }) => {
                         accessibilityLabel='Summary and chapters'
                     >
                         <Icon name='list' size={18} color={withAlpha(headerFg, 0.75)} />
-                    </TouchableOpacity>
-                )}
-                {!isRadio && hasTranscript && segments.length > 0 && (
-                    <TouchableOpacity
-                        onPress={shareTranscript}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        style={styles.radioStop}
-                        accessibilityRole='button'
-                        accessibilityLabel='Share the transcript'
-                    >
-                        <Icon name='share' size={18} color={withAlpha(headerFg, 0.75)} />
                     </TouchableOpacity>
                 )}
                 {isRadio && (
@@ -714,7 +733,7 @@ const PlayerScreen = ({ route, navigation }) => {
                 ) : (
                     <TranscriptHighlighter
                         ref={transcriptRef}
-                        segments={segments}
+                        segments={displaySegments}
                         fadeTo={colors.bgPlayer}
                         loading={transcriptLoading && hasTranscript}
                         hasTranscript={hasTranscript}
@@ -782,15 +801,32 @@ const PlayerScreen = ({ route, navigation }) => {
                 />
             </View>
 
-            {!isRadio && (
+            {!isRadio && (<>
+                <CloudTranscriptSheet
+                    visible={cloudSheet}
+                    onClose={() => setCloudSheet(false)}
+                    episode={ep}
+                    localSegments={segments}
+                    mai={mai}
+                    viewCloud={viewMai}
+                    onViewCloud={setViewMai}
+                    canCloud={!isImportedEpisode(ep) && !!ep?.local_audio_path}
+                    onShare={displaySegments.length > 0 ? shareTranscript : null}
+                    onChanged={() => {
+                        refetchMai().catch(() => {});
+                        refetchTranscript();
+                        getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
+                    }}
+                />
                 <ChapterSheet
                     visible={chapterSheet}
                     onClose={() => setChapterSheet(false)}
                     episode={ep}
+                    segments={displaySegments}
                     onSeek={seekFromChapter}
                     onOpenSettings={openSettingsFromSheet}
                 />
-            )}
+            </>)}
 
         </View>
     );

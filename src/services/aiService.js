@@ -27,7 +27,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { requestJson } from '../api/openai';
-import { getEpisodeById, isRadioFeedUrl, replaceEpisodeAnalysis } from '../database/queries';
+import { getEpisodeById, isRadioFeedUrl, recordApiSpend, replaceEpisodeAnalysis } from '../database/queries';
 import { getNameCorrectedTranscript, indexEpisodeNames } from './nameIndex';
 import { indexEpisodeBooks } from './bookIndex';
 import { countPhrase, normalizePhrase } from './nameText';
@@ -44,11 +44,11 @@ export const AI_MODEL_KEY = '@ai_model';
 export const AI_AUTO_KEY = '@ai_auto_analyze';      // '1' | '0'; absent = off
 export const AI_FIX_KEY = '@ai_fix_transcript';     // '1' | '0'; absent = on
 
-// Prices per million tokens (OpenAI's page, 2026-09-11) — for the log line
+// Prices per million tokens (checked 2026-09-22) — for the log line
 // and the "about a cent" hint, not for billing.
 export const AI_MODELS = [
     { id: 'gpt-5.6-luna', label: 'Luna', tier: 'Budget', inPerM: 0.20, outPerM: 1.20, recommended: true },
-    { id: 'gpt-5.6-terra', label: 'Terra', tier: 'Mid-range', inPerM: 2.00, outPerM: 12.00 },
+    { id: 'gpt-5.6-sol', label: 'Sol', tier: 'Flagship', inPerM: 2.00, outPerM: 10.00 },
 ];
 export const DEFAULT_AI_MODEL = AI_MODELS[0].id;
 
@@ -84,14 +84,19 @@ export const formatDollars = (d) => {
     if (d < 0.095) return `about ${Math.max(1, Math.round(d * 100))} cent${Math.round(d * 100) === 1 ? '' : 's'}`;
     return `about $${d.toFixed(2)}`;
 };
-/** What a run on an episode of this length should cost, as a phrase. */
-export const estimateEpisodeCost = (model, durationSec, { fixes = true } = {}) => {
+/** What a run on an episode of this length should cost, in dollars. Also
+ *  what the statistics screen prices a run made before the spend ledger
+ *  existed at — the model that wrote it and the length of the episode are
+ *  all that is left of it. */
+export const estimateEpisodeDollars = (model, durationSec, { fixes = true } = {}) => {
     const minutes = Math.max(1, (durationSec || 3600) / 60);
     const inputTokens = minutes * 150 * 1.35 + 600;         // ~150 words a minute, ~1.35 tokens a word
     const passes = fixes ? 2 : 1;
     const outputTokens = 1200 + (fixes ? 1500 : 0);
-    return formatDollars(dollars(model, { input: inputTokens * passes, output: outputTokens, cached: 0 }));
+    return dollars(model, { input: inputTokens * passes, output: outputTokens, cached: 0 });
 };
+/** The same figure as a phrase. */
+export const estimateEpisodeCost = (model, durationSec, opts) => formatDollars(estimateEpisodeDollars(model, durationSec, opts));
 
 // ─── Prompts ─────────────────────────────────────────────────────────────────
 
@@ -205,6 +210,13 @@ export const translateParagraphs = async ({ paragraphs, lang, before = '', signa
         maxOutputTokens: 1600, signal,
     });
     const out = Array.isArray(json?.translations) ? json.translations.map(t => String(t || '').trim()) : [];
+    // Small beside a whole episode, but there are many of them — the
+    // statistics screen is where a month of translating adds up.
+    await recordApiSpend({
+        provider: 'openai', service: 'translation', model,
+        tokensIn: usage.input, tokensCached: usage.cached, tokensOut: usage.output,
+        cost: dollars(model, usage),
+    });
     log('SERVICE', 'Context translation', {
         lang, model, paragraphs: parts.length, returned: out.length,
         contextChars: ctx.length, tokensIn: usage.input, tokensOut: usage.output,
@@ -222,6 +234,10 @@ export const translateParagraphs = async ({ paragraphs, lang, before = '', signa
 
 const MAX_PART_CHARS = 110000;    // ≈ 28k tokens — one request for anything up to ~3 hours
 const NOTES_MAX_CHARS = 3000;
+
+/** The episode's own notes as plain text, cut to what one request carries. */
+export const episodeNotes = (ep) =>
+    showNotesPlainText(ep?.description || '').trim().slice(0, NOTES_MAX_CHARS);
 
 const describeEpisode = (ep, durationMs, notes) => [
     `Podcast: ${ep.podcast_title || ''}`,
@@ -244,6 +260,15 @@ const splitParts = (lines) => {
 const partLabel = (i, n, lines) => (n > 1
     ? `This is part ${i + 1} of ${n} of the episode, from ${lines[0].slice(1, lines[0].indexOf(']'))} to ${lines[lines.length - 1].slice(1, lines[lines.length - 1].indexOf(']'))}.\n`
     : '');
+
+/** Everything one reading of a transcript needs: the sentences it is cut
+ *  into, the head that names the episode, and the parts of the request. */
+const preparePass = (ep, rows, notes) => {
+    const sentences = sentencesWithTimes(rows);
+    const lines = sentences.map(s => `[${formatClock(s.startMs)}] ${s.text}`);
+    const durationMs = ep.duration > 0 ? ep.duration * 1000 : (sentences[sentences.length - 1]?.endMs || 0);
+    return { sentences, lines, durationMs, head: describeEpisode(ep, durationMs, notes), parts: splitParts(lines) };
+};
 
 // ─── Answers → rows ──────────────────────────────────────────────────────────
 
@@ -326,6 +351,65 @@ const acceptFixes = (raw, rows) => {
 
 const _running = new Map();   // episodeId → Promise
 
+/**
+ * The summary and chapters for one transcript, by whoever `request` asks —
+ * nothing is written to the database. `request` makes one structured call
+ * ({ instructions, schemaName, schema, input, maxOutputTokens }) and resolves
+ * { json, usage }, the shape api/openai.requestJson returns.
+ *
+ * The comparison (services/maiChapterTest.js) hands it an OpenRouter request
+ * and runs the phone's transcript and MAI's through this same reading — same
+ * model, same notes, same part splitting — so what differs between the two
+ * answers is the transcript and nothing else.
+ *
+ * `prepared` is preparePass's answer when the caller already has it.
+ */
+export const chaptersAndSummary = async ({ ep, rows, notes = '', request, prepared }) => {
+    const { sentences, durationMs, head, parts } = prepared || preparePass(ep, rows, notes);
+    const usage = { input: 0, output: 0, cached: 0 };
+    const add = (u) => {
+        usage.input += u?.input || 0; usage.output += u?.output || 0; usage.cached += u?.cached || 0;
+    };
+    const rawChapters = [];
+    const partSummaries = [];
+    for (let i = 0; i < parts.length; i++) {
+        const r = await request({
+            instructions: CHAPTERS_INSTRUCTIONS, schemaName: 'episode_chapters', schema: CHAPTERS_SCHEMA,
+            input: `${head}\n\n${partLabel(i, parts.length, parts[i])}Transcript:\n${parts[i].join('\n')}`,
+            maxOutputTokens: 5000,
+        });
+        add(r.usage);
+        rawChapters.push(...(r.json?.chapters || []));
+        if (r.json?.summary) partSummaries.push(String(r.json.summary).trim());
+    }
+    let summary = partSummaries.join('\n\n');
+    if (partSummaries.length > 1) {
+        const r = await request({
+            instructions: MERGE_INSTRUCTIONS, schemaName: 'episode_summary', schema: SUMMARY_SCHEMA,
+            input: `${head}\n\n${partSummaries.map((s, i) => `Part ${i + 1}: ${s}`).join('\n\n')}`,
+            maxOutputTokens: 1000,
+        });
+        add(r.usage);
+        summary = String(r.json?.summary || summary).trim();
+    }
+    return {
+        summary, chapters: snapChapters(rawChapters, sentences, durationMs),
+        sentences, parts: parts.length, usage,
+    };
+};
+
+/** The assistant's own request path, for a pass that runs outside
+ *  analyzeEpisode (services/repunctuate.js): the listener's key, the model
+ *  they chose, the shape chaptersAndSummary and requestJson both speak. */
+export const assistantRequest = async () => {
+    const apiKey = await getOpenAIKey();
+    if (!apiKey) throw tagged('nokey', 'Add your OpenAI API key in Settings \u2192 Episode assistant first.');
+    const model = await getAIModel();
+    return { model, request: (req) => requestJson({ apiKey, model, ...req }) };
+};
+
+/** What a run cost, in dollars, from the tokens it used. */
+export const costOf = (model, usage) => dollars(model, usage);
 
 /**
  * Summary, chapters and (when the switch is on) fixes for one episode,
@@ -350,41 +434,20 @@ export const analyzeEpisode = (episodeId, { force = false } = {}) => {
         await indexEpisodeNames(episodeId).catch(() => null);
         const rows = await getNameCorrectedTranscript(episodeId);
         if (!rows.length) throw tagged('notranscript', 'This episode has no transcript yet.');
-        const sentences = sentencesWithTimes(rows);
-        const lines = sentences.map(s => `[${formatClock(s.startMs)}] ${s.text}`);
-        const durationMs = ep.duration > 0 ? ep.duration * 1000 : (sentences[sentences.length - 1]?.endMs || 0);
-        const notes = showNotesPlainText(ep.description || '').trim().slice(0, NOTES_MAX_CHARS);
+        const notes = episodeNotes(ep);
         const model = await getAIModel();
         const wantFixes = await isFixTranscriptOn();
-        const head = describeEpisode(ep, durationMs, notes);
-        const parts = splitParts(lines);
+        const prepared = preparePass(ep, rows, notes);
+        const { sentences, head, parts } = prepared;
         const usage = { input: 0, output: 0, cached: 0 };
         const add = (u) => { usage.input += u.input; usage.output += u.output; usage.cached += u.cached; };
 
-        // Chapters + summary, per part.
-        const rawChapters = [];
-        const partSummaries = [];
-        for (let i = 0; i < parts.length; i++) {
-            const r = await requestJson({
-                apiKey, model, instructions: CHAPTERS_INSTRUCTIONS, schemaName: 'episode_chapters', schema: CHAPTERS_SCHEMA,
-                input: `${head}\n\n${partLabel(i, parts.length, parts[i])}Transcript:\n${parts[i].join('\n')}`,
-                maxOutputTokens: 5000,
-            });
-            add(r.usage);
-            rawChapters.push(...(r.json?.chapters || []));
-            if (r.json?.summary) partSummaries.push(String(r.json.summary).trim());
-        }
-        let summary = partSummaries.join('\n\n');
-        if (partSummaries.length > 1) {
-            const r = await requestJson({
-                apiKey, model, instructions: MERGE_INSTRUCTIONS, schemaName: 'episode_summary', schema: SUMMARY_SCHEMA,
-                input: `${head}\n\n${partSummaries.map((s, i) => `Part ${i + 1}: ${s}`).join('\n\n')}`,
-                maxOutputTokens: 1000,
-            });
-            add(r.usage);
-            summary = String(r.json?.summary || summary).trim();
-        }
-        const chapters = snapChapters(rawChapters, sentences, durationMs);
+        // Chapters + summary, per part — the reading the comparison shares.
+        const pass = await chaptersAndSummary({
+            ep, rows, notes, prepared, request: (req) => requestJson({ apiKey, model, ...req }),
+        });
+        add(pass.usage);
+        const { summary, chapters } = pass;
 
         // Fixes, per part.
         let fixes = [], dropped = [];
@@ -404,6 +467,13 @@ export const analyzeEpisode = (episodeId, { force = false } = {}) => {
 
         await replaceEpisodeAnalysis(episodeId, { summary, chapters, fixes, model });
         const cost = dollars(model, usage);
+        // The statistics screen adds up what the assistant has cost
+        // (schema v15); the log line below is for one run, this is for the month.
+        await recordApiSpend({
+            provider: 'openai', service: 'assistant', model, episodeId, episodeTitle: ep.title,
+            source: ep.podcast_title, tokensIn: usage.input, tokensCached: usage.cached,
+            tokensOut: usage.output, cost,
+        });
         log('SYSTEM', 'Episode assistant finished', {
             id: episodeId, title: ep.title, model, parts: parts.length, sentences: sentences.length,
             chapters: chapters.length, fixes: fixes.length, notApplied: fixes.filter(f => !f.applied).length,

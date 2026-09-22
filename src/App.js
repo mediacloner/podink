@@ -33,6 +33,7 @@ import PodcastsScreen from './screens/PodcastsScreen';
 import LogScreen from './screens/LogScreen';
 import VocabularyScreen from './screens/VocabularyScreen';
 import NotebookScreen from './screens/NotebookScreen';
+import StatsScreen from './screens/StatsScreen';
 import MiniPlayer from './components/MiniPlayer';
 import FinishedEpisodePrompt from './components/FinishedEpisodePrompt';
 import SettingsGearButton from './components/SettingsGearButton';
@@ -321,6 +322,13 @@ const AppRoot = () => {
                     <Stack.Screen
                         name="Notebook"
                         component={NotebookScreen}
+                        options={{ headerShown: true }}
+                    />
+                    {/* Statistics (5.1.0): the listening that really happened,
+                        day by day, and what the paid passes cost. */}
+                    <Stack.Screen
+                        name="Stats"
+                        component={StatsScreen}
                         options={{ headerShown: true }}
                     />
                     {/* Imported audio (3.5.0): a collection's chapter list, and

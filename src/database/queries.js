@@ -337,25 +337,150 @@ export const finalizeTranscript = async (episodeId) => {
   await db.runAsync(`UPDATE Episodes SET has_transcript = 1 WHERE id = ?`, [episodeId]);
 };
 
+/** `text` is the repaired wording when the punctuation pass has written one
+ *  (services/repunctuate.js), the recogniser's otherwise; `text_raw` is always
+ *  what the recogniser wrote, which is what the search index holds. */
 export const getTranscriptsForEpisode = async (episodeId) => {
   const db = await openDatabaseContext();
   return db.getAllAsync(
-    'SELECT * FROM Transcripts WHERE episode_id = ? ORDER BY start_time ASC',
+    `SELECT id, episode_id, start_time, end_time,
+            COALESCE(text_fixed, text) AS text, text AS text_raw
+       FROM Transcripts WHERE episode_id = ? ORDER BY start_time ASC`,
     [episodeId]
   );
 };
 
-export const deleteEpisodeTranscript = async (id) => {
+/** The punctuation pass's answer: one repaired wording per row it changed.
+ *  Transcripts.text keeps the recogniser's words either way. */
+export const saveRepunctuation = async (episodeId, rows) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    for (const r of rows) {
+      await db.runAsync('UPDATE Transcripts SET text_fixed = ? WHERE id = ? AND episode_id = ?',
+        [r.text, r.id, episodeId]);
+    }
+    await db.runAsync('UPDATE Episodes SET repunctuated_at = ? WHERE id = ?', [Date.now(), episodeId]);
+  });
+};
+
+/** Back to the recogniser's own punctuation. */
+export const clearRepunctuation = async (episodeId) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync('UPDATE Transcripts SET text_fixed = NULL WHERE episode_id = ?', [episodeId]);
+    await db.runAsync('UPDATE Episodes SET repunctuated_at = NULL WHERE id = ?', [episodeId]);
+  });
+};
+
+/** A completed cloud comparison is swapped atomically; failed runs leave the
+ * previous result and the on-device transcript untouched. */
+export const saveMaiTranscript = async (episodeId, segments, { costUsd = null, audioSeconds = null } = {}) => {
+  if (!segments.length) throw new Error('MAI returned no speech');
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync('DELETE FROM MaiTranscriptSegments WHERE episode_id = ?', [episodeId]);
+    for (let i = 0; i < segments.length; i += TRANSCRIPT_INSERT_BATCH) {
+      const block = segments.slice(i, i + TRANSCRIPT_INSERT_BATCH);
+      const params = [];
+      for (const r of block) params.push(episodeId, r.start, r.end, r.text);
+      await db.runAsync(
+        `INSERT INTO MaiTranscriptSegments (episode_id, start_time, end_time, text) VALUES ${block.map(() => '(?, ?, ?, ?)').join(', ')}`,
+        params
+      );
+    }
+    await db.runAsync(
+      `INSERT OR REPLACE INTO MaiTranscriptRuns (episode_id, model, created_at, cost_usd, audio_seconds)
+       VALUES (?, 'microsoft/mai-transcribe-2', ?, ?, ?)`,
+      [episodeId, Date.now(), costUsd, audioSeconds]
+    );
+  });
+};
+
+/**
+ * The cloud transcript becomes the episode's own text: the recogniser's rows
+ * are replaced by it, and everything that was read out of them — the names,
+ * the assistant's corrections, chapters, summary, the books scan — is cleared
+ * so the passes run again on what is now there. The cloud copy stays in its
+ * own table: it was paid for, while the phone's can be made again for
+ * nothing. Resolves the number of rows written.
+ */
+export const promoteMaiTranscript = async (episodeId) => {
+  const db = await openDatabaseContext();
+  const source = await db.getAllAsync(
+    'SELECT start_time, end_time, text FROM MaiTranscriptSegments WHERE episode_id = ? ORDER BY start_time',
+    [episodeId]
+  );
+  if (!source.length) throw new Error('There is no cloud transcript for this episode.');
+  // Transcripts is unique on (episode_id, start_time, end_time), so a repeated
+  // start is nudged a millisecond along rather than dropping the line.
+  let last = -1;
+  const rows = [];
+  for (const r of source) {
+    const text = String(r.text || '').trim();
+    if (!text) continue;
+    const start = Math.max(Number(r.start_time) || 0, last + 1);
+    last = start;
+    rows.push({ start, end: Math.max(start + 1, Number(r.end_time) || 0), text });
+  }
+  if (!rows.length) throw new Error('The cloud transcript is empty.');
+  await runInTxn(db, async () => {
+    await db.runAsync('DELETE FROM Transcripts WHERE episode_id = ?', [episodeId]);
+    for (let i = 0; i < rows.length; i += TRANSCRIPT_INSERT_BATCH) {
+      const block = rows.slice(i, i + TRANSCRIPT_INSERT_BATCH);
+      const params = [];
+      for (const r of block) params.push(episodeId, r.start, r.end, r.text);
+      await db.runAsync(
+        `INSERT INTO Transcripts (episode_id, start_time, end_time, text) VALUES ${block.map(() => '(?, ?, ?, ?)').join(', ')}`,
+        params
+      );
+    }
+    for (const table of ['EpisodeNames', 'EpisodeFixes', 'EpisodeChapters', 'EpisodeBooks']) {
+      await db.runAsync(`DELETE FROM ${table} WHERE episode_id = ?`, [episodeId]);
+    }
+    await db.runAsync(
+      `UPDATE Episodes SET has_transcript = 1, transcript_source = 'cloud', transcript_aligned = 0,
+              names_indexed_at = NULL, books_indexed_at = NULL, summary = NULL,
+              ai_indexed_at = NULL, ai_model = NULL, repunctuated_at = NULL
+         WHERE id = ?`,
+      [episodeId]
+    );
+  });
+  return rows.length;
+};
+
+/** Throws the paid-for copy away, without touching the episode's own text. */
+export const deleteMaiTranscript = async (episodeId) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync('DELETE FROM MaiTranscriptSegments WHERE episode_id = ?', [episodeId]);
+    await db.runAsync('DELETE FROM MaiTranscriptRuns WHERE episode_id = ?', [episodeId]);
+  });
+};
+
+export const getMaiTranscript = async (episodeId) => {
+  const db = await openDatabaseContext();
+  const [run, segments] = await Promise.all([
+    db.getFirstAsync('SELECT * FROM MaiTranscriptRuns WHERE episode_id = ?', [episodeId]),
+    db.getAllAsync('SELECT * FROM MaiTranscriptSegments WHERE episode_id = ? ORDER BY start_time', [episodeId]),
+  ]);
+  return { run, segments };
+};
+
+export const deleteEpisodeTranscript = async (id, { includeMai = false } = {}) => {
   const db = await openDatabaseContext();
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
+    if (includeMai) {
+      await db.runAsync(`DELETE FROM MaiTranscriptSegments WHERE episode_id = ?`, [id]);
+      await db.runAsync(`DELETE FROM MaiTranscriptRuns WHERE episode_id = ?`, [id]);
+    }
     await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [id]);
     await db.runAsync(
       `UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL, names_indexed_at = NULL,
-              summary = NULL, ai_indexed_at = NULL, ai_model = NULL,
+              summary = NULL, ai_indexed_at = NULL, ai_model = NULL, repunctuated_at = NULL,
               transcript_source = NULL, transcript_aligned = 0
        WHERE id = ?`,
       [id]
@@ -570,6 +695,8 @@ export const deleteEpisodeLocalData = async (id) => {
   // UI says has no transcript. Delete Transcripts first (FTS delete trigger).
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM MaiTranscriptSegments WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM MaiTranscriptRuns WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [id]);
@@ -936,4 +1063,135 @@ export const deleteAllRadioEpisodes = async () => {
     );
     await db.runAsync(`DELETE FROM Episodes WHERE podcast_feed_url LIKE 'radio://%'`);
   });
+};
+
+// ─── Statistics (5.1.0) ──────────────────────────────────────────────────────
+// Two ledgers behind screens/StatsScreen.js: ListeningLog, added to while
+// something plays (services/statsService.js), and ApiSpend, one row per paid
+// request. Neither has a foreign key — both outlive the episode they are
+// about — so the titles are copied into them as they are written.
+
+/** The moment measuring began (schema v15). Everything before it can only be
+ *  estimated from the library, so the screen keeps the two apart. */
+export const getStatsSince = async () => {
+  const db = await openDatabaseContext();
+  const row = await db.getFirstAsync(`SELECT value FROM StatsMeta WHERE key = 'since'`);
+  const n = Number(row?.value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+/** Adds a spell of listening to its day's row. Called every half minute or so
+ *  while audio plays, and whenever it stops, so a process killed mid-episode
+ *  loses at most that much. */
+export const addListeningTime = async ({
+  day, itemId, kind = 'rss', title = null, source = null, feedUrl = null,
+  seconds = 0, realSeconds = 0, at = Date.now(),
+}) => {
+  if (!day || !itemId || (seconds <= 0 && realSeconds <= 0)) return;
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `INSERT INTO ListeningLog (day, item_id, kind, title, source, feed_url, seconds, real_seconds, first_at, last_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(day, item_id) DO UPDATE SET
+       seconds      = ListeningLog.seconds + excluded.seconds,
+       real_seconds = ListeningLog.real_seconds + excluded.real_seconds,
+       title        = COALESCE(excluded.title, ListeningLog.title),
+       source       = COALESCE(excluded.source, ListeningLog.source),
+       last_at      = excluded.last_at`,
+    [day, itemId, kind, title, source, feedUrl, seconds, realSeconds, at, at]
+  );
+};
+
+/** Every day with listening in it, oldest first. Small — one row per thing
+ *  heard per day — so the screen reads the lot and slices it itself. */
+export const getListeningLog = async () => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT day, item_id, kind, title, source, feed_url, seconds, real_seconds, last_at
+       FROM ListeningLog ORDER BY day ASC`
+  );
+};
+
+/** What the library remembers of the listening done before measuring began:
+ *  an episode heard to the end counts its length, one in progress its
+ *  position, both on the day they were last played. Radio sessions are left
+ *  out — their rows are deleted at every launch, so nothing survives to
+ *  count. Excludes anything last played since `since`, which the log has. */
+export const getEstimatedListeningHistory = async (since) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT strftime('%Y-%m-%d', e.last_played_at / 1000, 'unixepoch', 'localtime') AS day,
+            COALESCE(p.kind, 'rss') AS kind,
+            e.podcast_title AS source,
+            SUM(CASE WHEN e.is_played = 1 THEN COALESCE(e.duration, 0) ELSE COALESCE(e.play_position, 0) END) AS seconds,
+            COUNT(*) AS items
+       FROM Episodes e
+       LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
+      WHERE e.last_played_at IS NOT NULL AND e.last_played_at < ?
+        AND COALESCE(p.kind, 'rss') != '${RADIO_KIND}'
+      GROUP BY day, kind, source
+     HAVING seconds > 0
+      ORDER BY day ASC`,
+    [since]
+  );
+};
+
+/** Episodes heard to the end, by the day they finished. */
+export const getFinishedByDay = async () => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT strftime('%Y-%m-%d', e.last_played_at / 1000, 'unixepoch', 'localtime') AS day,
+            COUNT(*) AS episodes
+       FROM Episodes e
+       LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
+      WHERE e.is_played = 1 AND e.last_played_at IS NOT NULL
+        AND COALESCE(p.kind, 'rss') != '${RADIO_KIND}'
+      GROUP BY day ORDER BY day ASC`
+  );
+};
+
+/** One paid request. `cost` is what it came to in dollars — the provider's
+ *  own figure where it gives one (OpenRouter bills the transcription by the
+ *  second of audio), the published price of the tokens used otherwise. The
+ *  day is worked out here, in the device's own time, so no caller has to
+ *  agree with the statistics screen about where a day ends. Never throws:
+ *  a bookkeeping failure must not fail the pass that did the work. */
+export const recordApiSpend = async ({
+  at = Date.now(), provider, service, model = null, episodeId = null, episodeTitle = null,
+  source = null, tokensIn = 0, tokensCached = 0, tokensOut = 0, audioSeconds = null, cost = 0,
+}) => {
+  if (!provider || !service) return;
+  try {
+    const db = await openDatabaseContext();
+    await db.runAsync(
+      `INSERT INTO ApiSpend (at, day, provider, service, model, episode_id, episode_title, source,
+                             tokens_in, tokens_cached, tokens_out, audio_seconds, cost_usd)
+       VALUES (?, strftime('%Y-%m-%d', ? / 1000, 'unixepoch', 'localtime'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [at, at, provider, service, model, episodeId, episodeTitle, source,
+       Math.round(tokensIn) || 0, Math.round(tokensCached) || 0, Math.round(tokensOut) || 0,
+       audioSeconds == null ? null : Number(audioSeconds), Number(cost) || 0]
+    );
+  } catch (_) {}
+};
+
+/** Every paid request, newest first. A handful a week at most. */
+export const getApiSpend = async () => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(`SELECT * FROM ApiSpend ORDER BY at DESC`);
+};
+
+/** The assistant runs made before the ledger existed: the model that wrote
+ *  them and the length of the episode are all that is left to price them by
+ *  (services/aiService.estimateEpisodeDollars does the arithmetic). */
+export const getEstimatedAssistantRuns = async (since) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT e.id AS episode_id, e.title AS episode_title, e.podcast_title AS source,
+            e.ai_model AS model, e.ai_indexed_at AS at, COALESCE(e.duration, 0) AS duration,
+            strftime('%Y-%m-%d', e.ai_indexed_at / 1000, 'unixepoch', 'localtime') AS day
+       FROM Episodes e
+      WHERE e.ai_indexed_at IS NOT NULL AND e.ai_indexed_at < ?
+      ORDER BY e.ai_indexed_at DESC`,
+    [since]
+  );
 };

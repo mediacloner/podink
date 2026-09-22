@@ -1,0 +1,198 @@
+/**
+ * Putting the punctuation back.
+ *
+ * Parakeet punctuates as it goes, and mostly well, but every so often it
+ * loses the thread: a minute of speech arrives as one sentence, the capitals
+ * go with it, and the reader shows a wall of words nobody can follow along
+ * with. (The Constantine episode has six such runs, one of them thirty
+ * seconds of lowercase.) This asks the assistant's model to repair them.
+ *
+ * The words are not the model's to change. It may add or move a full stop, a
+ * comma, a question mark or a capital — nothing else — and its answer is
+ * accepted only when the letters and digits it returns, in order and with
+ * everything else stripped away, are exactly the ones that went in. A model
+ * that corrects a name, drops a filler or tidies a false start fails that
+ * test and the region is left as the recogniser wrote it. Fixing the words
+ * themselves is the assistant's own job (services/aiService.js), where every
+ * correction is checked against the transcript one at a time.
+ *
+ * Only what needs it is sent: a sentence longer than 35 words or 15 seconds,
+ * or one over 25 words without a single comma. Across eight episodes that is
+ * about a sixth of an hour's words — a fraction of a cent.
+ *
+ * The repaired wording goes to Transcripts.text_fixed, which
+ * getTranscriptsForEpisode reads in preference; Transcripts.text keeps the
+ * recogniser's own, so the search index and any later re-run still see it.
+ */
+import { getEpisodeById, getTranscriptsForEpisode, recordApiSpend, saveRepunctuation } from '../database/queries';
+import { assistantRequest, costOf } from './aiService';
+import { splitSentences } from './sentenceBoundary';
+import { notifyLibraryChange } from './libraryEvents';
+import { log } from './logService';
+
+const LONG_WORDS = 35;          // a sentence past this has lost a full stop
+const LONG_MS = 15000;          // …or this long, when the speaker is slow
+const UNBROKEN_WORDS = 25;      // …or this long with no comma at all
+const REGION_MAX_WORDS = 400;   // one request's worth
+const INSTRUCTIONS = `You restore the punctuation of an automatic transcript of an English podcast. The recogniser sometimes runs a minute of speech into a single sentence, loses the capital letters with it, or ends a sentence in the middle of one.
+
+Return the same words, in the same order, punctuated and capitalised as a careful editor would: full stops and question marks where the sentences end, commas where the speaker breaks, a capital at the start of each sentence and on names. Split a long run into the sentences it is really made of, and join what was cut in the middle of a thought.
+
+Never change a word. Do not add or remove one, do not reorder, do not correct a spelling, a name or a mishearing, and do not tidy away a false start, a repetition or a filler — someone is reading this while they listen, and they must find exactly what they hear. Only punctuation, capitalisation and where the sentences begin and end may change.`;
+
+const SCHEMA = {
+    type: 'object', additionalProperties: false, required: ['text'],
+    properties: { text: { type: 'string' } },
+};
+
+const LETTER = /[\p{L}\p{N}]/u;
+const letters = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+
+/** The rows grouped into sentences, each keeping the rows it came from. */
+const sentencesFromRows = (rows) => {
+    const items = [];
+    rows.forEach((r, row) => {
+        for (const text of String(r.text || '').trim().split(/\s+/)) if (text) items.push({ text, row });
+    });
+    return splitSentences(items).map((ws) => ({
+        from: ws[0].row,
+        to: ws[ws.length - 1].row,
+        words: ws.length,
+        text: ws.map(w => w.text).join(' '),
+        ms: (rows[ws[ws.length - 1].row]?.end_time || 0) - (rows[ws[0].row]?.start_time || 0),
+    }));
+};
+
+/** A sentence the recogniser plainly ran together. */
+const isLoose = (s) => s.words > LONG_WORDS
+    || (s.words > 12 && s.ms > LONG_MS)
+    || (s.words > UNBROKEN_WORDS && !/[,;:—–]/.test(s.text.slice(0, -1)));
+
+/**
+ * Row ranges worth sending, each with the sentence either side of it for
+ * context. Exported for the tests and for the sheet's "N stretches" line.
+ */
+export const findLooseRegions = (rows) => {
+    const sentences = sentencesFromRows(rows);
+    const regions = [];
+    let open = null;
+    sentences.forEach((s, i) => {
+        if (!isLoose(s)) return;
+        // never behind a region already closed, or two requests would repair
+        // the same rows and the second would overwrite the first
+        const floor = open ? open.lastSentence + 1 : 0;
+        const first = Math.max(0, floor, i - 1);
+        if (first > i) return;
+        const last = Math.min(sentences.length - 1, i + 1);
+        const words = sentences.slice(first, last + 1).reduce((n, x) => n + x.words, 0);
+        if (open && first <= open.lastSentence + 1 && open.words + words <= REGION_MAX_WORDS) {
+            open.lastSentence = last;
+            open.to = sentences[last].to;
+            open.words += words;
+            open.loose += 1;
+            return;
+        }
+        open = {
+            from: sentences[first].from, to: sentences[last].to,
+            firstSentence: first, lastSentence: last, words, loose: 1,
+        };
+        regions.push(open);
+    });
+    return regions;
+};
+
+/**
+ * The repaired text cut back into one string per row. The letters of `out`
+ * are known to match the rows', so the split follows them: each row takes as
+ * many letters as it had, plus the punctuation that trails it.
+ */
+const splitAcrossRows = (rows, from, to, out) => {
+    const texts = [];
+    let p = 0;
+    for (let i = from; i <= to; i++) {
+        const need = letters(rows[i].text).length;
+        const start = p;
+        let got = 0;
+        while (p < out.length && got < need) {
+            if (LETTER.test(out[p])) got += 1;
+            p += 1;
+        }
+        while (p < out.length && !LETTER.test(out[p]) && !/\s/.test(out[p])) p += 1;
+        texts.push(out.slice(start, p).trim());
+        while (p < out.length && /\s/.test(out[p])) p += 1;
+    }
+    if (p < out.length && texts.length) texts[texts.length - 1] += out.slice(p).trimEnd();
+    return texts;
+};
+
+/**
+ * Repairs one episode's loose regions. Resolves
+ * { regions, repaired, rejected, rows, cost } — `rejected` counts the
+ * regions whose answer changed a word and was thrown away. Rejects only when
+ * there is no key, no transcript, or nothing to repair.
+ *
+ * `request` and `model` default to the assistant's own (Settings → Episode
+ * assistant); pass another pair to try a different model on the same text.
+ */
+export const repunctuateEpisode = async (episodeId, { request, model, onProgress = () => {} } = {}) => {
+    const t0 = Date.now();
+    const ep = await getEpisodeById(episodeId);
+    if (!ep) throw Object.assign(new Error('This episode is gone.'), { kind: 'notranscript' });
+    const rows = await getTranscriptsForEpisode(episodeId);
+    if (!rows.length) throw Object.assign(new Error('This episode has no transcript yet.'), { kind: 'notranscript' });
+    const regions = findLooseRegions(rows);
+    if (!regions.length) return { regions: 0, repaired: 0, rejected: 0, rows: 0, cost: 0 };
+
+    let ask = request;
+    let modelId = model;
+    if (!ask) ({ request: ask, model: modelId } = await assistantRequest());
+
+    const head = `Podcast: ${ep.podcast_title || ''}\nEpisode: ${ep.title || ''}`;
+    const usage = { input: 0, output: 0, cached: 0 };
+    const updates = [];
+    let rejected = 0;
+    for (let i = 0; i < regions.length; i++) {
+        const { from, to } = regions[i];
+        const before = rows.slice(from, to + 1).map(r => String(r.text || '').trim()).filter(Boolean).join(' ');
+        try {
+            const r = await ask({
+                instructions: INSTRUCTIONS, schemaName: 'repunctuated_text', schema: SCHEMA,
+                input: `${head}\n\nText:\n${before}`,
+                maxOutputTokens: Math.min(6000, regions[i].words * 4 + 400),
+            });
+            usage.input += r.usage?.input || 0;
+            usage.output += r.usage?.output || 0;
+            usage.cached += r.usage?.cached || 0;
+            const after = String(r.json?.text || '').trim();
+            if (!after || letters(after) !== letters(before)) { rejected += 1; continue; }
+            const texts = splitAcrossRows(rows, from, to, after);
+            texts.forEach((text, k) => {
+                const row = rows[from + k];
+                if (text && text !== String(row.text || '').trim()) updates.push({ id: row.id, text });
+            });
+        } catch (e) {
+            log('SERVICE', 'Repunctuation region failed', { id: episodeId, region: i, error: e?.message || String(e) });
+            rejected += 1;
+        }
+        onProgress(Math.round((i + 1) / regions.length * 100));
+    }
+
+    if (updates.length) await saveRepunctuation(episodeId, updates);
+    const cost = modelId ? costOf(modelId, usage) : 0;
+    // A pass on someone else's model (the sheet's comparison) is billed by
+    // whoever that model is behind; the assistant's own is OpenAI's.
+    await recordApiSpend({
+        provider: request ? 'openrouter' : 'openai', service: 'punctuation', model: modelId,
+        episodeId, episodeTitle: ep.title, source: ep.podcast_title,
+        tokensIn: usage.input, tokensCached: usage.cached, tokensOut: usage.output, cost,
+    });
+    log('SERVICE', 'Repunctuation finished', {
+        id: episodeId, title: ep.title, model: modelId, regions: regions.length,
+        repaired: regions.length - rejected, rejected, rows: updates.length,
+        tokensIn: usage.input, tokensOut: usage.output, cost: `$${cost.toFixed(4)}`, ms: Date.now() - t0,
+    });
+    if (updates.length) {
+        try { notifyLibraryChange({ type: 'transcript-repunctuated', episodeId, rows: updates.length }); } catch (_) {}
+    }
+    return { regions: regions.length, repaired: regions.length - rejected, rejected, rows: updates.length, cost, usage };
+};
