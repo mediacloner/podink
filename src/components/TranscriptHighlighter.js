@@ -1700,7 +1700,7 @@ const Chunk = React.memo(({
                         return (
                             <Text key={run.key}>
                                 <Text
-                                    style={styles.bookTitle}
+                                    style={run.bookId < 0 ? styles.nameTitle : styles.bookTitle}
                                     suppressHighlighting
                                     onPress={() => onBookPress(run.bookId, run.startMs)}
                                 >
@@ -1758,10 +1758,13 @@ const Word = React.memo(({
     const highlightOn  = withAlpha(transcriptHighlight, transcriptHighlightAlpha);
     const highlightOff = withAlpha(transcriptHighlight, 0);
     // A book title: a purple band with the primary text colour, spoken or
-    // not. Decided inside the animated style — an animated colour applied
+    // not; a name the episode mentions (negative id): the same on a cream
+    // band. Decided inside the animated style — an animated colour applied
     // natively wins over any static style in the array.
     const isBook = !!bookId;
-    const bookBand = withAlpha(colors.purple, 0.26);
+    const bookBand = Number(bookId) < 0
+        ? withAlpha(colors.nameBand, colors.nameBandAlpha)
+        : withAlpha(colors.purple, 0.26);
     const bookText = colors.textPrimary;
     const animStyle = useAnimatedStyle(() => {
         if (isBook) {
@@ -1842,6 +1845,7 @@ const makeStyles = (colors) => StyleSheet.create({
     // purple behind the words, text in the primary colour — bold alone
     // vanished in the dimmed past/future text of both themes.
     bookTitle: { backgroundColor: withAlpha(colors.purple, 0.26), color: colors.textPrimary, fontWeight: '600' },
+    nameTitle: { backgroundColor: withAlpha(colors.nameBand, colors.nameBandAlpha), color: colors.textPrimary, fontWeight: '600' },
 
     keypointRow: {
         flexDirection: 'row',
