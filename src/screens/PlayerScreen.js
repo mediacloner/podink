@@ -15,12 +15,13 @@ import {
     getAbortingId, getActiveId, getQueueIds, onQueueChange, onTranscriptProgress,
 } from '../services/whisperService';
 import {
-    downloadEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
+    downloadEpisode, isImportedEpisode, reportDownloadError, reportTranscriptionError, transcribeEpisode,
 } from '../services/episodeService';
 import {
     getSyncingId, isBookTranscript, isSyncing, needsSync, onBookSyncChange, queueVoiceSync, textDoesNotFit,
 } from '../services/bookService';
-import { getEpisodeById, getEpisodeBooks } from '../database/queries';
+import { getEpisodeById, getEpisodeBooks, getMaiTranscript } from '../database/queries';
+import { cancelMaiTest, estimateMaiCost, testMaiTranscription } from '../services/maiTranscriptionService';
 import { indexEpisodeBooks } from '../services/bookIndex';
 import { getCorrectedTranscript, indexEpisodeNames } from '../services/nameIndex';
 import ProgrammeGuide from '../components/ProgrammeGuide';
@@ -109,6 +110,10 @@ const PlayerScreen = ({ route, navigation }) => {
     }, [switching, navigation]);
 
     const [segments, setSegments] = useState([]);
+    const [maiSegments, setMaiSegments] = useState([]);
+    const [viewMai, setViewMai] = useState(false);
+    const [maiRunning, setMaiRunning] = useState(false);
+    const [maiProgress, setMaiProgress] = useState(0);
     // Books the transcript mentions (EpisodeBooks rows) — bold titles + book card.
     const [books, setBooks] = useState([]);
     const [chapterSheet, setChapterSheet] = useState(false);   // the summary-and-chapters card
@@ -324,6 +329,13 @@ const PlayerScreen = ({ route, navigation }) => {
         return () => { alive = false; };
     }, [epId]);
 
+    const refetchMai = useCallback(async () => {
+        const result = await getMaiTranscript(epId);
+        setMaiSegments(result.segments);
+        if (result.segments.length && !epRef.current?.has_transcript) setViewMai(true);
+    }, [epId]);
+    useEffect(() => { refetchMai().catch(() => {}); }, [refetchMai]);
+
     // ── Books mentioned ──────────────────────────────────────────────────────
     // Rows come from the last scan; an episode with text that was never
     // scanned (transcribed before this existed, or scanned offline) is scanned
@@ -380,6 +392,8 @@ const PlayerScreen = ({ route, navigation }) => {
             } else if (payload.type === 'transcript-complete') {
                 schedule(true);
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
+            } else if (payload.type === 'mai-transcript-complete') {
+                refetchMai().catch(() => {});
             } else if (payload.type === 'book-sync-progress') {
                 setBookSyncPercent(payload.percent || 0);
             } else if (payload.type === 'book-sync-done') {
@@ -420,7 +434,7 @@ const PlayerScreen = ({ route, navigation }) => {
             unsub();
             if (st.timer) clearTimeout(st.timer);
         };
-    }, [epId, refetchTranscript, navigation]);
+    }, [epId, refetchTranscript, refetchMai, navigation]);
 
     // ── Transcription queue state for this episode ────────────────────────────
     // Matching the book text to the voice (bookService's own queue).
@@ -508,13 +522,38 @@ const PlayerScreen = ({ route, navigation }) => {
         transcriptRef.current?.replaySentence();
     }, []);
 
-    const hasTranscript = !!ep?.has_transcript || segments.length > 0;
+    const displaySegments = viewMai && maiSegments.length ? maiSegments : segments;
+    const hasTranscript = !!ep?.has_transcript || displaySegments.length > 0;
     // Header share glyph: the whole transcript as text, one timed line per
     // sentence, through the system share sheet (notes, mail, an assistant).
     const shareTranscript = useCallback(() => {
-        if (!ep || !segments.length) return;
-        shareText(buildTranscriptExport(ep, segments), 'Share transcript');
-    }, [ep, segments]);
+        if (!ep || !displaySegments.length) return;
+        shareText(buildTranscriptExport(ep, displaySegments), 'Share transcript');
+    }, [ep, displaySegments]);
+
+    const startMaiTest = useCallback(() => {
+        const row = epRef.current;
+        if (!row?.local_audio_path || maiRunning) return;
+        const estimated = estimateMaiCost(row.duration).toFixed(2);
+        showAlert('Test with MAI-Transcribe-2', `Send this podcast audio to OpenRouter? Estimated cost: about $${estimated}. Your local transcript will be kept.`, [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Start test', onPress: async () => {
+                setMaiRunning(true);
+                setMaiProgress(0);
+                try {
+                    const result = await testMaiTranscription(row, setMaiProgress);
+                    await refetchMai();
+                    showAlert('MAI transcript ready', result.costUsd > 0
+                        ? `OpenRouter reported a cost of $${result.costUsd.toFixed(4)}.`
+                        : 'You can compare it with the local transcript in the Player.');
+                } catch (e) {
+                    if (e?.message !== 'MAI test cancelled') showAlert('MAI test failed', e?.message || String(e));
+                } finally {
+                    setMaiRunning(false);
+                }
+            } },
+        ]);
+    }, [maiRunning, refetchMai]);
     // A chapter tapped in the sheet: the transcript's own seek (it also
     // re-engages follow mode and moves the player).
     const seekFromChapter = useCallback((ms) => {
@@ -627,7 +666,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         </View>
                     )}
                 </View>
-                {!isRadio && hasTranscript && segments.length > 0 && (
+                {!isRadio && hasTranscript && displaySegments.length > 0 && (
                     <TouchableOpacity
                         onPress={() => setChapterSheet(true)}
                         hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
@@ -638,7 +677,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         <Icon name='list' size={18} color={withAlpha(headerFg, 0.75)} />
                     </TouchableOpacity>
                 )}
-                {!isRadio && hasTranscript && segments.length > 0 && (
+                {!isRadio && hasTranscript && displaySegments.length > 0 && (
                     <TouchableOpacity
                         onPress={shareTranscript}
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -669,6 +708,28 @@ const PlayerScreen = ({ route, navigation }) => {
             </View>
 
             {/* ── Transcript ────────────────────────────────────────────── */}
+            {!isRadio && !isImportedEpisode(ep) && !!ep?.local_audio_path && (
+                <View style={{ paddingHorizontal: 18, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: colors.bgPlayer }}>
+                    {!!maiSegments.length && !!segments.length && (
+                        <TouchableOpacity
+                            onPress={() => setViewMai(v => !v)}
+                            accessibilityRole="button"
+                            accessibilityLabel={viewMai ? 'Show local transcript' : 'Show MAI transcript'}
+                        ><Text style={{ color: colors.accent, fontWeight: '700' }}>{viewMai ? 'MAI · switch to Local' : 'Local · switch to MAI'}</Text></TouchableOpacity>
+                    )}
+                    {!!maiSegments.length && !segments.length && (
+                        <Text style={{ color: colors.textMuted }}>MAI transcript</Text>
+                    )}
+                    <TouchableOpacity
+                        onPress={maiRunning ? () => cancelMaiTest(epId) : startMaiTest}
+                        accessibilityRole="button"
+                        accessibilityLabel={maiRunning ? 'Cancel MAI test' : 'Test with MAI'}
+                        style={{ marginLeft: 'auto' }}
+                    ><Text style={{ color: maiRunning ? colors.danger : colors.accent, fontWeight: '700' }}>
+                        {maiRunning ? `Cancel MAI · ${maiProgress}%` : 'Test with MAI'}
+                    </Text></TouchableOpacity>
+                </View>
+            )}
             <View style={styles.transcriptArea}>
                 {radioMode === 'live' ? (
                     <ScrollView contentContainerStyle={styles.livePane} showsVerticalScrollIndicator={false}>
@@ -714,7 +775,7 @@ const PlayerScreen = ({ route, navigation }) => {
                 ) : (
                     <TranscriptHighlighter
                         ref={transcriptRef}
-                        segments={segments}
+                        segments={displaySegments}
                         fadeTo={colors.bgPlayer}
                         loading={transcriptLoading && hasTranscript}
                         hasTranscript={hasTranscript}

@@ -681,6 +681,114 @@ class AudioImportModule(reactContext: ReactApplicationContext) :
         }
     }
 
+    /** Five-minute upload pieces for the optional MAI comparison. MP3 frames
+     * stay MP3; AAC is remuxed to M4A. No lossy decode/re-encode is needed. */
+    @ReactMethod
+    fun splitPodcastChunks(uriString: String, destDir: String, fallbackDurationMs: Double, promise: Promise) {
+        executor.execute {
+            val extractor = MediaExtractor()
+            try {
+                val uri = Uri.parse(uriString)
+                if (uri.scheme == null || uri.scheme == "file") extractor.setDataSource(stripFileScheme(uriString))
+                else extractor.setDataSource(reactApplicationContext, uri, null)
+                var track = -1
+                var format: MediaFormat? = null
+                for (i in 0 until extractor.trackCount) {
+                    val candidate = extractor.getTrackFormat(i)
+                    if ((candidate.getString(MediaFormat.KEY_MIME) ?: "").startsWith("audio/")) {
+                        track = i; format = candidate; break
+                    }
+                }
+                if (track < 0 || format == null) throw IllegalStateException("No audio track")
+                val fmt = format
+                val mime = fmt.getString(MediaFormat.KEY_MIME) ?: ""
+                val mp3 = mime == "audio/mpeg"
+                if (!mp3 && mime != "audio/mp4a-latm") {
+                    throw IllegalStateException("MAI test currently supports MP3 and AAC podcasts; this file uses $mime")
+                }
+                val durationUs = if (fmt.containsKey(MediaFormat.KEY_DURATION)) fmt.getLong(MediaFormat.KEY_DURATION)
+                    else (fallbackDurationMs * 1000).toLong()
+                if (durationUs <= 0) throw IllegalStateException("Could not determine audio duration")
+                extractor.selectTrack(track)
+                val dir = File(stripFileScheme(destDir))
+                dir.mkdirs()
+                val output = Arguments.createArray()
+                val chunkUs = 5L * 60L * 1_000_000L
+                val buffer = ByteBuffer.allocate(maxOf(
+                    if (fmt.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) fmt.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE) else 0,
+                    1 shl 20
+                ))
+                var startUs = 0L
+                var index = 0
+                while (startUs < durationUs) {
+                    val endUs = minOf(durationUs, startUs + chunkUs)
+                    val file = File(dir, "mai-${index}.${if (mp3) "mp3" else "m4a"}")
+                    var stream: FileOutputStream? = null
+                    var muxer: MediaMuxer? = null
+                    try {
+                        extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                        if (mp3) stream = FileOutputStream(file)
+                        else {
+                            muxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+                            muxer.addTrack(fmt)
+                            muxer.start()
+                        }
+                        var firstPts = -1L
+                        var lastPts = -1L
+                        val info = MediaCodec.BufferInfo()
+                        while (true) {
+                            val pts = extractor.sampleTime
+                            if (pts < 0 || pts >= endUs) break
+                            val size = extractor.readSampleData(buffer, 0)
+                            if (size < 0) break
+                            if (pts >= startUs) {
+                                if (firstPts < 0) firstPts = pts
+                                if (mp3) {
+                                    val bytes = ByteArray(size)
+                                    buffer.position(0)
+                                    buffer.get(bytes)
+                                    stream!!.write(bytes)
+                                } else {
+                                    val rel = maxOf(lastPts + 1, pts - firstPts)
+                                    info.set(0, size, rel, extractor.sampleFlags and MediaCodec.BUFFER_FLAG_KEY_FRAME)
+                                    muxer!!.writeSampleData(0, buffer, info)
+                                    lastPts = rel
+                                }
+                            }
+                            if (!extractor.advance()) break
+                        }
+                        stream?.close()
+                        if (firstPts >= 0) muxer?.stop()
+                        muxer?.release()
+                        if (firstPts < 0 || file.length() == 0L) {
+                            file.delete()
+                        } else {
+                            val row = Arguments.createMap()
+                            row.putString("path", file.absolutePath)
+                            row.putString("format", if (mp3) "mp3" else "m4a")
+                            row.putDouble("startMs", firstPts / 1000.0)
+                            row.putDouble("endMs", endUs / 1000.0)
+                            output.pushMap(row)
+                        }
+                    } catch (e: Exception) {
+                        try { stream?.close() } catch (_: Exception) {}
+                        try { muxer?.release() } catch (_: Exception) {}
+                        file.delete()
+                        throw e
+                    }
+                    startUs = endUs
+                    index++
+                }
+                if (output.size() == 0) throw IllegalStateException("No audio samples found")
+                promise.resolve(output)
+            } catch (e: Exception) {
+                promise.reject("MAI_SPLIT_FAILED", e.message ?: "Could not prepare podcast audio", e)
+            } finally {
+                try { extractor.release() } catch (_: Exception) {}
+            }
+        }
+    }
+
     // ─── Where the reader pauses ─────────────────────────────────────────────
 
     /**

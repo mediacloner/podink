@@ -16,7 +16,8 @@ import { Feather as Icon } from '@expo/vector-icons';
 import { useTheme, useStyles, radii, withAlpha } from '../../theme';
 import SheetModal, { SheetIconButton } from './SheetModal';
 import { shareText } from './share';
-import { getEpisodeChapters, getEpisodeFixes } from '../../database/queries';
+import { getEpisodeChapters, getEpisodeFixes, getMaiTranscript } from '../../database/queries';
+import { testMaiChapters } from '../../services/maiChapterTest';
 import {
     analyzeEpisode, estimateEpisodeCost, getAIModel, getOpenAIKey, isAnalyzing, isFixTranscriptOn, modelInfo,
 } from '../../services/aiService';
@@ -41,6 +42,9 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
     const [error, setError] = useState(null);        // { message, kind }
     const [showFixes, setShowFixes] = useState(false);
     const [positionMs, setPositionMs] = useState(0);
+    const [hasMai, setHasMai] = useState(false);
+    const [maiComparison, setMaiComparison] = useState([]);
+    const [maiRunning, setMaiRunning] = useState(false);
 
     const load = useCallback(async () => {
         if (!epId) return;
@@ -60,6 +64,8 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
         getAIModel().then(setModel).catch(() => {});
         isFixTranscriptOn().then(setWithFixes).catch(() => {});
         setRunning(isAnalyzing(epId));
+        getMaiTranscript(epId).then(r => setHasMai(r.segments.length > 0)).catch(() => setHasMai(false));
+        setMaiComparison([]);
     }, [visible, epId, load]);
 
     // A pass that lands while the sheet is open (this button, or the
@@ -107,6 +113,15 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
     }, [epId, running, load]);
 
     const info = modelInfo(model);
+    const compareMai = useCallback(async () => {
+        if (!episode || maiRunning) return;
+        setError(null);
+        setMaiRunning(true);
+        setMaiComparison([]);
+        try { await testMaiChapters(episode, result => setMaiComparison(current => [...current, result])); }
+        catch (e) { setError({ message: e?.message || 'The comparison failed.' }); }
+        finally { setMaiRunning(false); }
+    }, [episode, maiRunning]);
     const costHint = estimateEpisodeCost(info.id, episode?.duration || 0, { fixes: withFixes });
     const summary = (episode?.summary || '').trim();
     const analysed = !!episode?.ai_indexed_at || chapters.length > 0;
@@ -257,6 +272,26 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
                     {!!caption && <Text style={st.caption}>{caption}</Text>}
                 </View>
             ) : null}
+
+            {hasMai && (
+                <View style={{ gap: 12, marginTop: 20 }}>
+                    <Text style={st.label}>Transcript comparison</Text>
+                    <Text style={st.body}>Luna and Gemini 3 Flash read the phone's transcript and the MAI one the same way — same model, same episode notes, same names pass — so what differs is the transcript. Four readings through OpenRouter; your episode chapters above are not touched.</Text>
+                    <TouchableOpacity style={st.primaryBtn} onPress={compareMai} disabled={maiRunning} accessibilityRole='button' accessibilityLabel='Compare both transcripts'>
+                        {maiRunning && <ActivityIndicator size='small' color={colors.onAccent} />}
+                        <Text style={st.primaryText}>{maiRunning ? 'Reading both transcripts…' : 'Compare both transcripts'}</Text>
+                    </TouchableOpacity>
+                    {maiComparison.map(result => (
+                        <View key={`${result.model.id}-${result.source}`} style={{ gap: 7 }}>
+                            <Text style={st.label}>{result.model.label} · {result.sourceLabel}{result.error ? ' · failed' : ` · about $${result.cost.toFixed(4)}`}</Text>
+                            {result.error ? <Text style={st.body}>{result.error}</Text> : <Text style={st.body}>{result.summary}</Text>}
+                            {(result.chapters || []).map((c, i) => (
+                                <Text key={`${c.startMs}-${i}`} style={st.body}>[{formatClock(c.startMs)}] {c.title} — {c.blurb}</Text>
+                            ))}
+                        </View>
+                    ))}
+                </View>
+            )}
         </SheetModal>
     );
 };

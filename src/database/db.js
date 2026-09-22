@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -421,6 +421,19 @@ export const initDB = async () => {
         if (cur < 10) await migrateToV10(db);
         if (cur < 11) await migrateToV11(db);
         if (cur < 12) await migrateToV12(db);
+        if (cur < 13) await db.execAsync(`
+            CREATE TABLE IF NOT EXISTS MaiTranscriptRuns (
+                episode_id TEXT PRIMARY KEY REFERENCES Episodes(id) ON DELETE CASCADE,
+                model TEXT NOT NULL, created_at INTEGER NOT NULL,
+                cost_usd REAL, audio_seconds REAL
+            );
+            CREATE TABLE IF NOT EXISTS MaiTranscriptSegments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id TEXT NOT NULL REFERENCES Episodes(id) ON DELETE CASCADE,
+                start_time INTEGER NOT NULL, end_time INTEGER NOT NULL, text TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_mai_segments ON MaiTranscriptSegments(episode_id, start_time);
+        `);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

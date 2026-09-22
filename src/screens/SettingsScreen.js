@@ -7,6 +7,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
+import { openDatabaseContext } from '../database/db';
 import { SHERPA_MODELS, ensureSherpaModel, isSherpaModelDownloaded, deleteSherpaModel } from '../services/downloadService';
 import { resetService } from '../services/whisperService';
 import { ASK_DELETE_ON_FINISH_KEY } from '../services/playbackService';
@@ -20,6 +22,7 @@ import {
     AI_AUTO_KEY, AI_FIX_KEY, AI_MODEL_KEY, AI_MODELS, DEFAULT_AI_MODEL, OPENAI_KEY_KEY, estimateEpisodeCost,
 } from '../services/aiService';
 import { showAlert } from '../components/AppAlert';
+import { OPENROUTER_KEY } from '../services/maiTranscriptionService';
 import { useTheme, useStyles, withAlpha, type, THEMES, THEME_OPTIONS } from '../theme';
 
 // Learning-focused copy overrides for the model picker.
@@ -99,8 +102,50 @@ const SettingsScreen = () => {
     const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
     const [aiAuto, setAiAuto] = useState(false);
     const [aiFix, setAiFix] = useState(true);
+    const [openRouterKey, setOpenRouterKey] = useState('');
+    const [openRouterDraft, setOpenRouterDraft] = useState('');
+    const [openRouterEditing, setOpenRouterEditing] = useState(false);
+    const [exportingUsage, setExportingUsage] = useState(false);
+
+    const exportTranscriptionUsage = async () => {
+        if (exportingUsage) return;
+        setExportingUsage(true);
+        try {
+            const db = await openDatabaseContext();
+            const rows = await db.getAllAsync(
+                `SELECT duration, downloaded_at, release_date, is_downloaded,
+                        has_transcript, transcript_source
+                   FROM Episodes`
+            );
+            const csv = [
+                'duration_seconds,downloaded_at_ms,release_date,is_downloaded,has_transcript,transcript_source',
+                ...rows.map(row => [
+                    Number(row.duration) || 0,
+                    Number(row.downloaded_at) || '',
+                    row.release_date && /^\d{4}-\d{2}-\d{2}/.test(row.release_date)
+                        ? row.release_date.slice(0, 10) : '',
+                    Number(row.is_downloaded) || 0,
+                    Number(row.has_transcript) || 0,
+                    row.transcript_source === 'book' ? 'book' : (row.transcript_source ? 'asr' : ''),
+                ].join(',')),
+            ].join('\n') + '\n';
+            const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+            if (!permission.granted) return;
+            const date = new Date().toISOString().slice(0, 10);
+            const uri = await FileSystem.StorageAccessFramework.createFileAsync(
+                permission.directoryUri, `podink-transcription-usage-${date}.csv`, 'text/csv'
+            );
+            await FileSystem.writeAsStringAsync(uri, csv);
+            showAlert('Usage exported', `${rows.length} episodes saved to the folder you selected. Share the CSV to calculate monthly transcription costs.`);
+        } catch (error) {
+            showAlert('Export failed', error?.message || String(error));
+        } finally {
+            setExportingUsage(false);
+        }
+    };
 
     useEffect(() => { loadPreference(); loadLearningPrefs(); loadAssistantPrefs(); }, []);
+    useEffect(() => { AsyncStorage.getItem(OPENROUTER_KEY).then(k => setOpenRouterKey((k || '').trim())).catch(() => {}); }, []);
     useEffect(() => { checkModelStatus(selectedModel); }, [selectedModel]);
 
     // A stack screen since 2.3.0 (opened from the header gear), so it styles
@@ -714,7 +759,7 @@ const SettingsScreen = () => {
             <View style={styles.infoBanner}>
                 <Icon name="info" size={13} color={colors.warning} style={{ marginTop: 1 }} />
                 <Text style={styles.infoText}>
-                    A summary, chapters and transcript corrections written by a model at OpenAI, and — when a translation reads wrong — a second reading of that sentence with the lines before it, from the translation card. Text is sent there, with your own key, only when you ask. Nothing else leaves the phone.
+                    A summary, chapters and transcript corrections written by a model at OpenAI, and — when a translation reads wrong — a second reading of that sentence with the lines before it, from the translation card. Text is sent there, with your own key, only when you ask. Audio leaves the phone only for a MAI test you start below.
                 </Text>
             </View>
 
@@ -865,7 +910,7 @@ const SettingsScreen = () => {
                         accessibilityLabel="Ask to delete a downloaded episode when it finishes"
                     />
                 </View>
-                <View style={styles.settingRow}>
+                <View style={[styles.settingRow, styles.rowBorder]}>
                     <View style={{ flex: 1 }}>
                         <View style={styles.settingHead}>
                             <Icon name="clock" size={15} color={colors.accent} />
@@ -884,6 +929,24 @@ const SettingsScreen = () => {
                         accessibilityLabel="Automatically delete finished episodes that have not been replayed for a week"
                     />
                 </View>
+                <TouchableOpacity
+                    style={styles.settingRow}
+                    onPress={exportTranscriptionUsage}
+                    disabled={exportingUsage}
+                    accessibilityRole="button"
+                    accessibilityLabel="Export transcription usage CSV"
+                >
+                    <View style={{ flex: 1 }}>
+                        <View style={styles.settingHead}>
+                            <Icon name="download" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Export transcription usage</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>
+                            Save episode dates, durations and transcript status as a CSV. Titles and transcript text are excluded.
+                        </Text>
+                    </View>
+                    {exportingUsage && <ActivityIndicator size="small" color={colors.accent} />}
+                </TouchableOpacity>
             </View>
 
             {/* Section: Model picker */}
@@ -987,6 +1050,58 @@ const SettingsScreen = () => {
                     </TouchableOpacity>
                 )
             )}
+
+            <Text style={styles.sectionLabel}>CLOUD TRANSCRIPTION TEST</Text>
+            <View style={styles.card}>
+                <View style={styles.settingBlock}>
+                    <View style={styles.settingHead}>
+                        <Icon name="cloud" size={15} color={colors.accent} />
+                        <Text style={styles.settingTitle}>MAI-Transcribe-2 via OpenRouter</Text>
+                    </View>
+                    <Text style={[styles.settingHint, styles.indent]}>
+                        About $0.10 per hour of podcast audio. Open a downloaded podcast and tap “Test with MAI” to send its audio. Automatic transcription still runs on this device.
+                    </Text>
+                    <View style={[styles.settingHead, { marginTop: 16 }]}>
+                        <Icon name="key" size={15} color={colors.accent} />
+                        <Text style={styles.settingTitle}>OpenRouter API key</Text>
+                    </View>
+                    {openRouterEditing || !openRouterKey ? (
+                        <View style={[styles.tokenRow, styles.indent]}>
+                            <TextInput
+                                style={styles.tokenInput}
+                                value={openRouterDraft}
+                                onChangeText={setOpenRouterDraft}
+                                placeholder="sk-or-v1-…"
+                                placeholderTextColor={colors.textFaint}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                secureTextEntry
+                                accessibilityLabel="OpenRouter API key"
+                            />
+                            <TouchableOpacity
+                                style={[styles.smallBtn, !openRouterDraft.trim() && styles.smallBtnDisabled]}
+                                disabled={!openRouterDraft.trim()}
+                                onPress={async () => {
+                                    const key = openRouterDraft.trim();
+                                    await AsyncStorage.setItem(OPENROUTER_KEY, key);
+                                    setOpenRouterKey(key);
+                                    setOpenRouterDraft('');
+                                    setOpenRouterEditing(false);
+                                }}
+                                accessibilityRole="button"
+                            ><Text style={styles.smallBtnText}>Save</Text></TouchableOpacity>
+                            {!!openRouterKey && <TouchableOpacity style={styles.smallBtnGhost} onPress={() => setOpenRouterEditing(false)} accessibilityRole="button"><Text style={styles.smallBtnGhostText}>Cancel</Text></TouchableOpacity>}
+                        </View>
+                    ) : (
+                        <View style={[styles.tokenRow, styles.indent]}>
+                            <Icon name="check-circle" size={14} color={colors.success} />
+                            <Text style={styles.tokenSaved}>{maskToken(openRouterKey)}</Text>
+                            <TouchableOpacity style={styles.smallBtnGhost} onPress={() => setOpenRouterEditing(true)} accessibilityRole="button"><Text style={styles.smallBtnGhostText}>Change</Text></TouchableOpacity>
+                            <TouchableOpacity style={styles.smallBtnGhost} onPress={async () => { await AsyncStorage.removeItem(OPENROUTER_KEY); setOpenRouterKey(''); }} accessibilityRole="button"><Text style={[styles.smallBtnGhostText, { color: colors.danger }]}>Remove</Text></TouchableOpacity>
+                        </View>
+                    )}
+                </View>
+            </View>
 
             {/* Section: Troubleshooting */}
             <Text style={styles.sectionLabel}>TROUBLESHOOTING</Text>

@@ -315,7 +315,7 @@ const DownloadedTimeline = ({ navigation }) => {
 
     const handleRemoveTranscript = useCallback(async (episode) => {
         log('UI', 'Remove transcript', { id: episode.id, title: episode.title });
-        await deleteEpisodeTranscript(episode.id);
+        await deleteEpisodeTranscript(episode.id, { includeMai: true });
         notifyLibraryChange({ type: 'transcript-delete', episodeId: episode.id });
         loadData();
     }, [loadData]);

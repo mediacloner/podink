@@ -345,10 +345,47 @@ export const getTranscriptsForEpisode = async (episodeId) => {
   );
 };
 
-export const deleteEpisodeTranscript = async (id) => {
+/** A completed cloud comparison is swapped atomically; failed runs leave the
+ * previous result and the on-device transcript untouched. */
+export const saveMaiTranscript = async (episodeId, segments, { costUsd = null, audioSeconds = null } = {}) => {
+  if (!segments.length) throw new Error('MAI returned no speech');
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync('DELETE FROM MaiTranscriptSegments WHERE episode_id = ?', [episodeId]);
+    for (let i = 0; i < segments.length; i += TRANSCRIPT_INSERT_BATCH) {
+      const block = segments.slice(i, i + TRANSCRIPT_INSERT_BATCH);
+      const params = [];
+      for (const r of block) params.push(episodeId, r.start, r.end, r.text);
+      await db.runAsync(
+        `INSERT INTO MaiTranscriptSegments (episode_id, start_time, end_time, text) VALUES ${block.map(() => '(?, ?, ?, ?)').join(', ')}`,
+        params
+      );
+    }
+    await db.runAsync(
+      `INSERT OR REPLACE INTO MaiTranscriptRuns (episode_id, model, created_at, cost_usd, audio_seconds)
+       VALUES (?, 'microsoft/mai-transcribe-2', ?, ?, ?)`,
+      [episodeId, Date.now(), costUsd, audioSeconds]
+    );
+  });
+};
+
+export const getMaiTranscript = async (episodeId) => {
+  const db = await openDatabaseContext();
+  const [run, segments] = await Promise.all([
+    db.getFirstAsync('SELECT * FROM MaiTranscriptRuns WHERE episode_id = ?', [episodeId]),
+    db.getAllAsync('SELECT * FROM MaiTranscriptSegments WHERE episode_id = ? ORDER BY start_time', [episodeId]),
+  ]);
+  return { run, segments };
+};
+
+export const deleteEpisodeTranscript = async (id, { includeMai = false } = {}) => {
   const db = await openDatabaseContext();
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
+    if (includeMai) {
+      await db.runAsync(`DELETE FROM MaiTranscriptSegments WHERE episode_id = ?`, [id]);
+      await db.runAsync(`DELETE FROM MaiTranscriptRuns WHERE episode_id = ?`, [id]);
+    }
     await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [id]);
@@ -570,6 +607,8 @@ export const deleteEpisodeLocalData = async (id) => {
   // UI says has no transcript. Delete Transcripts first (FTS delete trigger).
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM Transcripts WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM MaiTranscriptSegments WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM MaiTranscriptRuns WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [id]);

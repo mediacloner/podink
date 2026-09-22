@@ -223,6 +223,10 @@ export const translateParagraphs = async ({ paragraphs, lang, before = '', signa
 const MAX_PART_CHARS = 110000;    // ≈ 28k tokens — one request for anything up to ~3 hours
 const NOTES_MAX_CHARS = 3000;
 
+/** The episode's own notes as plain text, cut to what one request carries. */
+export const episodeNotes = (ep) =>
+    showNotesPlainText(ep?.description || '').trim().slice(0, NOTES_MAX_CHARS);
+
 const describeEpisode = (ep, durationMs, notes) => [
     `Podcast: ${ep.podcast_title || ''}`,
     `Episode: ${ep.title || ''}`,
@@ -244,6 +248,15 @@ const splitParts = (lines) => {
 const partLabel = (i, n, lines) => (n > 1
     ? `This is part ${i + 1} of ${n} of the episode, from ${lines[0].slice(1, lines[0].indexOf(']'))} to ${lines[lines.length - 1].slice(1, lines[lines.length - 1].indexOf(']'))}.\n`
     : '');
+
+/** Everything one reading of a transcript needs: the sentences it is cut
+ *  into, the head that names the episode, and the parts of the request. */
+const preparePass = (ep, rows, notes) => {
+    const sentences = sentencesWithTimes(rows);
+    const lines = sentences.map(s => `[${formatClock(s.startMs)}] ${s.text}`);
+    const durationMs = ep.duration > 0 ? ep.duration * 1000 : (sentences[sentences.length - 1]?.endMs || 0);
+    return { sentences, lines, durationMs, head: describeEpisode(ep, durationMs, notes), parts: splitParts(lines) };
+};
 
 // ─── Answers → rows ──────────────────────────────────────────────────────────
 
@@ -326,6 +339,52 @@ const acceptFixes = (raw, rows) => {
 
 const _running = new Map();   // episodeId → Promise
 
+/**
+ * The summary and chapters for one transcript, by whoever `request` asks —
+ * nothing is written to the database. `request` makes one structured call
+ * ({ instructions, schemaName, schema, input, maxOutputTokens }) and resolves
+ * { json, usage }, the shape api/openai.requestJson returns.
+ *
+ * The comparison (services/maiChapterTest.js) hands it an OpenRouter request
+ * and runs the phone's transcript and MAI's through this same reading — same
+ * model, same notes, same part splitting — so what differs between the two
+ * answers is the transcript and nothing else.
+ *
+ * `prepared` is preparePass's answer when the caller already has it.
+ */
+export const chaptersAndSummary = async ({ ep, rows, notes = '', request, prepared }) => {
+    const { sentences, durationMs, head, parts } = prepared || preparePass(ep, rows, notes);
+    const usage = { input: 0, output: 0, cached: 0 };
+    const add = (u) => {
+        usage.input += u?.input || 0; usage.output += u?.output || 0; usage.cached += u?.cached || 0;
+    };
+    const rawChapters = [];
+    const partSummaries = [];
+    for (let i = 0; i < parts.length; i++) {
+        const r = await request({
+            instructions: CHAPTERS_INSTRUCTIONS, schemaName: 'episode_chapters', schema: CHAPTERS_SCHEMA,
+            input: `${head}\n\n${partLabel(i, parts.length, parts[i])}Transcript:\n${parts[i].join('\n')}`,
+            maxOutputTokens: 5000,
+        });
+        add(r.usage);
+        rawChapters.push(...(r.json?.chapters || []));
+        if (r.json?.summary) partSummaries.push(String(r.json.summary).trim());
+    }
+    let summary = partSummaries.join('\n\n');
+    if (partSummaries.length > 1) {
+        const r = await request({
+            instructions: MERGE_INSTRUCTIONS, schemaName: 'episode_summary', schema: SUMMARY_SCHEMA,
+            input: `${head}\n\n${partSummaries.map((s, i) => `Part ${i + 1}: ${s}`).join('\n\n')}`,
+            maxOutputTokens: 1000,
+        });
+        add(r.usage);
+        summary = String(r.json?.summary || summary).trim();
+    }
+    return {
+        summary, chapters: snapChapters(rawChapters, sentences, durationMs),
+        sentences, parts: parts.length, usage,
+    };
+};
 
 /**
  * Summary, chapters and (when the switch is on) fixes for one episode,
@@ -350,41 +409,20 @@ export const analyzeEpisode = (episodeId, { force = false } = {}) => {
         await indexEpisodeNames(episodeId).catch(() => null);
         const rows = await getNameCorrectedTranscript(episodeId);
         if (!rows.length) throw tagged('notranscript', 'This episode has no transcript yet.');
-        const sentences = sentencesWithTimes(rows);
-        const lines = sentences.map(s => `[${formatClock(s.startMs)}] ${s.text}`);
-        const durationMs = ep.duration > 0 ? ep.duration * 1000 : (sentences[sentences.length - 1]?.endMs || 0);
-        const notes = showNotesPlainText(ep.description || '').trim().slice(0, NOTES_MAX_CHARS);
+        const notes = episodeNotes(ep);
         const model = await getAIModel();
         const wantFixes = await isFixTranscriptOn();
-        const head = describeEpisode(ep, durationMs, notes);
-        const parts = splitParts(lines);
+        const prepared = preparePass(ep, rows, notes);
+        const { sentences, head, parts } = prepared;
         const usage = { input: 0, output: 0, cached: 0 };
         const add = (u) => { usage.input += u.input; usage.output += u.output; usage.cached += u.cached; };
 
-        // Chapters + summary, per part.
-        const rawChapters = [];
-        const partSummaries = [];
-        for (let i = 0; i < parts.length; i++) {
-            const r = await requestJson({
-                apiKey, model, instructions: CHAPTERS_INSTRUCTIONS, schemaName: 'episode_chapters', schema: CHAPTERS_SCHEMA,
-                input: `${head}\n\n${partLabel(i, parts.length, parts[i])}Transcript:\n${parts[i].join('\n')}`,
-                maxOutputTokens: 5000,
-            });
-            add(r.usage);
-            rawChapters.push(...(r.json?.chapters || []));
-            if (r.json?.summary) partSummaries.push(String(r.json.summary).trim());
-        }
-        let summary = partSummaries.join('\n\n');
-        if (partSummaries.length > 1) {
-            const r = await requestJson({
-                apiKey, model, instructions: MERGE_INSTRUCTIONS, schemaName: 'episode_summary', schema: SUMMARY_SCHEMA,
-                input: `${head}\n\n${partSummaries.map((s, i) => `Part ${i + 1}: ${s}`).join('\n\n')}`,
-                maxOutputTokens: 1000,
-            });
-            add(r.usage);
-            summary = String(r.json?.summary || summary).trim();
-        }
-        const chapters = snapChapters(rawChapters, sentences, durationMs);
+        // Chapters + summary, per part — the reading the comparison shares.
+        const pass = await chaptersAndSummary({
+            ep, rows, notes, prepared, request: (req) => requestJson({ apiKey, model, ...req }),
+        });
+        add(pass.usage);
+        const { summary, chapters } = pass;
 
         // Fixes, per part.
         let fixes = [], dropped = [];
