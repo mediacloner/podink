@@ -154,7 +154,7 @@ const makeStyles = (colors) => StyleSheet.create({
     list: { borderRadius: radii.m, borderWidth: 0.5, borderColor: colors.hairline, overflow: 'hidden' },
     row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 11, paddingHorizontal: 12 },
     rowBorder: { borderTopWidth: 0.5, borderTopColor: colors.hairline },
-    thumb: { width: 38, height: 38, borderRadius: 6, backgroundColor: colors.hairlineFaint },
+    thumb: { width: 38, height: 38, borderRadius: 6, backgroundColor: colors.hairlineFaint, overflow: 'hidden' },
     thumbEmpty: { alignItems: 'center', justifyContent: 'center' },
     thumbImage: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 6 },
     // A portrait is taller than the box, so the box shows its top — a face

@@ -31,7 +31,7 @@ import { searchGoodreads } from '../api/goodreads';
 import { searchOpenLibraryByTitle } from '../api/openLibrary';
 import { searchITunes } from '../api/itunes';
 import { getTmdbKey, searchTmdb } from '../api/tmdb';
-import { fetchWikipediaSummary, searchWikipediaTitles } from '../api/wikipedia';
+import { fetchWikipediaSummary, isListPage, searchWikipediaTitles } from '../api/wikipedia';
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
@@ -163,8 +163,9 @@ const fromWikipedia = async (entity, signal) => {
         if (!title || seen.has(key)) return null;
         seen.add(key);
         const page = await fetchWikipediaSummary(title, 'en', signal).catch(() => null);
-        // A disambiguation page is not an answer — it is the question again.
-        if (!page || page.disambiguation) return null;
+        // A disambiguation page is not an answer — it is the question again;
+        // nor is a list ("Fausta" → a page of everyone called Fausta).
+        if (!page || isListPage(page)) return null;
         return agrees(page, entity.hint) ? page : null;
     };
 
