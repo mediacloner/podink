@@ -125,8 +125,14 @@ const accept = (raw, rows) => {
         const where = locate(rows, surface, canonical, e.context);
         if (!where) continue;                       // not in the text: dropped
         seen.add(key);
+        // The words around a mention outrank the model's guess at its kind: a
+        // show introduced as "the podcast Gone Medieval" is a podcast, however
+        // much it is trailed like television (user: "gone medieval is a
+        // podcast a continues match like a television").
+        let type = e.type;
+        if ((type === 'tv' || type === 'album') && /\bpodcasts?\b/i.test(`${e.hint} ${e.context}`)) type = 'podcast';
         kept.push({
-            type: e.type, surface: where.heard, canonical,
+            type, surface: where.heard, canonical,
             hint: trim(e.hint, 200), context: trim(e.context, 400),
             count: where.count, firstMs: where.firstMs,
         });
@@ -319,9 +325,14 @@ export const resolveEntity = async (entity, { tmdbKey = '', said = '', signal } 
             return (await fromITunes(entity, 'podcast', signal)) || (await fromWikipedia(entity, signal));
         }
         if (entity.type === 'tv') {
-            return (tmdbKey ? await fromTmdb(entity, 'tv', tmdbKey, signal) : null)
-                || (await fromITunes(entity, 'tv', signal))
-                || (await fromWikipedia(entity, signal));
+            const screen = (tmdbKey ? await fromTmdb(entity, 'tv', tmdbKey, signal) : null)
+                || (await fromITunes(entity, 'tv', signal));
+            if (screen) return screen;
+            // Not on any screen, but on Apple Podcasts: the model called a
+            // podcast television. The answer carries the corrected kind.
+            const pod = await fromITunes(entity, 'podcast', signal);
+            if (pod) return { ...pod, type: 'podcast' };
+            return await fromWikipedia(entity, signal);
         }
         if (entity.type === 'film') {
             return (tmdbKey ? await fromTmdb(entity, 'movie', tmdbKey, signal) : null)
