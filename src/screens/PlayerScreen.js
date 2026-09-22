@@ -22,6 +22,7 @@ import {
 } from '../services/bookService';
 import { getEpisodeById, getEpisodeBooks, getMaiTranscript } from '../database/queries';
 import CloudTranscriptSheet from '../components/transcript/CloudTranscriptSheet';
+import { buildTranscriptExport, shareText } from '../components/transcript/share';
 import { indexEpisodeBooks } from '../services/bookIndex';
 import { getCorrectedTranscript, indexEpisodeNames } from '../services/nameIndex';
 import ProgrammeGuide from '../components/ProgrammeGuide';
@@ -35,7 +36,6 @@ import {
 import { getStation, stationIdFromFeedUrl } from '../services/radioStations';
 import { stationLocalTime } from '../services/radioSchedule';
 import { artworkSource } from '../api/userAgent';
-import { buildTranscriptExport, shareText } from '../components/transcript/share';
 import ChapterSheet from '../components/transcript/ChapterSheet';
 import { extractColor, softenForHeader } from '../services/colorExtractor';
 import { useTheme, useStyles, radii, withAlpha, THEMES } from '../theme';
@@ -526,13 +526,14 @@ const PlayerScreen = ({ route, navigation }) => {
 
     const displaySegments = viewMai && mai.segments.length ? mai.segments : segments;
     const hasTranscript = !!ep?.has_transcript || displaySegments.length > 0;
-    // Header share glyph: the whole transcript as text, one timed line per
-    // sentence, through the system share sheet (notes, mail, an assistant).
+    // The whole transcript as text, one timed line per sentence, through the
+    // system share sheet (notes, mail, an assistant) — from the transcript
+    // card, where the text itself is chosen (user: "eliminate sharing text
+    // icon its not necessary", then "include inside of cloud transcription").
     const shareTranscript = useCallback(() => {
         if (!ep || !displaySegments.length) return;
         shareText(buildTranscriptExport(ep, displaySegments), 'Share transcript');
     }, [ep, displaySegments]);
-
     // A chapter tapped in the sheet: the transcript's own seek (it also
     // re-engages follow mode and moves the player).
     const seekFromChapter = useCallback((ms) => {
@@ -645,7 +646,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         </View>
                     )}
                 </View>
-                {!isRadio && !isImportedEpisode(ep) && !!ep?.local_audio_path && (
+                {!isRadio && (displaySegments.length > 0 || (!isImportedEpisode(ep) && !!ep?.local_audio_path)) && (
                     <TouchableOpacity
                         onPress={() => setCloudSheet(true)}
                         hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
@@ -665,17 +666,6 @@ const PlayerScreen = ({ route, navigation }) => {
                         accessibilityLabel='Summary and chapters'
                     >
                         <Icon name='list' size={18} color={withAlpha(headerFg, 0.75)} />
-                    </TouchableOpacity>
-                )}
-                {!isRadio && hasTranscript && displaySegments.length > 0 && (
-                    <TouchableOpacity
-                        onPress={shareTranscript}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        style={styles.radioStop}
-                        accessibilityRole='button'
-                        accessibilityLabel='Share the transcript'
-                    >
-                        <Icon name='share' size={18} color={withAlpha(headerFg, 0.75)} />
                     </TouchableOpacity>
                 )}
                 {isRadio && (
@@ -820,6 +810,8 @@ const PlayerScreen = ({ route, navigation }) => {
                     mai={mai}
                     viewCloud={viewMai}
                     onViewCloud={setViewMai}
+                    canCloud={!isImportedEpisode(ep) && !!ep?.local_audio_path}
+                    onShare={displaySegments.length > 0 ? shareTranscript : null}
                     onChanged={() => {
                         refetchMai().catch(() => {});
                         refetchTranscript();

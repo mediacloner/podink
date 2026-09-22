@@ -16,7 +16,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
 import { radii, useStyles, useTheme, withAlpha } from '../../theme';
-import SheetModal from './SheetModal';
+import SheetModal, { SheetIconButton } from './SheetModal';
 import { showAlert } from '../AppAlert';
 import { deleteMaiTranscript, promoteMaiTranscript } from '../../database/queries';
 import { cancelMaiTest, estimateMaiCost, isMaiTesting, testMaiTranscription } from '../../services/maiTranscriptionService';
@@ -28,7 +28,7 @@ const day = (ms) => (ms ? new Date(ms).toLocaleDateString(undefined, { day: 'num
 
 const CloudTranscriptSheet = ({
     visible, onClose, episode, localSegments = [], mai = { run: null, segments: [] },
-    viewCloud = false, onViewCloud = () => {}, onChanged = () => {},
+    viewCloud = false, onViewCloud = () => {}, onChanged = () => {}, onShare = null, canCloud = true,
 }) => {
     const { colors } = useTheme();
     const st = useStyles(makeStyles);
@@ -123,8 +123,10 @@ const CloudTranscriptSheet = ({
 
     const header = (
         <View style={st.labelRow}>
-            <Icon name='cloud' size={13} color={colors.textMuted} />
-            <Text style={st.label}>Cloud transcription</Text>
+            <Icon name='file-text' size={13} color={colors.textMuted} />
+            <Text style={st.label}>Transcript</Text>
+            <View style={{ flex: 1 }} />
+            {!!onShare && <SheetIconButton icon='share-2' label='Share the transcript' onPress={onShare} />}
         </View>
     );
 
@@ -217,6 +219,10 @@ const CloudTranscriptSheet = ({
                         </TouchableOpacity>
                     </View>
                 </View>
+            ) : !canCloud ? (
+                <Text style={[st.body, { marginTop: 18 }]}>
+                    Cloud transcription needs the episode’s own audio file, downloaded on this phone.
+                </Text>
             ) : (
                 <View style={{ gap: 14, marginTop: 18 }}>
                     <Text style={st.body}>
