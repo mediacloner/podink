@@ -653,15 +653,17 @@ const PlayerScreen = ({ route, navigation }) => {
                     <TouchableOpacity
                         onPress={() => stopRadioSession()}
                         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        style={styles.radioStop}
+                        // A solid red disc with a light power mark, whatever the
+                        // header's tint: the bright red of the dark palette on a
+                        // dark header, the paper theme's own on a light one. A red
+                        // icon alone was too faint on the tinted header (user:
+                        // "the button of shutdown in radio have to be in red",
+                        // then "I can't see very clear, can you invert the button").
+                        style={[styles.radioStop, { backgroundColor: headerIsDark ? THEMES.dark.danger : colors.danger }]}
                         accessibilityRole='button'
                         accessibilityLabel='Stop the radio'
                     >
-                        {/* Red, whatever the header's tint: the bright red of the
-                            dark palette on a dark header, the paper theme's own
-                            on a light one (user: "the button of shutdown in radio
-                            have to be in red"). */}
-                        <Icon name='power' size={18} color={headerIsDark ? THEMES.dark.danger : colors.danger} />
+                        <Icon name='power' size={17} color={headerIsDark ? THEMES.dark.onAccent : colors.onAccent} />
                     </TouchableOpacity>
                 )}
             </View>
@@ -851,8 +853,13 @@ const makeStyles = (colors) => StyleSheet.create({
         textShadowRadius: 3,
     },
 
+    // The header's round icon buttons; the radio stop fills its disc red.
     radioStop: {
-        padding: 6,
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     radioLogoTile: {
         width: 88,

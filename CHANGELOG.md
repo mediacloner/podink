@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Changed
-- **The stop button of a radio station is red.** The power icon in the Player header was drawn in the header's text colour like the other controls; it is now red in either theme, whatever the header's tint (user: “the button of shutdown in radio have to be in red”).
+- **The stop button of a radio station is a red disc.** The power icon in the Player header was drawn in the header's text colour like the other controls; it now sits light on a solid red disc in either theme, whatever the header's tint (user: “the button of shutdown in radio have to be in red”, then “I can't see very clear, can you invert the button”).
 
 ## [4.8.1] - 2026-09-22
 
