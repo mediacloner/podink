@@ -9,6 +9,15 @@ import { USER_AGENT } from './userAgent';
 // Wikimedia asks every client for an identifying User-Agent.
 export const WIKIPEDIA_HEADERS = { 'User-Agent': USER_AGENT, Accept: 'application/json' };
 
+/** An <Image> source for a picture that may be Wikimedia's: their servers
+ *  refuse an image request without a real User-Agent, and React Native's
+ *  default is one they refuse. Other hosts get the bare URL. */
+export const imageSourceFor = (uri) => (
+    /(?:wikimedia|wikipedia)\.org\//.test(String(uri || ''))
+        ? { uri, headers: { 'User-Agent': USER_AGENT } }
+        : { uri }
+);
+
 const slugOf = (title) => encodeURIComponent(title.trim().replace(/ /g, '_'));
 const summaryUrl = (lang, title) => `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${slugOf(title)}`;
 const wikitextUrl = (lang, title) =>

@@ -18,6 +18,7 @@ import { radii, useStyles, useTheme } from '../../theme';
 import SheetModal, { SheetIconButton } from './SheetModal';
 import { shareText } from './share';
 import { TYPE_ICON, TYPE_LABEL } from '../../services/entityIndex';
+import { imageSourceFor } from '../../api/wikipedia';
 
 const FOLD_CHARS = 420;
 
@@ -132,7 +133,7 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
             <View style={st.head}>
                 {entity.image_url ? (
                     <Image
-                        source={{ uri: entity.image_url }}
+                        source={imageSourceFor(entity.image_url)}
                         style={[st.image, portrait && st.imagePortrait]}
                         accessibilityIgnoresInvertColors
                     />

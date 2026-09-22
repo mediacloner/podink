@@ -12,6 +12,7 @@ import SheetModal, { SheetIconButton } from './SheetModal';
 import { getEpisodeEntities } from '../../database/queries';
 import { ENTITY_TYPES, TYPE_ICON, TYPE_LABEL, indexEpisodeEntities, isIndexingEntities } from '../../services/entityIndex';
 import { formatClock } from '../../services/sentenceBoundary';
+import { imageSourceFor } from '../../api/wikipedia';
 
 const PLURAL = { person: 'People', place: 'Places', book: 'Books', film: 'Films', tv: 'Television', album: 'Records' };
 
@@ -117,7 +118,7 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings
                                     <Icon name={TYPE_ICON[item.type] || 'tag'} size={14} color={colors.textMuted} />
                                     {!!item.image_url && (
                                         <Image
-                                            source={{ uri: item.image_url }}
+                                            source={imageSourceFor(item.image_url)}
                                             style={st.thumbImage}
                                             accessibilityIgnoresInvertColors
                                         />
