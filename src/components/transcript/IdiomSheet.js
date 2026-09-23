@@ -35,7 +35,10 @@ const IdiomSheet = ({ data, lang = 'es', onClose, onReplay, onDictionary }) => {
     const st = useStyles(makeStyles);
     const visible = !!data;
     const phrase = data?.phrase || null;
-    // The meaning in the learner's language: idle | loading | ready { text } | error { message }
+    // The whole explanation in the learner's language — the meaning, why the
+    // words mean it, and what the speaker is saying with it here (user: "when
+    // you translate in spanish translate all explanations"):
+    // idle | loading | ready { meaning, origin, here } | error { message }
     const [tr, setTr] = useState({ status: 'idle' });
     useEffect(() => { setTr({ status: 'idle' }); }, [phrase?.id, lang]);
 
@@ -44,8 +47,13 @@ const IdiomSheet = ({ data, lang = 'es', onClose, onReplay, onDictionary }) => {
         if (tr.status === 'ready') { setTr({ status: 'idle' }); return; }
         setTr({ status: 'loading' });
         try {
-            const text = await fetchTranslation(phrase.meaning, lang);
-            setTr({ status: 'ready', text });
+            // One after another: Google throttles a burst from one address.
+            const out = {};
+            for (const key of ['meaning', 'origin', 'here']) {
+                const text = String(phrase[key] || '').trim();
+                out[key] = text ? await fetchTranslation(text, lang) : '';
+            }
+            setTr({ status: 'ready', ...out });
         } catch (e) {
             setTr({ status: 'error', message: translateErrorMessage(e) });
         }
@@ -114,7 +122,7 @@ const IdiomSheet = ({ data, lang = 'es', onClose, onReplay, onDictionary }) => {
                     ? <ActivityIndicator size='small' color={colors.accent} />
                     : <Text style={st.inlineLinkText}>{tr.status === 'ready' ? 'Hide translation' : `In ${langLabel(lang)}`}</Text>}
             </TouchableOpacity>
-            {tr.status === 'ready' && <Text style={st.translation}>{tr.text}</Text>}
+            {tr.status === 'ready' && !!tr.meaning && <Text style={st.translation}>{tr.meaning}</Text>}
             {tr.status === 'error' && <Text style={st.softError}>{tr.message}</Text>}
 
             {!!phrase.origin && (
@@ -122,6 +130,7 @@ const IdiomSheet = ({ data, lang = 'es', onClose, onReplay, onDictionary }) => {
                     <View style={st.divider} />
                     <Text style={st.sectionLabel}>Why it means this</Text>
                     <Text style={st.body}>{phrase.origin}</Text>
+                    {tr.status === 'ready' && !!tr.origin && <Text style={st.translation}>{tr.origin}</Text>}
                 </>
             )}
 
@@ -130,6 +139,7 @@ const IdiomSheet = ({ data, lang = 'es', onClose, onReplay, onDictionary }) => {
                     <View style={st.divider} />
                     <Text style={st.sectionLabel}>In this episode</Text>
                     <Text style={st.body}>{phrase.here}</Text>
+                    {tr.status === 'ready' && !!tr.here && <Text style={st.translation}>{tr.here}</Text>}
                 </>
             )}
 
