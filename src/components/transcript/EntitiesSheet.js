@@ -9,20 +9,21 @@ import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } fr
 import { Feather as Icon } from '@expo/vector-icons';
 import { radii, useStyles, useTheme, withAlpha } from '../../theme';
 import SheetModal, { SheetIconButton } from './SheetModal';
-import { getEpisodeBooks, getEpisodeEntities } from '../../database/queries';
+import { getEpisodeBooks, getEpisodeEntities, getEpisodePhrases } from '../../database/queries';
 import { ENTITY_TYPES, TYPE_ICON, TYPE_LABEL, indexEpisodeEntities, isIndexingEntities } from '../../services/entityIndex';
 import { formatClock } from '../../services/sentenceBoundary';
 import { imageSourceFor } from '../../api/wikipedia';
 
 const PLURAL = { person: 'People', place: 'Places', book: 'Books', film: 'Films', tv: 'Television', podcast: 'Podcasts', album: 'Records' };
 
-const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings }) => {
+const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, onOpenSettings }) => {
     const { colors } = useTheme();
     const st = useStyles(makeStyles);
     const epId = episode?.id;
 
     const [rows, setRows] = useState([]);
     const [books, setBooks] = useState([]);       // EpisodeBooks — the title scan's route
+    const [idioms, setIdioms] = useState([]);     // EpisodePhrases of kind idiom, from the same pass
     const [running, setRunning] = useState(false);
     const [percent, setPercent] = useState(0);
     const [error, setError] = useState(null);
@@ -31,6 +32,7 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings
         if (!epId) return;
         try { setRows(await getEpisodeEntities(epId)); } catch (_) { setRows([]); }
         try { setBooks(await getEpisodeBooks(epId)); } catch (_) { setBooks([]); }
+        try { setIdioms((await getEpisodePhrases(epId)).filter(p => p.kind === 'idiom')); } catch (_) { setIdioms([]); }
     }, [epId]);
 
     useEffect(() => {
@@ -118,7 +120,7 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings
             {!rows.length && !episode?.entities_indexed_at && !running && (
                 <View style={{ gap: 14 }}>
                     <Text style={st.body}>
-                        The people, places, books, films, programmes and records this episode talks about — each looked up where that kind of thing is catalogued, so a misheard name still finds the right one. About a cent for an hour of audio.
+                        The people, places, books, films, programmes and records this episode talks about — each looked up where that kind of thing is catalogued, so a misheard name still finds the right one — and the idioms and phrasal verbs its speakers use. About a cent for an hour of audio.
                     </Text>
                     <TouchableOpacity style={st.primaryBtn} onPress={run} activeOpacity={0.85} accessibilityRole='button'>
                         <Icon name='search' size={16} color={colors.onAccent} />
@@ -164,6 +166,37 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenSettings
                     </View>
                 </View>
             ))}
+
+            {/* The idioms the same reading found, each opening its own card
+                (user: "the list of idioms appear in list of people, films,
+                etc"). The phrasal verbs stay in the text only — there are
+                dozens an hour, and the underline is where they are wanted. */}
+            {idioms.length > 0 && (
+                <View style={{ marginBottom: 18 }}>
+                    <Text style={st.groupLabel}>Idioms</Text>
+                    <View style={st.list}>
+                        {idioms.map((item, i) => (
+                            <TouchableOpacity
+                                key={`idiom-${item.id}`}
+                                style={[st.row, i > 0 && st.rowBorder]}
+                                onPress={() => onOpenIdiom?.({ phrase: item, startMs: item.first_ms, contextText: item.context || '' })}
+                                activeOpacity={0.7}
+                                accessibilityRole='button'
+                                accessibilityLabel={`${item.base}, idiom`}
+                            >
+                                <View style={[st.thumb, st.thumbEmpty, st.thumbIdiom]}>
+                                    <Icon name='message-circle' size={14} color={colors.textMuted} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={st.name} numberOfLines={1}>{item.base}</Text>
+                                    <Text style={st.meta} numberOfLines={1}>{item.meaning}</Text>
+                                </View>
+                                {item.first_ms != null && <Text style={st.time}>{formatClock(item.first_ms)}</Text>}
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+            )}
         </SheetModal>
     );
 };
@@ -182,6 +215,7 @@ const makeStyles = (colors) => StyleSheet.create({
     rowBorder: { borderTopWidth: 0.5, borderTopColor: colors.hairline },
     thumb: { width: 38, height: 38, borderRadius: 6, backgroundColor: colors.hairlineFaint, overflow: 'hidden' },
     thumbEmpty: { alignItems: 'center', justifyContent: 'center' },
+    thumbIdiom: { backgroundColor: withAlpha(colors.phraseBand, colors.phraseBandAlpha) },
     thumbImage: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 6 },
     // A portrait is taller than the box, so the box shows its top — a face
     // sits in the upper part of nearly every painting, bust and photograph.

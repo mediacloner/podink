@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -450,6 +450,32 @@ const migrateToV16 = async (txn) => {
     }
 };
 
+// The phrases an episode's speakers use (5.5.0, services/entityIndex.js — the
+// same model pass that lists what it names): phrasal verbs, split or not
+// ("picked it up" → "pick up"), and idioms. `surface` is the transcript's
+// words, `base` the dictionary form a tap on any of them looks up; an idiom
+// also carries what it means (`meaning`), why its words mean that
+// (`origin`) and what it does in this sentence (`here`).
+const migrateToV17 = async (txn) => {
+    await txn.execAsync(
+        `CREATE TABLE IF NOT EXISTS EpisodePhrases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            episode_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            surface TEXT NOT NULL,
+            base TEXT NOT NULL,
+            meaning TEXT,
+            origin TEXT,
+            here TEXT,
+            context TEXT,
+            count INTEGER NOT NULL DEFAULT 1,
+            first_ms INTEGER,
+            FOREIGN KEY (episode_id) REFERENCES Episodes(id) ON DELETE CASCADE
+        );`
+    );
+    await txn.execAsync('CREATE INDEX IF NOT EXISTS idx_phrases_episode ON EpisodePhrases(episode_id, first_ms)');
+};
+
 const migrateToV15 = async (txn) => {
     // Statistics (5.1.0, screens/StatsScreen.js): what was really listened to,
     // and what the paid passes cost.
@@ -565,6 +591,7 @@ export const initDB = async () => {
         if (cur < 14) await migrateToV14(db);
         if (cur < 15) await migrateToV15(db);
         if (cur < 16) await migrateToV16(db);
+        if (cur < 17) await migrateToV17(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

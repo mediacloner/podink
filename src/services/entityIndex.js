@@ -24,6 +24,7 @@
  * rule the assistant's corrections live by.
  */
 import { getEpisodeById, recordApiSpend, replaceEpisodeEntities } from '../database/queries';
+import { acceptPhrases, PHRASE_INSTRUCTIONS, PHRASE_SCHEMA } from './phraseIndex';
 import { assistantRequest, costOf, episodeNotes, episodeParts } from './aiService';
 import { getCorrectedTranscript } from './nameIndex';
 import { countPhrase } from './nameText';
@@ -57,13 +58,16 @@ For each one give:
 
 Include what the speakers name and actually talk about. Leave out the presenter, the guests and the programme itself; a place named only to locate another place; a figure of speech; anything you cannot point to in the text. A recogniser misspelling belongs in "surface" with the true spelling in "canonical" — that pairing is the point of the list.
 
-At most ${MAX_PER_PART} for this text, the ones a listener might want to look up. Cover every kind that appears — a programme or a record named once still belongs on the list — rather than listing more of one kind. Return an empty list when there is nothing worth listing.`;
+At most ${MAX_PER_PART} for this text, the ones a listener might want to look up. Cover every kind that appears — a programme or a record named once still belongs on the list — rather than listing more of one kind. Return an empty list when there is nothing worth listing.
+
+${PHRASE_INSTRUCTIONS}`;
 
 const SCHEMA = {
     type: 'object',
     additionalProperties: false,
-    required: ['entities'],
+    required: ['entities', 'phrases'],
     properties: {
+        phrases: PHRASE_SCHEMA,
         entities: {
             type: 'array',
             items: {
@@ -385,19 +389,22 @@ export const indexEpisodeEntities = (episodeId, { request, model, onProgress = (
         const { head, parts } = episodeParts(ep, rows, notes);
         const usage = { input: 0, output: 0, cached: 0 };
         const raw = [];
+        const rawPhrases = [];
         for (let i = 0; i < parts.length; i++) {
             const r = await ask({
                 instructions: INSTRUCTIONS, schemaName: 'episode_entities', schema: SCHEMA,
                 input: `${head}\n\nTranscript:\n${parts[i].join('\n')}`,
-                maxOutputTokens: 4000,
+                maxOutputTokens: 12000,
             });
             usage.input += r.usage?.input || 0;
             usage.output += r.usage?.output || 0;
             usage.cached += r.usage?.cached || 0;
             raw.push(...(r.json?.entities || []));
+            rawPhrases.push(...(r.json?.phrases || []));
             onProgress(Math.round((i + 1) / (parts.length + 1) * 100));
         }
         const entities = accept(raw, rows);
+        const phrases = acceptPhrases(rawPhrases, rows);
 
         // The catalogues, a few at a time so none of them is hammered.
         const tmdbKey = await getTmdbKey();
@@ -413,7 +420,7 @@ export const indexEpisodeEntities = (episodeId, { request, model, onProgress = (
             onProgress(Math.round((parts.length + (i + block.length) / Math.max(1, entities.length)) / (parts.length + 1) * 100));
         }
 
-        await replaceEpisodeEntities(episodeId, entities);
+        await replaceEpisodeEntities(episodeId, entities, phrases);
         const cost = modelId ? costOf(modelId, usage) : 0;
         await recordApiSpend({
             provider: 'openai', service: 'entities', model: modelId, episodeId, episodeTitle: ep.title,
@@ -422,11 +429,14 @@ export const indexEpisodeEntities = (episodeId, { request, model, onProgress = (
         log('SERVICE', 'Entity scan finished', {
             id: episodeId, title: ep.title, model: modelId, parts: parts.length,
             proposed: raw.length, kept: entities.length, resolved,
+            phrasal: phrases.filter(p => p.kind === 'phrasal').length,
+            idioms: phrases.filter(p => p.kind === 'idiom').length,
+            phrasesProposed: rawPhrases.length,
             byType: ENTITY_TYPES.map(t => `${t}:${entities.filter(e => e.type === t).length}`).join(' '),
             tokensIn: usage.input, tokensOut: usage.output, cost: `$${cost.toFixed(4)}`, ms: Date.now() - t0,
         });
-        try { notifyLibraryChange({ type: 'entities-indexed', episodeId, count: entities.length }); } catch (_) {}
-        return { found: entities.length, resolved, cost };
+        try { notifyLibraryChange({ type: 'entities-indexed', episodeId, count: entities.length, phrases: phrases.length }); } catch (_) {}
+        return { found: entities.length, resolved, phrases: phrases.length, cost };
     })().finally(() => { _running.delete(episodeId); });
     _running.set(episodeId, p);
     return p;

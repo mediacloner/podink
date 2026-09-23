@@ -414,10 +414,22 @@ export const saveMaiTranscript = async (episodeId, segments, { costUsd = null, a
  * nothing. Resolves the number of rows written.
  */
 /** What the episode names, newest scan replacing the last (entityIndex.js). */
-export const replaceEpisodeEntities = async (episodeId, entities) => {
+export const replaceEpisodeEntities = async (episodeId, entities, phrases = null) => {
   const db = await openDatabaseContext();
   await runInTxn(db, async () => {
     await db.runAsync('DELETE FROM EpisodeEntities WHERE episode_id = ?', [episodeId]);
+    // The phrases come out of the same pass; null leaves the stored ones be.
+    if (phrases) {
+      await db.runAsync('DELETE FROM EpisodePhrases WHERE episode_id = ?', [episodeId]);
+      for (const p of phrases) {
+        await db.runAsync(
+          `INSERT INTO EpisodePhrases (episode_id, kind, surface, base, meaning, origin, here, context, count, first_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [episodeId, p.kind, p.surface, p.base, p.meaning || null, p.origin || null, p.here || null,
+           p.context || null, p.count || 1, p.firstMs ?? null]
+        );
+      }
+    }
     for (const e of entities) {
       await db.runAsync(
         `INSERT INTO EpisodeEntities (episode_id, type, surface, canonical, hint, context, count, first_ms,
@@ -437,6 +449,15 @@ export const getEpisodeEntities = async (episodeId) => {
   const db = await openDatabaseContext();
   return db.getAllAsync(
     'SELECT * FROM EpisodeEntities WHERE episode_id = ? ORDER BY first_ms IS NULL, first_ms',
+    [episodeId]
+  );
+};
+
+/** The phrasal verbs and idioms the entity pass found, in order of first use. */
+export const getEpisodePhrases = async (episodeId) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    'SELECT * FROM EpisodePhrases WHERE episode_id = ? ORDER BY first_ms IS NULL, first_ms',
     [episodeId]
   );
 };
@@ -483,7 +504,7 @@ export const promoteMaiTranscript = async (episodeId) => {
         params
       );
     }
-    for (const table of ['EpisodeNames', 'EpisodeFixes', 'EpisodeChapters', 'EpisodeBooks', 'EpisodeEntities']) {
+    for (const table of ['EpisodeNames', 'EpisodeFixes', 'EpisodeChapters', 'EpisodeBooks', 'EpisodeEntities', 'EpisodePhrases']) {
       await db.runAsync(`DELETE FROM ${table} WHERE episode_id = ?`, [episodeId]);
     }
     await db.runAsync(
@@ -527,6 +548,7 @@ export const deleteEpisodeTranscript = async (id, { includeMai = false } = {}) =
     await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeEntities WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodePhrases WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [id]);
     await db.runAsync(
       `UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL, names_indexed_at = NULL,
@@ -751,6 +773,7 @@ export const deleteEpisodeLocalData = async (id) => {
     await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeEntities WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodePhrases WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [id]);
     await db.runAsync(
       `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0, downloaded_at = NULL,

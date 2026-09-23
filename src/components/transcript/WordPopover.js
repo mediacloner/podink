@@ -119,7 +119,10 @@ export const normalizeWord = (raw) =>
 // the entry from one of the offline MDict dictionaries (penReader set), with
 // a dictionary selector in the footer. `data` is null (hidden) or
 // { word, prevWords, nextWords, nameRun?, startMs, contextText, contextTranslation?,
-// precedingText? } — contextTranslation is the sentence's translation when
+// precedingText?, phrase? } — `phrase` { base, surface, kind } when the tap
+// was on a phrasal verb the episode pass found (services/phraseIndex.js):
+// `word` is then its dictionary form and only that is looked up;
+// contextTranslation is the sentence's translation when
 // the caller already has it (a word tapped inside the translation card),
 // shown without a request; precedingText is the transcript just before the
 // sentence, sent along with the "ask an assistant" request as context.
@@ -277,9 +280,16 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         // Synchronous, but a tick later so the sheet starts sliding first.
         const t = setTimeout(() => {
             try {
+                // A known phrase is its own whole context: "pick up" is looked
+                // for as the verb "pick" followed by "up", so the dictionary
+                // lands on that heading and on nothing the sentence around it
+                // might have suggested.
+                const phraseWords = data?.phrase ? String(data.phrase.base).split(/\s+/).filter(Boolean) : null;
                 const query = override
                     ? { word: override.word, forceWord: true }
-                    : { word, prevWords: data?.prevWords || [], nextWords: data?.nextWords || [] };
+                    : phraseWords?.length > 1
+                        ? { word: phraseWords[0], prevWords: [], nextWords: phraseWords.slice(1) }
+                        : { word, prevWords: data?.prevWords || [], nextWords: data?.nextWords || [] };
                 const t0 = Date.now();
                 const res = lookupWord(dictId, query);
                 log('DICT', 'Lookup', {
@@ -364,7 +374,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
     const wikiCandidates = useMemo(() => (nameRun ? nameCandidates(nameRun) : []), [nameRun]);
     const capitalised = IS_CAPITALISED.test(word) && !/^I(?:['’]|$)/.test(word);
     const dictSettled = dict.status === 'ready' || dict.status === 'missing' || dict.status === 'none';
-    const wikiWanted = visible && !override && !!normalized && dictSettled
+    const wikiWanted = visible && !override && !data?.phrase && !!normalized && dictSettled
         && !FUNCTION_WORDS.has(normalized.replace(CLITIC, ''))
         && (capitalised ? ((nameRun?.prevWords || []).length > 0 || dict.status !== 'ready') : dict.status === 'missing');
     const wikiKey = wikiWanted && wikiCandidates.length ? `en:${wikiCandidates.join('|')}` : '';
@@ -690,6 +700,13 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                 </TouchableOpacity>
             </View>
             {!!lookup?.phonetic && !override && <Text style={st.phonetic}>{lookup.phonetic}</Text>}
+            {!!data?.phrase && !override && (
+                <Text style={st.phraseNote} numberOfLines={2}>
+                    {data.phrase.kind === 'idiom' ? 'Idiom' : 'Phrasal verb'}
+                    {String(data.phrase.surface || '').toLowerCase() !== String(data.phrase.base || '').toLowerCase()
+                        ? ` · heard as “${data.phrase.surface}”` : ''}
+                </Text>
+            )}
             <View style={st.langRow}>
                 <Text style={st.lang}>English</Text>
                 <Icon name='arrow-right' size={13} color={colors.textFaint} />
@@ -1047,6 +1064,7 @@ const makeStyles = (colors) => StyleSheet.create({
     wordRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 4 },
     word: { flex: 1, color: colors.textPrimary, fontSize: 30, fontWeight: '700', letterSpacing: -0.4 },
     phonetic: { color: colors.textMuted, fontSize: 14, marginBottom: 6 },
+    phraseNote: { color: colors.textMuted, fontSize: 13, fontStyle: 'italic', marginBottom: 6 },
     speakerBtn: {
         width: 36,
         height: 36,

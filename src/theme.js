@@ -64,6 +64,11 @@ const dark = {
     // brightest ink — white on cream glares on the dark page (user: "in dark
     // mode the text of highlight have to be like past text reader").
     nameInk: '#A09078',
+    // An idiom the episode uses sits on a soft green band; a phrasal verb is
+    // only underlined — there are dozens an hour, and a band on each would
+    // bury the names.
+    phraseBand: '#34C759',
+    phraseBandAlpha: 0.16,
     transcriptHighlightAlpha: 0,
 };
 
@@ -114,6 +119,8 @@ const paper = {
     nameBand: '#F9ECC0',
     nameBandAlpha: 0.7,
     nameInk: '#1B1814',
+    phraseBand: '#2E7D32',
+    phraseBandAlpha: 0.14,
 };
 
 export const THEMES = { dark, paper };
