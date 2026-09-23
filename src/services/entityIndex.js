@@ -25,7 +25,7 @@
  */
 import { getEpisodeById, recordApiSpend, replaceEpisodeEntities } from '../database/queries';
 import { acceptPhrases, PHRASE_INSTRUCTIONS, PHRASE_SCHEMA } from './phraseIndex';
-import { assistantRequest, costOf, episodeNotes, episodeParts } from './aiService';
+import { assistantRequest, costOf, episodeNotes, episodeParts, getOpenAIKey, isAutoTagOn } from './aiService';
 import { getCorrectedTranscript } from './nameIndex';
 import { countPhrase } from './nameText';
 import { searchGoodreads } from '../api/goodreads';
@@ -365,6 +365,23 @@ export const resolveEntity = async (entity, { tmdbKey = '', said = '', signal } 
 const _running = new Map();
 
 export const isIndexingEntities = (episodeId) => _running.has(episodeId);
+
+/**
+ * The pass at the end of a transcription, when the listener switched it on
+ * (Settings → Episode assistant → tag after every transcription). Resolves
+ * to the pass's answer, or null when the switch is off, there is no key, or
+ * the run failed — the sheet in the Player offers it again either way.
+ */
+export const tagIfAuto = async (episodeId) => {
+    if (!(await isAutoTagOn())) return null;
+    if (!(await getOpenAIKey())) return null;
+    try {
+        return await indexEpisodeEntities(episodeId);
+    } catch (e) {
+        log('SERVICE', 'Automatic entity scan failed', { id: episodeId, error: e?.message || String(e) });
+        return null;
+    }
+};
 
 /**
  * Finds what the episode names and looks each one up. Resolves

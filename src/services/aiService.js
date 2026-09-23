@@ -43,6 +43,7 @@ export const OPENAI_KEY_KEY = '@openai_api_key';
 export const AI_MODEL_KEY = '@ai_model';
 export const AI_AUTO_KEY = '@ai_auto_analyze';      // '1' | '0'; absent = off
 export const AI_FIX_KEY = '@ai_fix_transcript';     // '1' | '0'; absent = on
+export const AI_AUTO_TAG_KEY = '@ai_auto_entities'; // '1' | '0'; absent = off
 
 // Prices per million tokens (OpenAI's page, 2026-09-23) — for the log line
 // and the "about a cent" hint, not for billing.
@@ -79,6 +80,11 @@ export const isAutoAnalyzeOn = async () => {
 };
 export const isFixTranscriptOn = async () => {
     try { return (await AsyncStorage.getItem(AI_FIX_KEY)) !== '0'; } catch (_) { return true; }
+};
+/** Whether what an episode names is looked up as soon as its transcript is
+ *  done (services/entityIndex.tagIfAuto), instead of when asked in the Player. */
+export const isAutoTagOn = async () => {
+    try { return (await AsyncStorage.getItem(AI_AUTO_TAG_KEY)) === '1'; } catch (_) { return false; }
 };
 export const modelInfo = (id) => AI_MODELS.find(m => m.id === id) || RETIRED_AI_MODELS.find(m => m.id === id) || AI_MODELS[0];
 
