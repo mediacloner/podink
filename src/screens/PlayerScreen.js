@@ -20,10 +20,12 @@ import {
 import {
     getSyncingId, isBookTranscript, isSyncing, needsSync, onBookSyncChange, queueVoiceSync, textDoesNotFit,
 } from '../services/bookService';
-import { getEpisodeById, getEpisodeBooks, getEpisodeEntities, getMaiTranscript } from '../database/queries';
+import { getEpisodeById, getEpisodeBooks, getEpisodeEntities, getEpisodePhrases, getMaiTranscript } from '../database/queries';
 import CloudTranscriptSheet from '../components/transcript/CloudTranscriptSheet';
 import EntitiesSheet from '../components/transcript/EntitiesSheet';
 import EntitySheet from '../components/transcript/EntitySheet';
+import IdiomSheet from '../components/transcript/IdiomSheet';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { buildTranscriptExport, shareText } from '../components/transcript/share';
 import { indexEpisodeBooks } from '../services/bookIndex';
 import { getCorrectedTranscript, indexEpisodeNames } from '../services/nameIndex';
@@ -117,10 +119,18 @@ const PlayerScreen = ({ route, navigation }) => {
     const [cloudSheet, setCloudSheet] = useState(false);
     const [entitiesSheet, setEntitiesSheet] = useState(false);
     const [entityCard, setEntityCard] = useState(null);   // { entity, startMs } over the list
+    const [idiomCard, setIdiomCard] = useState(null);     // { phrase, startMs, contextText } over the list
+    // The idiom card translates its meaning into the learner's language.
+    const [translationLang, setTranslationLang] = useState('es');
+    useEffect(() => {
+        if (!idiomCard) return;
+        AsyncStorage.getItem('@translation_lang').then(v => { if (v) setTranslationLang(v); }).catch(() => {});
+    }, [idiomCard]);
     // Books the transcript mentions (EpisodeBooks rows) — bold titles + book card.
     const [books, setBooks] = useState([]);
     // What the episode names (EpisodeEntities), marked in the text like books.
     const [entities, setEntities] = useState([]);
+    const [phrases, setPhrases] = useState([]);
     const [chapterSheet, setChapterSheet] = useState(false);   // the summary-and-chapters card
     const [transcriptLoading, setTranscriptLoading] = useState(false);
     const [audioStatus, setAudioStatus] = useState('');
@@ -360,8 +370,10 @@ const PlayerScreen = ({ route, navigation }) => {
     }, [epId]);
     const refetchEntities = useCallback(async () => {
         try { setEntities(await getEpisodeEntities(epId)); } catch (_) {}
+        // The phrasal verbs and idioms come out of the same scan.
+        try { setPhrases(await getEpisodePhrases(epId)); } catch (_) {}
     }, [epId]);
-    useEffect(() => { setEntities([]); refetchEntities(); }, [refetchEntities]);
+    useEffect(() => { setEntities([]); setPhrases([]); refetchEntities(); }, [refetchEntities]);
     useEffect(() => {
         // Not while the text is still growing: the finished job scans it.
         if (!ep || !segments.length || ep.books_indexed_at || isRadio || transcribing || isQueued) return;
@@ -785,6 +797,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         podcastTitle={ep.podcast_title}
                         books={books}
                         entities={entities}
+                        phrases={phrases}
                     />
                 )}
 
@@ -846,16 +859,23 @@ const PlayerScreen = ({ route, navigation }) => {
                     }}
                 />
                 <EntitiesSheet
-                    visible={entitiesSheet && !entityCard}
+                    visible={entitiesSheet && !entityCard && !idiomCard}
                     onClose={() => setEntitiesSheet(false)}
                     episode={ep}
                     onOpenEntity={setEntityCard}
+                    onOpenIdiom={setIdiomCard}
                     onOpenSettings={openSettingsFromSheet}
                 />
                 <EntitySheet
                     data={entityCard}
                     onClose={() => setEntityCard(null)}
                     onReplay={(ms) => { setEntityCard(null); setEntitiesSheet(false); seekFromChapter(ms); }}
+                />
+                <IdiomSheet
+                    data={idiomCard}
+                    lang={translationLang}
+                    onClose={() => setIdiomCard(null)}
+                    onReplay={(ms) => { setIdiomCard(null); setEntitiesSheet(false); seekFromChapter(ms); }}
                 />
                 <ChapterSheet
                     visible={chapterSheet}

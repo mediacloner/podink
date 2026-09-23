@@ -32,6 +32,8 @@ import TranslationModal from './transcript/TranslationModal';
 import WordPopover from './transcript/WordPopover';
 import BookSheet from './transcript/BookSheet';
 import EntitySheet from './transcript/EntitySheet';
+import IdiomSheet from './transcript/IdiomSheet';
+import { buildPhraseMarks, isIdiomMark, phraseIdOf } from '../services/phraseIndex';
 import { buildBookMarks } from '../services/bookText';
 import { isSentenceEnd } from '../services/sentenceBoundary';
 
@@ -326,6 +328,11 @@ const TranscriptHighlighter = forwardRef(({
     // their own card (user: "the names of list should have highlighted in
     // transcription and when clic go to card").
     entities = EMPTY_BOOKS,
+    // EpisodePhrases rows (services/phraseIndex.js): phrasal verbs are
+    // underlined and a tap on any of their words looks up the dictionary
+    // form alone ("picked it up" → "pick up"); idioms sit on a green band and
+    // open their own card.
+    phrases = EMPTY_BOOKS,
 }, ref) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -1000,6 +1007,17 @@ const TranscriptHighlighter = forwardRef(({
     const entitiesRef = useRef(entities);
     useEffect(() => { entitiesRef.current = entities; }, [entities]);
 
+    // ── Phrase marks: word globalIndex → EpisodePhrases id (idioms negative) ─
+    // A second array beside the names', so a word can be both a phrase's and
+    // nobody's name without the two fighting over one slot; where they do
+    // overlap the name wins (Word, bookRuns).
+    const wordPhrase = useMemo(() => {
+        if (!computed.chunks.length || !phrases?.length) return NO_MARKS;
+        return buildPhraseMarks(computed.chunks, phrases);
+    }, [computed, phrases]);
+    const phrasesRef = useRef(phrases);
+    useEffect(() => { phrasesRef.current = phrases; }, [phrases]);
+
     // ── Pause while looking up (Settings toggle) ─────────────────────────────
     // Opening a word or sentence card pauses playback; closing it resumes —
     // but only when this card is what paused it, so a podcast the user had
@@ -1114,6 +1132,54 @@ const TranscriptHighlighter = forwardRef(({
         resumeAfterLookup();
     }, [doSeek, resumeAfterLookup]);
 
+    // ── Phrases (tap on an underlined phrasal verb or a banded idiom) ────────
+    // A phrasal verb opens the word card on its dictionary form and nothing
+    // else — the card's lookup is handed the phrase's own words as the whole
+    // context, so "picked it up" asks for "pick up" whichever word was
+    // tapped. An idiom opens its own card.
+    const [idiomSheet, setIdiomSheet] = useState(null);
+    const phraseCard = useCallback((p, startMs, chunkIndex) => {
+        const ch = chunksRef.current[chunkIndex];
+        return {
+            word: p.base,
+            phrase: { base: p.base, surface: p.surface, kind: p.kind },
+            prevWords: [],
+            nextWords: [],
+            startMs: Math.round(startMs || 0),
+            contextText: ch ? chunkText(ch) : (p.context || ''),
+            precedingText: ch ? precedingText(chunksRef.current, chunkIndex) : '',
+        };
+    }, []);
+    const onPhrasePress = useCallback((mark, startMs, chunkIndex) => {
+        const id = phraseIdOf(mark);
+        const p = (phrasesRef.current || []).find(x => Number(x.id) === id);
+        if (!p) return;
+        if (isIdiomMark(mark)) {
+            const ch = chunksRef.current[chunkIndex];
+            setIdiomSheet({ phrase: p, startMs: Math.round(startMs || 0), chunkIndex, contextText: ch ? chunkText(ch) : (p.context || '') });
+        } else {
+            setWordPopover(phraseCard(p, startMs, chunkIndex));
+        }
+        pauseForLookup();
+    }, [pauseForLookup, phraseCard]);
+    const closeIdiomSheet = useCallback(() => {
+        setIdiomSheet(null);
+        resumeAfterLookup();
+    }, [resumeAfterLookup]);
+    const onIdiomReplay = useCallback((ms) => {
+        setIdiomSheet(null);
+        doSeek(ms);
+        resumeAfterLookup();
+    }, [doSeek, resumeAfterLookup]);
+    // "In the dictionary": the idiom card hands over to the word card. The
+    // pause carries across — the word card's close is what resumes.
+    const onIdiomDictionary = useCallback(() => {
+        const open = idiomSheet;
+        if (!open) return;
+        setIdiomSheet(null);
+        setWordPopover(phraseCard(open.phrase, open.startMs, open.chunkIndex));
+    }, [idiomSheet, phraseCard]);
+
     // ── Book card (tap on a bold title) ──────────────────────────────────────
     const [bookSheet, setBookSheet] = useState(null);
     const [entitySheet, setEntitySheet] = useState(null);
@@ -1192,12 +1258,15 @@ const TranscriptHighlighter = forwardRef(({
                 onWordPress={onWordPress}
                 onBookPress={onBookPress}
                 wordBook={wordBook}
+                onPhrasePress={onPhrasePress}
+                wordPhrase={wordPhrase}
                 onCellLayout={onCellLayout}
             />
         );
     }, [
         fontSize, lineHeight, activeChunkSV, activeIndexSV, isPlayingSV,
         onChunkPress, onChunkDoublePress, onTranslate, onWordPress, onBookPress, wordBook,
+        onPhrasePress, wordPhrase,
         onCellLayout, onKeypointPress,
     ]);
 
@@ -1333,6 +1402,13 @@ const TranscriptHighlighter = forwardRef(({
             />
             <BookSheet data={bookSheet} onClose={closeBookSheet} onReplay={onBookReplay} />
             <EntitySheet data={entitySheet} onClose={closeEntitySheet} onReplay={onEntityReplay} />
+            <IdiomSheet
+                data={idiomSheet}
+                lang={translationLang}
+                onClose={closeIdiomSheet}
+                onReplay={onIdiomReplay}
+                onDictionary={onIdiomDictionary}
+            />
 
             {statusPane ?? (
                 <>
@@ -1486,17 +1562,20 @@ const chunkEqual = (p, n) =>
     p.onPress === n.onPress && p.onDoublePress === n.onDoublePress &&
     p.onTranslate === n.onTranslate &&
     p.onWordPress === n.onWordPress && p.onCellLayout === n.onCellLayout &&
-    p.onBookPress === n.onBookPress && p.wordBook === n.wordBook;
+    p.onBookPress === n.onBookPress && p.wordBook === n.wordBook &&
+    p.onPhrasePress === n.onPhrasePress && p.wordPhrase === n.wordPhrase;
 
-// The chunk's words grouped into runs of plain text and book titles, so the
-// sentence view can set a title in bold and give it its own tap.
-const bookRuns = (words, wordBook) => {
+// The chunk's words grouped into runs of plain text, book titles and
+// phrases, so the sentence view can set a title in bold, underline a phrasal
+// verb and band an idiom, each with its own tap. A name outranks a phrase.
+const bookRuns = (words, wordBook, wordPhrase) => {
     const runs = [];
     for (const w of words) {
         const id = w.globalIndex < wordBook.length ? wordBook[w.globalIndex] : 0;
+        const phrase = !id && w.globalIndex < wordPhrase.length ? wordPhrase[w.globalIndex] : 0;
         const last = runs[runs.length - 1];
-        if (last && last.bookId === id) { last.text += w.text; continue; }
-        runs.push({ bookId: id, text: w.text, startMs: w.startMs, key: w.globalIndex });
+        if (last && last.bookId === id && last.phrase === phrase) { last.text += w.text; continue; }
+        runs.push({ bookId: id, phrase, text: w.text, startMs: w.startMs, key: w.globalIndex });
     }
     return runs;
 };
@@ -1505,6 +1584,7 @@ const Chunk = React.memo(({
     item, index, fontSize, lineHeight,
     activeChunkSV, activeIndexSV, isPlayingSV,
     onPress, onDoublePress, onTranslate, onWordPress, onBookPress, wordBook, onCellLayout,
+    onPhrasePress, wordPhrase = NO_MARKS,
 }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -1514,10 +1594,10 @@ const Chunk = React.memo(({
     // Only chunks that hold a title pay for the run split; the rest render
     // their text in one span as before.
     const runs = useMemo(() => {
-        if (!wordBook.length) return null;
-        const r = bookRuns(item.words, wordBook);
-        return r.some(x => x.bookId) ? r : null;
-    }, [item, wordBook]);
+        if (!wordBook.length && !wordPhrase.length) return null;
+        const r = bookRuns(item.words, wordBook, wordPhrase);
+        return r.some(x => x.bookId || x.phrase) ? r : null;
+    }, [item, wordBook, wordPhrase]);
 
     const [isWordLevel, setIsWordLevel] = useState(false);
     const [isPast, setIsPast] = useState(false);
@@ -1684,6 +1764,9 @@ const Chunk = React.memo(({
                             bookId={w.globalIndex < wordBook.length ? wordBook[w.globalIndex] : 0}
                             bookJoinsNext={w.globalIndex + 1 < wordBook.length && wordBook[w.globalIndex] !== 0 && wordBook[w.globalIndex + 1] === wordBook[w.globalIndex]}
                             onBookPress={onBookPress}
+                            phrase={w.globalIndex < wordPhrase.length ? wordPhrase[w.globalIndex] : 0}
+                            phraseJoinsNext={w.globalIndex + 1 < wordPhrase.length && wordPhrase[w.globalIndex] !== 0 && wordPhrase[w.globalIndex + 1] === wordPhrase[w.globalIndex]}
+                            onPhrasePress={onPhrasePress}
                         />
                     ))}
                 </Text>
@@ -1705,10 +1788,24 @@ const Chunk = React.memo(({
                 <Text style={baseStyle}>
                     {runs.map((run, i) => {
                         const text = i === 0 ? run.text.replace(/^\s+/, '') : run.text;
-                        if (!run.bookId) return <Text key={run.key}>{text}</Text>;
+                        if (!run.bookId && !run.phrase) return <Text key={run.key}>{text}</Text>;
                         // The space after the title stays outside the styled
                         // span, so the underline ends with the last letter.
                         const m = /^([\s\S]*?)(\s*)$/.exec(text);
+                        if (!run.bookId) {
+                            return (
+                                <Text key={run.key}>
+                                    <Text
+                                        style={isIdiomMark(run.phrase) ? styles.idiomRun : styles.phrasalRun}
+                                        suppressHighlighting
+                                        onPress={() => onPhrasePress(run.phrase, run.startMs, chunkIndex)}
+                                    >
+                                        {m ? m[1] : text}
+                                    </Text>
+                                    {m ? m[2] : ''}
+                                </Text>
+                            );
+                        }
                         return (
                             <Text key={run.key}>
                                 <Text
@@ -1738,6 +1835,7 @@ const Word = React.memo(({
     word, chunkIndex, fontSize, lineHeight,
     activeIndexSV, isPlayingSV, onWordPress,
     bookId = 0, bookJoinsNext = false, onBookPress,
+    phrase = 0, phraseJoinsNext = false, onPhrasePress,
 }) => {
     const { colors } = useTheme();
     const colorState = useSharedValue(0); // 0 future · 1 spoken · 2 active
@@ -1778,6 +1876,10 @@ const Word = React.memo(({
         ? withAlpha(colors.nameBand, colors.nameBandAlpha)
         : withAlpha(colors.purple, 0.26);
     const bookText = isNameMark(bookId) ? colors.nameInk : colors.textPrimary;
+    // A phrase, when no name claims the word: an idiom keeps the reading
+    // colours on a green band, a phrasal verb is only underlined.
+    const phraseMark = bookId ? 0 : phrase;
+    const idiomBand = isIdiomMark(phraseMark) ? withAlpha(colors.phraseBand, colors.phraseBandAlpha) : null;
     const animStyle = useAnimatedStyle(() => {
         if (isBook) {
             // The band stays, so the mark reads as one thing before and after
@@ -1801,12 +1903,16 @@ const Word = React.memo(({
             textShadowOffset: { width: 0, height: 0 },
             textShadowRadius: interpolate(colorState.value, [1, 2], [0, transcriptGlowRadius], 'clamp'),
         };
-        if (hasHighlight) {
+        if (idiomBand) {
+            style.backgroundColor = hasHighlight
+                ? interpolateColor(colorState.value, [1, 2], [idiomBand, highlightOn])
+                : idiomBand;
+        } else if (hasHighlight) {
             // Same hue at alpha 0 → alpha on, so the fade never passes through black.
             style.backgroundColor = interpolateColor(colorState.value, [1, 2], [highlightOff, highlightOn]);
         }
         return style;
-    }, [colors, isBook, bookBand, bookText]);
+    }, [colors, isBook, bookBand, bookText, idiomBand]);
 
     // Tokens carry their own spacing (" word"). Keep the whitespace outside the
     // animated span so the highlight band hugs the glyphs, not the gap before them.
@@ -1816,10 +1922,15 @@ const Word = React.memo(({
     }, [word.text]);
 
     // A word of a book title opens the book card, not the dictionary.
+    // A word of a phrase opens the phrase — the dictionary form of a phrasal
+    // verb, or the idiom's card — whichever of its words was tapped.
     const handlePress = useCallback(() => {
         if (bookId && onBookPress) onBookPress(bookId, word.startMs);
+        else if (phraseMark && onPhrasePress) onPhrasePress(phraseMark, word.startMs, chunkIndex);
         else onWordPress(word, chunkIndex);
-    }, [bookId, onBookPress, onWordPress, word, chunkIndex]);
+    }, [bookId, onBookPress, phraseMark, onPhrasePress, onWordPress, word, chunkIndex]);
+    const joins = bookId ? bookJoinsNext : (phraseMark ? phraseJoinsNext : false);
+    const underline = phraseMark && !isIdiomMark(phraseMark) ? PHRASAL_UNDERLINE : null;
 
     // Press lives on a PLAIN Text — onPress on a nested Animated.Text does not
     // fire inside a parent Text (RN press hit-testing only routes to real Text
@@ -1834,13 +1945,15 @@ const Word = React.memo(({
             {lead}
             {/* The band runs on under the space when the next word belongs to
                 the same title. */}
-            <Animated.Text style={[{ fontSize, lineHeight, fontWeight: bookId ? '600' : '500' }, animStyle]}>
-                {core}{bookId && bookJoinsNext ? trail : ''}
+            <Animated.Text style={[{ fontSize, lineHeight, fontWeight: bookId ? '600' : '500' }, underline, animStyle]}>
+                {core}{joins ? trail : ''}
             </Animated.Text>
-            {bookId && bookJoinsNext ? '' : trail}
+            {joins ? '' : trail}
         </Text>
     );
 });
+
+const PHRASAL_UNDERLINE = { textDecorationLine: 'underline' };
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
@@ -1865,6 +1978,8 @@ const makeStyles = (colors) => StyleSheet.create({
     // vanished in the dimmed past/future text of both themes.
     bookTitle: { backgroundColor: withAlpha(colors.purple, 0.26), color: colors.textPrimary, fontWeight: '600' },
     nameTitle: { backgroundColor: withAlpha(colors.nameBand, colors.nameBandAlpha), color: colors.nameInk, fontWeight: '600' },
+    phrasalRun: { textDecorationLine: 'underline' },
+    idiomRun: { backgroundColor: withAlpha(colors.phraseBand, colors.phraseBandAlpha) },
 
     keypointRow: {
         flexDirection: 'row',
