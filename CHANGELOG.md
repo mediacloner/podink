@@ -2,6 +2,9 @@
 
 ## [5.6.0] - 2026-09-23
 
+### Fixed
+- **The names pass no longer turns “Emperor” into “Empire”.** The pass takes its candidates from the notes, and on an episode whose title says *Christianity and the Roman Empire* it matched the two capitalised words “Roman Emperor” to “Roman Empire”, then propagated the surname: six emperors became empires, “Caesarea” became “Caesar” on the strength of the show's trailer for a Julius Caesar episode. A heard run spelled entirely in the notes' own words is left alone now, and a token that is the surname with two or more letters added is not a loose spelling of it (`nameText.findNameCorrections`).
+
 ## [5.5.0] - 2026-09-22
 
 ### Added
