@@ -130,7 +130,7 @@ const ChapterSheet = ({ visible, onClose, episode, segments = [], onSeek, onOpen
     }, [epId, punctRunning]);
 
     const info = modelInfo(model);
-    const costHint = estimateEpisodeCost(info.id, episode?.duration || 0, { fixes: withFixes });
+    const costHint = estimateEpisodeCost(info.id, episode?.duration || 0, { fixes: withFixes, cached: true });
     const summary = (episode?.summary || '').trim();
     const analysed = !!episode?.ai_indexed_at || chapters.length > 0;
     const appliedCount = fixes.filter(f => f.applied !== 0).length;

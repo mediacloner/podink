@@ -82,9 +82,12 @@ const extractText = (data) => {
  * properties in `required` and has additionalProperties false).
  * `effort` is the reasoning effort ('minimal' | 'low' | 'medium' | 'high');
  * a model that rejects the parameter is asked again without it.
+ * `input` is a string or a list of messages; `cacheKey` is OpenAI's
+ * prompt_cache_key, which sends requests that share a prefix to the same
+ * cache (services/transcriptReading.js).
  */
 export const requestJson = async ({
-    apiKey, model, instructions, input, schemaName, schema, maxOutputTokens = 6000, effort = 'low', signal,
+    apiKey, model, instructions, input, schemaName, schema, maxOutputTokens = 6000, effort = 'low', cacheKey, signal,
 }) => {
     if (!apiKey) throw tagged('auth', 'No OpenAI API key. Add yours in Settings → Episode assistant.');
     const body = {
@@ -96,6 +99,7 @@ export const requestJson = async ({
         text: { format: { type: 'json_schema', name: schemaName, schema, strict: true } },
     };
     if (effort) body.reasoning = { effort };
+    if (cacheKey) body.prompt_cache_key = cacheKey;
     let data;
     try {
         data = await post(apiKey, body, signal);

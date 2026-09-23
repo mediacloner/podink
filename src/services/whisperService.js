@@ -40,7 +40,7 @@ import { notifyLibraryChange } from './libraryEvents';
 import { indexEpisodeBooks } from './bookIndex';
 import { indexEpisodeNames } from './nameIndex';
 import { analyzeIfAuto } from './aiService';
-import { tagIfAuto, willTagAuto } from './entityIndex';
+import { askEntities, tagIfAuto, willTagAuto } from './entityIndex';
 import { log } from './logService';
 import { splitSentences } from './sentenceBoundary';
 import { alignEpisodeWithAsr } from './bookService';
@@ -736,13 +736,20 @@ const _process = async (entry) => {
         const scanBooks = willTag
             ? () => indexEpisodeNames(entry.id, { force: true }).catch(() => {})
             : () => indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
-        // Last of all, when switched on: what the episode names, read from the
-        // text the assistant has corrected (entityIndex.tagIfAuto).
-        const tag = () => tagIfAuto(entry.id).catch(() => {});
+        // Last of all, when switched on: what the episode names, matched on
+        // the text the assistant has corrected (entityIndex.tagIfAuto). When
+        // the assistant runs, the model is asked beside its fixes, on the
+        // transcript the chapters pass has just put in OpenAI's cache
+        // (services/transcriptReading.js); only the checking and the lookups
+        // wait for the fixes. Asked on its own when that did not happen.
+        const tag = (done) => tagIfAuto(entry.id, { answers: done?.alongside, model: done?.model }).catch(() => {});
         // Book text needs no assistant pass (nothing was misheard); the books
         // it mentions are still worth finding.
-        if (alignMode) scanBooks().then(tag);
-        else analyzeIfAuto(entry.id).then(done => (done ? undefined : scanBooks()), scanBooks).then(tag);
+        if (alignMode) scanBooks().then(() => tag(null));
+        else {
+            analyzeIfAuto(entry.id, { alongside: willTag ? askEntities : null })
+                .then(async (done) => { if (!done) await scanBooks(); return tag(done); }, () => scanBooks().then(() => tag(null)));
+        }
 
         log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length });
         entry.resolve(segments);

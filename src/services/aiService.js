@@ -34,6 +34,7 @@ import { countPhrase, fold, normalizePhrase } from './nameText';
 import { showNotesPlainText } from './showNotes';
 import { formatClock, sentencesWithTimes } from './sentenceBoundary';
 import { langEnglishName } from '../components/transcript/translate';
+import { readingRequest } from './transcriptReading';
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
@@ -107,19 +108,24 @@ export const formatDollars = (d) => {
  *  what the statistics screen prices a run made before the spend ledger
  *  existed at — the model that wrote it and the length of the episode are
  *  all that is left of it. */
-export const estimateEpisodeDollars = (model, durationSec, { fixes = true } = {}) => {
+export const estimateEpisodeDollars = (model, durationSec, { fixes = true, cached = false } = {}) => {
     const minutes = Math.max(1, (durationSec || 3600) / 60);
     const inputTokens = minutes * 150 * 1.35 + 600;         // ~150 words a minute, ~1.35 tokens a word
     const passes = fixes ? 2 : 1;
     const outputTokens = 1200 + (fixes ? 1500 : 0);
-    return dollars(model, { input: inputTokens * passes, output: outputTokens, cached: 0 });
+    // Since 5.6.0 the passes after the first read the transcript from
+    // OpenAI's cache (services/transcriptReading.js); a run from before
+    // then — what the statistics screen prices — read it every time.
+    return dollars(model, { input: inputTokens * passes, output: outputTokens, cached: cached ? inputTokens * (passes - 1) : 0 });
 };
 /** The same figure as a phrase. */
 export const estimateEpisodeCost = (model, durationSec, opts) => formatDollars(estimateEpisodeDollars(model, durationSec, opts));
 
 // ─── Prompts ─────────────────────────────────────────────────────────────────
 
-const CHAPTERS_INSTRUCTIONS = `You write the table of contents and a short summary of a podcast episode from an automatic transcript made on a phone. The transcript has one sentence per line, each led by the time it starts, as [mm:ss] or [h:mm:ss]. The recogniser misspells names; the episode notes, when given, spell them right — use the notes only for spelling and to recognise the segments the show announces, never as a source of what was said.
+// Each is the last message of a request that starts with the episode
+// (services/transcriptReading.js), so the text they read can be cached.
+const CHAPTERS_INSTRUCTIONS = `Task: write the table of contents and a short summary of this episode. Fill "summary" and "chapters" only.
 
 Chapters: divide the episode into its natural sections — a story, a guest, a topic, a book discussed, an advertising break. Between three and twelve for an hour of audio; a section shorter than about two minutes belongs with its neighbour. The first chapter starts at the first line. Each chapter's "start" is a time copied from the transcript line where that section begins. The title is at most eight words, written like a listener's table of contents — what the section is about, not a tease; an advertising break is titled "Advertisement". The blurb is one plain sentence saying what happens in the section.
 
@@ -129,58 +135,15 @@ When told the text is one part of a longer episode, do the same for that part on
 
 const MERGE_INSTRUCTIONS = `You are given the summaries of the parts of one podcast episode, in order. Write one summary of the whole episode in three or four plain English sentences, for someone deciding whether to listen. No preamble, no opinions.`;
 
-const FIXES_INSTRUCTIONS = `You proofread an automatic speech-recognition transcript of an English podcast. One sentence per line, each led by the time it starts. Find the places where the recogniser wrote the wrong words: a misheard name of a person, a book, film or programme title, a place, a homophone (gilt/guilt, cider/sider), a word split or joined wrongly — only where the right wording is certain from the surrounding sentences or from the episode notes, which spell the people and titles right.
+const FIXES_INSTRUCTIONS = `Task: proofread this transcript. Fill "corrections" only.
+
+Find the places where the recogniser wrote the wrong words: a misheard name of a person, a book, film or programme title, a place, a homophone (gilt/guilt, cider/sider), a word split or joined wrongly — only where the right wording is certain from the surrounding sentences or from the episode notes, which spell the people and titles right.
 
 Rules. Copy "heard" exactly as it appears in the transcript — same spelling, same casing, one to five words; a correction whose heard text is not in the transcript is discarded. Put the right wording in "correct". Do not fix grammar, repetitions, fillers, dialect, slang or anything the speaker actually said; do not rewrite or improve sentences; do not touch punctuation or capitalisation alone. When unsure, leave it out: a wrong correction is worse than a recogniser error. "context" is the transcript line the mistake is in, copied as written. "kind" is name, title, place or word. "confidence" is high when the notes or the sentences leave no doubt, medium otherwise. Return an empty list when the transcript needs nothing.`;
-
-const CHAPTERS_SCHEMA = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['summary', 'chapters'],
-    properties: {
-        summary: { type: 'string' },
-        chapters: {
-            type: 'array',
-            items: {
-                type: 'object',
-                additionalProperties: false,
-                required: ['start', 'title', 'blurb'],
-                properties: {
-                    start: { type: 'string', description: 'Time copied from the transcript line where the chapter begins, mm:ss or h:mm:ss' },
-                    title: { type: 'string' },
-                    blurb: { type: 'string' },
-                },
-            },
-        },
-    },
-};
 
 const SUMMARY_SCHEMA = {
     type: 'object', additionalProperties: false, required: ['summary'],
     properties: { summary: { type: 'string' } },
-};
-
-const FIXES_SCHEMA = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['corrections'],
-    properties: {
-        corrections: {
-            type: 'array',
-            items: {
-                type: 'object',
-                additionalProperties: false,
-                required: ['heard', 'correct', 'kind', 'context', 'confidence'],
-                properties: {
-                    heard: { type: 'string' },
-                    correct: { type: 'string' },
-                    kind: { type: 'string', enum: ['name', 'title', 'place', 'word'] },
-                    context: { type: 'string' },
-                    confidence: { type: 'string', enum: ['high', 'medium'] },
-                },
-            },
-        },
-    },
 };
 
 // ─── Translation with the lines before it ────────────────────────────────────
@@ -281,16 +244,21 @@ const partLabel = (i, n, lines) => (n > 1
     : '');
 
 /** Everything one reading of a transcript needs: the sentences it is cut
- *  into, the head that names the episode, and the parts of the request. */
+ *  into, the head that names the episode, the parts of the request, and
+ *  each part as the text a request opens with — the same string for every
+ *  pass, which is what lets the passes after the first read it cached. */
 const preparePass = (ep, rows, notes) => {
     const sentences = sentencesWithTimes(rows);
     const lines = sentences.map(s => `[${formatClock(s.startMs)}] ${s.text}`);
     const durationMs = ep.duration > 0 ? ep.duration * 1000 : (sentences[sentences.length - 1]?.endMs || 0);
-    return { sentences, lines, durationMs, head: describeEpisode(ep, durationMs, notes), parts: splitParts(lines) };
+    const head = describeEpisode(ep, durationMs, notes);
+    const parts = splitParts(lines);
+    const texts = parts.map((p, i) => `${head}\n\n${partLabel(i, parts.length, p)}Transcript:\n${p.join('\n')}`);
+    return { episodeId: ep.id, sentences, lines, durationMs, head, parts, texts };
 };
 
 /** The same preparation, for a pass that lives in its own service
- *  (services/entityIndex.js): the sentences, the head and the parts. */
+ *  (services/entityIndex.js). */
 export const episodeParts = (ep, rows, notes = '') => preparePass(ep, rows, notes);
 
 // ─── Answers → rows ──────────────────────────────────────────────────────────
@@ -413,7 +381,7 @@ const _running = new Map();   // episodeId → Promise
 /**
  * The summary and chapters for one transcript, by whoever `request` asks —
  * nothing is written to the database. `request` makes one structured call
- * ({ instructions, schemaName, schema, input, maxOutputTokens }) and resolves
+ * ({ instructions, schemaName, schema, input, cacheKey, maxOutputTokens }) and resolves
  * { json, usage }, the shape api/openai.requestJson returns.
  *
  * Kept apart from analyzeEpisode so one reading can be made through another
@@ -422,7 +390,7 @@ const _running = new Map();   // episodeId → Promise
  * `prepared` is preparePass's answer when the caller already has it.
  */
 export const chaptersAndSummary = async ({ ep, rows, notes = '', request, prepared }) => {
-    const { sentences, durationMs, head, parts } = prepared || preparePass(ep, rows, notes);
+    const { episodeId, sentences, durationMs, head, parts, texts } = prepared || preparePass(ep, rows, notes);
     const usage = { input: 0, output: 0, cached: 0 };
     const add = (u) => {
         usage.input += u?.input || 0; usage.output += u?.output || 0; usage.cached += u?.cached || 0;
@@ -430,11 +398,9 @@ export const chaptersAndSummary = async ({ ep, rows, notes = '', request, prepar
     const rawChapters = [];
     const partSummaries = [];
     for (let i = 0; i < parts.length; i++) {
-        const r = await request({
-            instructions: CHAPTERS_INSTRUCTIONS, schemaName: 'episode_chapters', schema: CHAPTERS_SCHEMA,
-            input: `${head}\n\n${partLabel(i, parts.length, parts[i])}Transcript:\n${parts[i].join('\n')}`,
-            maxOutputTokens: 5000,
-        });
+        const r = await request(readingRequest({
+            text: texts[i], task: CHAPTERS_INSTRUCTIONS, episodeId, maxOutputTokens: 5000,
+        }));
         add(r.usage);
         rawChapters.push(...(r.json?.chapters || []));
         if (r.json?.summary) partSummaries.push(String(r.json.summary).trim());
@@ -474,8 +440,14 @@ export const costOf = (model, usage) => dollars(model, usage);
  * null when the episode was already analysed and not `force`. Rejects with
  * a message fit for the sheet (`kind` says why: 'nokey', 'notranscript',
  * or the api/openai kinds). Two callers share one run.
+ *
+ * `alongside(prepared, request)` is another pass over the same text
+ * (entityIndex.askEntities, when the tag pass follows): it starts once the
+ * chapters pass has put the transcript in OpenAI's cache and runs beside the
+ * fixes, so both read it at a tenth of the price. Its answer comes back as
+ * `alongside` — null when it failed, and the caller asks again on its own.
  */
-export const analyzeEpisode = (episodeId, { force = false, scanBooks = true } = {}) => {
+export const analyzeEpisode = (episodeId, { force = false, scanBooks = true, alongside = null } = {}) => {
     const active = _running.get(episodeId);
     if (active) return active;
     const p = (async () => {
@@ -495,32 +467,38 @@ export const analyzeEpisode = (episodeId, { force = false, scanBooks = true } = 
         const model = await getAIModel();
         const wantFixes = await isFixTranscriptOn();
         const prepared = preparePass(ep, rows, notes);
-        const { sentences, head, parts } = prepared;
+        const { sentences, parts, texts } = prepared;
+        const request = (req) => requestJson({ apiKey, model, ...req });
         const usage = { input: 0, output: 0, cached: 0 };
         const add = (u) => { usage.input += u.input; usage.output += u.output; usage.cached += u.cached; };
 
-        // Chapters + summary, per part — the reading the comparison shares.
-        const pass = await chaptersAndSummary({
-            ep, rows, notes, prepared, request: (req) => requestJson({ apiKey, model, ...req }),
-        });
+        // Chapters + summary, per part — first, because the request that
+        // reads the text first is the one that caches it for the rest.
+        const pass = await chaptersAndSummary({ ep, rows, notes, prepared, request });
         add(pass.usage);
         const { summary, chapters } = pass;
 
-        // Fixes, per part.
-        let fixes = [], dropped = [];
-        if (wantFixes) {
+        // Fixes, per part, and the pass alongside — side by side, both on
+        // the cached text.
+        const askFixes = async () => {
+            if (!wantFixes) return { fixes: [], dropped: [] };
             const raw = [];
             for (let i = 0; i < parts.length; i++) {
-                const r = await requestJson({
-                    apiKey, model, instructions: FIXES_INSTRUCTIONS, schemaName: 'transcript_corrections', schema: FIXES_SCHEMA,
-                    input: `${head}\n\n${partLabel(i, parts.length, parts[i])}Transcript:\n${parts[i].join('\n')}`,
-                    maxOutputTokens: 8000,
-                });
+                const r = await request(readingRequest({
+                    text: texts[i], task: FIXES_INSTRUCTIONS, episodeId, maxOutputTokens: 8000,
+                }));
                 add(r.usage);
                 raw.push(...(r.json?.corrections || []));
             }
-            ({ fixes, dropped } = acceptFixes(raw, rows, { known: `${ep.title || ''}\n${notes}` }));
-        }
+            return acceptFixes(raw, rows, { known: `${ep.title || ''}\n${notes}` });
+        };
+        const askAlongside = () => (alongside
+            ? Promise.resolve().then(() => alongside(prepared, request)).catch((e) => {
+                log('SYSTEM', 'Episode assistant: the pass alongside failed', { id: episodeId, error: e?.message || String(e) });
+                return null;
+            })
+            : Promise.resolve(null));
+        const [{ fixes, dropped }, besides] = await Promise.all([askFixes(), askAlongside()]);
 
         await replaceEpisodeAnalysis(episodeId, { summary, chapters, fixes, model });
         const cost = dollars(model, usage);
@@ -552,7 +530,7 @@ export const analyzeEpisode = (episodeId, { force = false, scanBooks = true } = 
         if (scanBooks && (fixes.length > 0 || !ep.books_indexed_at)) {
             indexEpisodeBooks(episodeId, { force: true, front: true }).catch(() => {});
         }
-        return { summary, chapters, fixes, cost, model, usage };
+        return { summary, chapters, fixes, cost, model, usage, alongside: besides };
     })().catch((e) => {
         log('SYSTEM', 'Episode assistant failed', { id: episodeId, kind: e?.kind, error: e?.message || String(e) });
         throw e;
@@ -564,11 +542,11 @@ export const analyzeEpisode = (episodeId, { force = false, scanBooks = true } = 
 export const isAnalyzing = (episodeId) => _running.has(episodeId);
 
 /** After a transcription, when the listener asked for it in Settings. */
-export const analyzeIfAuto = async (episodeId) => {
+export const analyzeIfAuto = async (episodeId, { alongside = null } = {}) => {
     if (!(await isAutoAnalyzeOn())) return null;
     if (!(await getOpenAIKey())) return null;
     try {
-        return await analyzeEpisode(episodeId, { force: true, scanBooks: !(await isAutoTagOn()) });
+        return await analyzeEpisode(episodeId, { force: true, scanBooks: !(await isAutoTagOn()), alongside });
     } catch (_) {
         return null;   // logged by analyzeEpisode; the sheet offers a retry
     }
