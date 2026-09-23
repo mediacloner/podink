@@ -54,11 +54,10 @@ export const indexEpisodeNames = (episodeId, { force = false } = {}) => {
             if (!ep || (ep.names_indexed_at && !force)) return null;
             const rows = await getTranscriptsForEpisode(episodeId);
             if (!rows.length) return null;
-            const cands = nameCandidates({
-                title: ep.title || '', author: ep.podcast_author || '', notes: showNotesPlainText(ep.description || ''),
-            });
+            const known = { title: ep.title || '', author: ep.podcast_author || '', notes: showNotesPlainText(ep.description || '') };
+            const cands = nameCandidates(known);
             const t0 = Date.now();
-            const names = cands.length ? findNameCorrections(rows, cands) : [];
+            const names = cands.length ? findNameCorrections(rows, cands, { known: `${known.title}\n${known.author}\n${known.notes}` }) : [];
             await replaceEpisodeNames(episodeId, names);
             log('SYSTEM', 'Name scan finished', {
                 id: episodeId, title: ep.title, candidates: cands.map(c => c.canonical), ms: Date.now() - t0,

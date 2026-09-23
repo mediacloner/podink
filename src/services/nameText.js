@@ -227,16 +227,22 @@ const MIN_PROPAGATE = 5;   // a bare first name or surname this long may be fixe
  * Corrections for one transcript: [{ heard, canonical, count, firstMs }],
  * `heard` being the spelling as the transcript has it (case-insensitive when
  * applied). Candidates come from `nameCandidates`; rows are transcript rows.
+ * `known` is the text the candidates came from (title, author, notes): a
+ * heard run made only of words that text uses is spelled the way the notes
+ * spell things, so it is a different word, not a mishearing — "Roman
+ * Emperor" is not "Roman Empire" when the notes say both.
  */
-export const findNameCorrections = (rows, candidates) => {
+export const findNameCorrections = (rows, candidates, { known = '' } = {}) => {
     if (!rows?.length || !candidates?.length) return [];
     const toks = tokenize(rows);
+    const knownWords = new Set(fold(known).split(' ').filter(Boolean));
     const found = new Map();   // fold(heard) → { heard, canonical, count, firstMs, score }
     const record = (i, n, canonical, score) => {
         const heard = toks.slice(i, i + n).map(t => t.core).join(' ');
         const k = fold(heard);
         // Cores carry no dots, so "Octavia E Butler" already is "Octavia E. Butler".
         if (!k || heard === canonical.replace(/\./g, '')) return;
+        if (k.split(' ').every(w => knownWords.has(w))) return;
         const prev = found.get(k);
         const ms = rows[toks[i].row].start_time ?? rows[toks[i].row].start ?? 0;
         if (!prev) found.set(k, { heard, canonical, count: 1, firstMs: ms, score });
@@ -294,6 +300,7 @@ export const findNameCorrections = (rows, candidates) => {
                 if (!tf) continue;
                 if (tf === wf || heard.has(tf)) { record(i, 1, word, 1); continue; }   // same letters, or the spelling seen in the full name
                 if (t.sentenceStart) continue;                                         // "Person" opening a sentence is a word
+                if (tf.startsWith(wf) && tf.length - wf.length >= 2) continue;         // "Caesarea" is not a loose "Caesar"
                 if (keyWord(t.core) === wk && sim(tf, wf) >= floor) record(i, 1, word, 0.9);
             }
         }
