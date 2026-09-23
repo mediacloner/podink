@@ -129,6 +129,10 @@ const scanOne = async (episodeId, force) => {
     // People first: offline and quick, and the book lookup then sees the
     // author as the notes spell her rather than as the recogniser heard her.
     await indexEpisodeNames(episodeId, { force });
+    // An episode the tag pass has read (services/entityIndex.js) has its books
+    // from the model, author and all, confirmed by the same catalogues; the
+    // title scan would only lay its regex guesses beside them.
+    if (ep.entities_indexed_at) return null;
     if (ep.books_indexed_at && !force) return null;
     const rows = await getCorrectedTranscript(episodeId);
     if (!rows.length) return null;

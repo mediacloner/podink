@@ -372,9 +372,10 @@ export const isIndexingEntities = (episodeId) => _running.has(episodeId);
  * to the pass's answer, or null when the switch is off, there is no key, or
  * the run failed — the sheet in the Player offers it again either way.
  */
+export const willTagAuto = async () => (await isAutoTagOn()) && !!(await getOpenAIKey());
+
 export const tagIfAuto = async (episodeId) => {
-    if (!(await isAutoTagOn())) return null;
-    if (!(await getOpenAIKey())) return null;
+    if (!(await willTagAuto())) return null;
     try {
         return await indexEpisodeEntities(episodeId);
     } catch (e) {

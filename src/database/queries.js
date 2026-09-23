@@ -652,7 +652,8 @@ export const getEpisodesNeedingBookScan = async (staleBefore = 0) => {
   const rows = await db.getAllAsync(
     `SELECT e.id FROM Episodes e
      LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
-     WHERE e.has_transcript = 1 AND (e.books_indexed_at IS NULL OR e.books_indexed_at < ?) AND ${NOT_RADIO}
+     WHERE e.has_transcript = 1 AND (e.books_indexed_at IS NULL OR e.books_indexed_at < ?)
+       AND e.entities_indexed_at IS NULL AND ${NOT_RADIO}
      ORDER BY COALESCE(e.last_played_at, 0) DESC, COALESCE(e.downloaded_at, 0) DESC`,
     [staleBefore]
   );

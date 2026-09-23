@@ -38,8 +38,9 @@ import {
 } from '../database/queries';
 import { notifyLibraryChange } from './libraryEvents';
 import { indexEpisodeBooks } from './bookIndex';
+import { indexEpisodeNames } from './nameIndex';
 import { analyzeIfAuto } from './aiService';
-import { tagIfAuto } from './entityIndex';
+import { tagIfAuto, willTagAuto } from './entityIndex';
 import { log } from './logService';
 import { splitSentences } from './sentenceBoundary';
 import { alignEpisodeWithAsr } from './bookService';
@@ -727,7 +728,14 @@ const _process = async (entry) => {
         // the corrections are written. analyzeIfAuto resolves null when the
         // switch is off, there is no key, or the request failed — then the
         // scan runs here instead, on the transcript as recognised.
-        const scanBooks = () => indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
+        // Where the tag pass follows (the switch on, a key saved), it brings the
+        // books itself, author and all — the title scan stands aside, and only
+        // the names pass, which the scan would have run first, still goes
+        // ahead so the model reads the names as the notes spell them.
+        const willTag = await willTagAuto();
+        const scanBooks = willTag
+            ? () => indexEpisodeNames(entry.id, { force: true }).catch(() => {})
+            : () => indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
         // Last of all, when switched on: what the episode names, read from the
         // text the assistant has corrected (entityIndex.tagIfAuto).
         const tag = () => tagIfAuto(entry.id).catch(() => {});
