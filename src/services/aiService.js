@@ -270,6 +270,10 @@ const preparePass = (ep, rows, notes) => {
     return { sentences, lines, durationMs, head: describeEpisode(ep, durationMs, notes), parts: splitParts(lines) };
 };
 
+/** The same preparation, for a pass that lives in its own service
+ *  (services/entityIndex.js): the sentences, the head and the parts. */
+export const episodeParts = (ep, rows, notes = '') => preparePass(ep, rows, notes);
+
 // ─── Answers → rows ──────────────────────────────────────────────────────────
 
 const parseClock = (s) => {

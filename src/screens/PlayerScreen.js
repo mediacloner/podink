@@ -20,8 +20,10 @@ import {
 import {
     getSyncingId, isBookTranscript, isSyncing, needsSync, onBookSyncChange, queueVoiceSync, textDoesNotFit,
 } from '../services/bookService';
-import { getEpisodeById, getEpisodeBooks, getMaiTranscript } from '../database/queries';
+import { getEpisodeById, getEpisodeBooks, getEpisodeEntities, getMaiTranscript } from '../database/queries';
 import CloudTranscriptSheet from '../components/transcript/CloudTranscriptSheet';
+import EntitiesSheet from '../components/transcript/EntitiesSheet';
+import EntitySheet from '../components/transcript/EntitySheet';
 import { buildTranscriptExport, shareText } from '../components/transcript/share';
 import { indexEpisodeBooks } from '../services/bookIndex';
 import { getCorrectedTranscript, indexEpisodeNames } from '../services/nameIndex';
@@ -113,8 +115,12 @@ const PlayerScreen = ({ route, navigation }) => {
     const [mai, setMai] = useState({ run: null, segments: [] });   // the cloud transcript, when one was paid for
     const [viewMai, setViewMai] = useState(false);
     const [cloudSheet, setCloudSheet] = useState(false);
+    const [entitiesSheet, setEntitiesSheet] = useState(false);
+    const [entityCard, setEntityCard] = useState(null);   // { entity, startMs } over the list
     // Books the transcript mentions (EpisodeBooks rows) — bold titles + book card.
     const [books, setBooks] = useState([]);
+    // What the episode names (EpisodeEntities), marked in the text like books.
+    const [entities, setEntities] = useState([]);
     const [chapterSheet, setChapterSheet] = useState(false);   // the summary-and-chapters card
     const [transcriptLoading, setTranscriptLoading] = useState(false);
     const [audioStatus, setAudioStatus] = useState('');
@@ -352,6 +358,10 @@ const PlayerScreen = ({ route, navigation }) => {
         getEpisodeBooks(epId).then(rows => { if (alive) setBooks(rows); }).catch(() => {});
         return () => { alive = false; };
     }, [epId]);
+    const refetchEntities = useCallback(async () => {
+        try { setEntities(await getEpisodeEntities(epId)); } catch (_) {}
+    }, [epId]);
+    useEffect(() => { setEntities([]); refetchEntities(); }, [refetchEntities]);
     useEffect(() => {
         // Not while the text is still growing: the finished job scans it.
         if (!ep || !segments.length || ep.books_indexed_at || isRadio || transcribing || isQueued) return;
@@ -409,6 +419,8 @@ const PlayerScreen = ({ route, navigation }) => {
                     bookSyncAskedRef.current = false;
                     showAlert('The text could not be matched', payload.error || 'Please try again.');
                 }
+            } else if (payload.type === 'entities-indexed') {
+                refetchEntities();
             } else if (payload.type === 'books-indexed') {
                 refetchBooks();
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
@@ -436,7 +448,7 @@ const PlayerScreen = ({ route, navigation }) => {
             unsub();
             if (st.timer) clearTimeout(st.timer);
         };
-    }, [epId, refetchTranscript, refetchMai, navigation]);
+    }, [epId, refetchTranscript, refetchMai, refetchEntities, navigation]);
 
     // ── Transcription queue state for this episode ────────────────────────────
     // Matching the book text to the voice (bookService's own queue).
@@ -591,16 +603,19 @@ const PlayerScreen = ({ route, navigation }) => {
     // The header gets a softened version of the cover colour (hue kept,
     // saturation capped, lightness pinned to a theme band) — the raw colour
     // was fine as an accent but far too loud as a full-width surface.
-    const headerTint = colorInfo ? softenForHeader(colorInfo.bgColor, isDark) : null;
-    const headerBg = headerTint?.hex ?? colors.surfaceElevated;
-    // Header text must read against the artwork tint, not the theme. The dark
-    // theme keeps its always-white text; paper flips to cream on dark tints.
-    // The drop-shadow exists only to lift text off a dark tint, so it is
-    // *added* there rather than removed elsewhere: on Android a
-    // `textShadowColor: 'transparent'` override still drew the default dark
-    // shadow, which is what smudged the Paper header.
-    const headerIsDark = headerTint ? headerTint.isDark : isDark;
-    const headerFg = !isDark && headerIsDark ? colors.onAccent : colors.textPrimary;
+    // The header is the paper header in both themes — the same tint band and
+    // the same inks whatever the page below it is doing (user: "I want the
+    // same colors of the header on player for light theme and dark, have to
+    // preserve light theme"). So the paper palette is used here by name.
+    const headerTint = colorInfo ? softenForHeader(colorInfo.bgColor, false) : null;
+    const headerBg = headerTint?.hex ?? THEMES.paper.surfaceElevated;
+    // Header text must read against the artwork tint, not the theme: paper
+    // ink on a light tint, cream on a dark one. The drop-shadow exists only to
+    // lift text off a dark tint, so it is *added* there rather than removed
+    // elsewhere: on Android a `textShadowColor: 'transparent'` override still
+    // drew the default dark shadow, which is what smudged the Paper header.
+    const headerIsDark = headerTint ? headerTint.isDark : false;
+    const headerFg = headerIsDark ? THEMES.paper.onAccent : THEMES.paper.textPrimary;
     const headerTextStyle = [
         { color: headerFg },
         headerIsDark && styles.headerTextShadow,
@@ -655,6 +670,17 @@ const PlayerScreen = ({ route, navigation }) => {
                         accessibilityLabel='Cloud transcription'
                     >
                         <Icon name='cloud' size={18} color={withAlpha(headerFg, viewMai ? 1 : 0.75)} />
+                    </TouchableOpacity>
+                )}
+                {!isRadio && hasTranscript && displaySegments.length > 0 && (
+                    <TouchableOpacity
+                        onPress={() => setEntitiesSheet(true)}
+                        hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
+                        style={styles.radioStop}
+                        accessibilityRole='button'
+                        accessibilityLabel='What this episode names'
+                    >
+                        <Icon name='tag' size={18} color={withAlpha(headerFg, 0.75)} />
                     </TouchableOpacity>
                 )}
                 {!isRadio && hasTranscript && displaySegments.length > 0 && (
@@ -758,6 +784,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         episodeTitle={ep.title}
                         podcastTitle={ep.podcast_title}
                         books={books}
+                        entities={entities}
                     />
                 )}
 
@@ -817,6 +844,18 @@ const PlayerScreen = ({ route, navigation }) => {
                         refetchTranscript();
                         getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
                     }}
+                />
+                <EntitiesSheet
+                    visible={entitiesSheet && !entityCard}
+                    onClose={() => setEntitiesSheet(false)}
+                    episode={ep}
+                    onOpenEntity={setEntityCard}
+                    onOpenSettings={openSettingsFromSheet}
+                />
+                <EntitySheet
+                    data={entityCard}
+                    onClose={() => setEntityCard(null)}
+                    onReplay={(ms) => { setEntityCard(null); setEntitiesSheet(false); seekFromChapter(ms); }}
                 />
                 <ChapterSheet
                     visible={chapterSheet}

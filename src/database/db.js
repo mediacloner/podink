@@ -3,7 +3,7 @@ import * as SQLite from 'expo-sqlite';
 let _db = null;
 let _dbPromise = null;
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 export const openDatabaseContext = () => {
     if (_db) return Promise.resolve(_db);
@@ -411,6 +411,45 @@ const migrateToV12 = async (txn) => {
     if (!have.has('book_range')) await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN book_range TEXT`);
 };
 
+const migrateToV16 = async (txn) => {
+    // What an episode names (5.5.0, services/entityIndex.js): the people,
+    // places, books, films, programmes and records its speakers talk about.
+    // `surface` is the recogniser's own spelling, `canonical` what the thing
+    // is really called and `hint` what the episode said that tells one from
+    // another — the author, the year, the director — which is what the
+    // catalogue lookup searches with. The rest is filled in by whichever
+    // catalogue answered: `source` NULL means none did, `resolved_at` NULL
+    // that none has been asked yet.
+    await txn.execAsync(
+        `CREATE TABLE IF NOT EXISTS EpisodeEntities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            episode_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            surface TEXT NOT NULL,
+            canonical TEXT NOT NULL,
+            hint TEXT,
+            context TEXT,
+            count INTEGER NOT NULL DEFAULT 1,
+            first_ms INTEGER,
+            source TEXT,
+            source_url TEXT,
+            image_url TEXT,
+            subtitle TEXT,
+            facts TEXT,
+            blurb TEXT,
+            rating REAL,
+            ratings_count INTEGER,
+            resolved_at INTEGER,
+            FOREIGN KEY (episode_id) REFERENCES Episodes(id) ON DELETE CASCADE
+        );`
+    );
+    await txn.execAsync('CREATE INDEX IF NOT EXISTS idx_entities_episode ON EpisodeEntities(episode_id, first_ms)');
+    const cols = await txn.getAllAsync(`PRAGMA table_info(Episodes)`);
+    if (!cols.some(c => c.name === 'entities_indexed_at')) {
+        await txn.execAsync(`ALTER TABLE Episodes ADD COLUMN entities_indexed_at INTEGER`);
+    }
+};
+
 const migrateToV15 = async (txn) => {
     // Statistics (5.1.0, screens/StatsScreen.js): what was really listened to,
     // and what the paid passes cost.
@@ -525,6 +564,7 @@ export const initDB = async () => {
         `);
         if (cur < 14) await migrateToV14(db);
         if (cur < 15) await migrateToV15(db);
+        if (cur < 16) await migrateToV16(db);
         await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
         await db.execAsync('COMMIT');
     } catch (e) {

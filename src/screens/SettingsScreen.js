@@ -23,6 +23,7 @@ import {
 } from '../services/aiService';
 import { showAlert } from '../components/AppAlert';
 import { OPENROUTER_KEY } from '../services/maiTranscriptionService';
+import { TMDB_KEY_KEY } from '../api/tmdb';
 import { useTheme, useStyles, withAlpha, type, THEMES, THEME_OPTIONS } from '../theme';
 
 // Learning-focused copy overrides for the model picker.
@@ -102,6 +103,9 @@ const SettingsScreen = () => {
     const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
     const [aiAuto, setAiAuto] = useState(false);
     const [aiFix, setAiFix] = useState(true);
+    const [tmdbKey, setTmdbKey] = useState('');
+    const [tmdbDraft, setTmdbDraft] = useState('');
+    const [tmdbEditing, setTmdbEditing] = useState(false);
     const [openRouterKey, setOpenRouterKey] = useState('');
     const [openRouterDraft, setOpenRouterDraft] = useState('');
     const [openRouterEditing, setOpenRouterEditing] = useState(false);
@@ -146,6 +150,7 @@ const SettingsScreen = () => {
 
     useEffect(() => { loadPreference(); loadLearningPrefs(); loadAssistantPrefs(); }, []);
     useEffect(() => { AsyncStorage.getItem(OPENROUTER_KEY).then(k => setOpenRouterKey((k || '').trim())).catch(() => {}); }, []);
+    useEffect(() => { AsyncStorage.getItem(TMDB_KEY_KEY).then(k => setTmdbKey((k || '').trim())).catch(() => {}); }, []);
     useEffect(() => { checkModelStatus(selectedModel); }, [selectedModel]);
 
     // A stack screen since 2.3.0 (opened from the header gear), so it styles
@@ -1110,6 +1115,54 @@ const SettingsScreen = () => {
                             <Text style={styles.tokenSaved}>{maskToken(openRouterKey)}</Text>
                             <TouchableOpacity style={styles.smallBtnGhost} onPress={() => setOpenRouterEditing(true)} accessibilityRole="button"><Text style={styles.smallBtnGhostText}>Change</Text></TouchableOpacity>
                             <TouchableOpacity style={styles.smallBtnGhost} onPress={async () => { await AsyncStorage.removeItem(OPENROUTER_KEY); setOpenRouterKey(''); }} accessibilityRole="button"><Text style={[styles.smallBtnGhostText, { color: colors.danger }]}>Remove</Text></TouchableOpacity>
+                        </View>
+                    )}
+                </View>
+            </View>
+
+            <Text style={styles.sectionLabel}>FILMS AND TELEVISION</Text>
+            <View style={styles.card}>
+                <View style={styles.settingBlock}>
+                    <View style={styles.settingHead}>
+                        <Icon name="film" size={15} color={colors.accent} />
+                        <Text style={styles.settingTitle}>TMDB API key</Text>
+                    </View>
+                    <Text style={[styles.settingHint, styles.indent]}>
+                        Optional, and free: a key from a themoviedb.org account gives the films and programmes an episode names their poster, their rating and a link to IMDb, which has no open API of its own. Without one they still get a card, from Wikipedia. Books, records, people and places need no key at all.
+                    </Text>
+                    {tmdbEditing || !tmdbKey ? (
+                        <View style={[styles.tokenRow, styles.indent]}>
+                            <TextInput
+                                style={styles.tokenInput}
+                                value={tmdbDraft}
+                                onChangeText={setTmdbDraft}
+                                placeholder="TMDB API key"
+                                placeholderTextColor={colors.textFaint}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                secureTextEntry
+                                accessibilityLabel="TMDB API key"
+                            />
+                            <TouchableOpacity
+                                style={[styles.smallBtn, !tmdbDraft.trim() && styles.smallBtnDisabled]}
+                                disabled={!tmdbDraft.trim()}
+                                onPress={async () => {
+                                    const key = tmdbDraft.trim();
+                                    await AsyncStorage.setItem(TMDB_KEY_KEY, key);
+                                    setTmdbKey(key);
+                                    setTmdbDraft('');
+                                    setTmdbEditing(false);
+                                }}
+                                accessibilityRole="button"
+                            ><Text style={styles.smallBtnText}>Save</Text></TouchableOpacity>
+                            {!!tmdbKey && <TouchableOpacity style={styles.smallBtnGhost} onPress={() => setTmdbEditing(false)} accessibilityRole="button"><Text style={styles.smallBtnGhostText}>Cancel</Text></TouchableOpacity>}
+                        </View>
+                    ) : (
+                        <View style={[styles.tokenRow, styles.indent]}>
+                            <Icon name="check-circle" size={14} color={colors.success} />
+                            <Text style={styles.tokenSaved}>{maskToken(tmdbKey)}</Text>
+                            <TouchableOpacity style={styles.smallBtnGhost} onPress={() => setTmdbEditing(true)} accessibilityRole="button"><Text style={styles.smallBtnGhostText}>Change</Text></TouchableOpacity>
+                            <TouchableOpacity style={styles.smallBtnGhost} onPress={async () => { await AsyncStorage.removeItem(TMDB_KEY_KEY); setTmdbKey(''); }} accessibilityRole="button"><Text style={[styles.smallBtnGhostText, { color: colors.danger }]}>Remove</Text></TouchableOpacity>
                         </View>
                     )}
                 </View>

@@ -38,9 +38,18 @@ export const isYouTubeFeedUrl = (feedUrl) => typeof feedUrl === 'string' && feed
 // Every episode row carries its collection's kind and author, so screens can
 // tell a chapter of an imported book (no feed, no re-download, its file *is*
 // the episode) from a podcast episode without a second query.
+// books_count is the books the episode names by either route — the title scan
+// (EpisodeBooks) and the entity pass (EpisodeEntities, type book) — counted
+// once per title, so the badge on the list agrees with what the episode shows
+// inside (user: "in list of podcast identify the book and put 2 meanwhile
+// inside appear 3").
 const EPISODE_WITH_IMAGE = `
   SELECT e.*, p.image_url, p.kind AS podcast_kind, p.author AS podcast_author,
-         (SELECT COUNT(*) FROM EpisodeBooks b WHERE b.episode_id = e.id AND b.first_ms IS NOT NULL) AS books_count
+         (SELECT COUNT(*) FROM (
+            SELECT lower(b.title) AS t FROM EpisodeBooks b WHERE b.episode_id = e.id AND b.first_ms IS NOT NULL
+            UNION
+            SELECT lower(x.canonical) FROM EpisodeEntities x WHERE x.episode_id = e.id AND x.type = 'book'
+          )) AS books_count
   FROM Episodes e
   LEFT JOIN Podcasts p ON p.feed_url = e.podcast_feed_url
 `;
@@ -404,6 +413,46 @@ export const saveMaiTranscript = async (episodeId, segments, { costUsd = null, a
  * own table: it was paid for, while the phone's can be made again for
  * nothing. Resolves the number of rows written.
  */
+/** What the episode names, newest scan replacing the last (entityIndex.js). */
+export const replaceEpisodeEntities = async (episodeId, entities) => {
+  const db = await openDatabaseContext();
+  await runInTxn(db, async () => {
+    await db.runAsync('DELETE FROM EpisodeEntities WHERE episode_id = ?', [episodeId]);
+    for (const e of entities) {
+      await db.runAsync(
+        `INSERT INTO EpisodeEntities (episode_id, type, surface, canonical, hint, context, count, first_ms,
+                                      source, source_url, image_url, subtitle, facts, blurb, rating, ratings_count, resolved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [episodeId, e.type, e.surface, e.canonical, e.hint || null, e.context || null,
+         e.count || 1, e.firstMs ?? null, e.source || null, e.sourceUrl || null, e.imageUrl || null,
+         e.subtitle || null, e.facts || null, e.blurb || null,
+         e.rating ?? null, e.ratingsCount ?? null, e.resolvedAt ?? null]
+      );
+    }
+    await db.runAsync('UPDATE Episodes SET entities_indexed_at = ? WHERE id = ?', [Date.now(), episodeId]);
+  });
+};
+
+export const getEpisodeEntities = async (episodeId) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    'SELECT * FROM EpisodeEntities WHERE episode_id = ? ORDER BY first_ms IS NULL, first_ms',
+    [episodeId]
+  );
+};
+
+/** One entity's catalogue answer, written when its lookup comes back. */
+export const saveEntityResolution = async (id, r = {}) => {
+  const db = await openDatabaseContext();
+  await db.runAsync(
+    `UPDATE EpisodeEntities SET source = ?, source_url = ?, image_url = ?, subtitle = ?,
+            facts = ?, blurb = ?, rating = ?, ratings_count = ?, resolved_at = ?
+       WHERE id = ?`,
+    [r.source || null, r.sourceUrl || null, r.imageUrl || null, r.subtitle || null,
+     r.facts || null, r.blurb || null, r.rating ?? null, r.ratingsCount ?? null, Date.now(), id]
+  );
+};
+
 export const promoteMaiTranscript = async (episodeId) => {
   const db = await openDatabaseContext();
   const source = await db.getAllAsync(
@@ -434,12 +483,12 @@ export const promoteMaiTranscript = async (episodeId) => {
         params
       );
     }
-    for (const table of ['EpisodeNames', 'EpisodeFixes', 'EpisodeChapters', 'EpisodeBooks']) {
+    for (const table of ['EpisodeNames', 'EpisodeFixes', 'EpisodeChapters', 'EpisodeBooks', 'EpisodeEntities']) {
       await db.runAsync(`DELETE FROM ${table} WHERE episode_id = ?`, [episodeId]);
     }
     await db.runAsync(
       `UPDATE Episodes SET has_transcript = 1, transcript_source = 'cloud', transcript_aligned = 0,
-              names_indexed_at = NULL, books_indexed_at = NULL, summary = NULL,
+              names_indexed_at = NULL, books_indexed_at = NULL, summary = NULL, entities_indexed_at = NULL,
               ai_indexed_at = NULL, ai_model = NULL, repunctuated_at = NULL
          WHERE id = ?`,
       [episodeId]
@@ -477,11 +526,12 @@ export const deleteEpisodeTranscript = async (id, { includeMai = false } = {}) =
     await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeEntities WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [id]);
     await db.runAsync(
       `UPDATE Episodes SET has_transcript = 0, books_indexed_at = NULL, names_indexed_at = NULL,
               summary = NULL, ai_indexed_at = NULL, ai_model = NULL, repunctuated_at = NULL,
-              transcript_source = NULL, transcript_aligned = 0
+              transcript_source = NULL, transcript_aligned = 0, entities_indexed_at = NULL
        WHERE id = ?`,
       [id]
     );
@@ -700,6 +750,7 @@ export const deleteEpisodeLocalData = async (id) => {
     await db.runAsync(`DELETE FROM EpisodeBooks WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeNames WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [id]);
+    await db.runAsync(`DELETE FROM EpisodeEntities WHERE episode_id = ?`, [id]);
     await db.runAsync(`DELETE FROM EpisodeFixes WHERE episode_id = ?`, [id]);
     await db.runAsync(
       `UPDATE Episodes SET local_audio_path = NULL, is_downloaded = 0, has_transcript = 0, downloaded_at = NULL,

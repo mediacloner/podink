@@ -55,6 +55,15 @@ const dark = {
     transcriptGlow: 'rgba(79,172,254,0.75)',
     transcriptGlowRadius: 14,
     transcriptHighlight: '#4FACFE',
+    // A name the episode mentions (a person, a place, a film…) sits on a
+    // cream band — a shade quieter than the current word's, so the two are
+    // never confused (user: "I want a cream yellow color to highlight").
+    nameBand: '#D9C56E',
+    nameBandAlpha: 0.22,
+    // The words on that band read like text already spoken, not the
+    // brightest ink — white on cream glares on the dark page (user: "in dark
+    // mode the text of highlight have to be like past text reader").
+    nameInk: '#A09078',
     transcriptHighlightAlpha: 0,
 };
 
@@ -102,6 +111,9 @@ const paper = {
     transcriptGlowRadius: 0,
     transcriptHighlight: '#FFD24D',
     transcriptHighlightAlpha: 0.55,
+    nameBand: '#F9ECC0',
+    nameBandAlpha: 0.7,
+    nameInk: '#1B1814',
 };
 
 export const THEMES = { dark, paper };

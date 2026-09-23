@@ -31,6 +31,7 @@ import PositionFeeder from './transcript/PositionFeeder';
 import TranslationModal from './transcript/TranslationModal';
 import WordPopover from './transcript/WordPopover';
 import BookSheet from './transcript/BookSheet';
+import EntitySheet from './transcript/EntitySheet';
 import { buildBookMarks } from '../services/bookText';
 import { isSentenceEnd } from '../services/sentenceBoundary';
 
@@ -265,6 +266,15 @@ const keyExtractor = (item) => item.id;
 const EMPTY_BOOKS = Object.freeze([]);
 const NO_MARKS = new Int32Array(0);
 
+// An entity's mark id: negative, so a tap knows it is not an EpisodeBooks row,
+// and past ENTITY_BOOK_OFFSET when the entity is a book, so the band knows to
+// stay purple. Ids are small integers; Int32 has room to spare.
+const ENTITY_BOOK_OFFSET = 1000000000;
+const encodeEntityId = (e) => -(Number(e.id) + (e.type === 'book' ? ENTITY_BOOK_OFFSET : 0));
+const decodeEntityId = (id) => { const raw = -Number(id); return raw >= ENTITY_BOOK_OFFSET ? raw - ENTITY_BOOK_OFFSET : raw; };
+/** True for a mark that is a name rather than a book, from either path. */
+const isNameMark = (id) => { const n = Number(id); return n < 0 && -n < ENTITY_BOOK_OFFSET; };
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const TranscriptHighlighter = forwardRef(({
@@ -311,6 +321,11 @@ const TranscriptHighlighter = forwardRef(({
     // EpisodeBooks rows (services/bookIndex.js): their titles are set in
     // bold wherever the transcript says them, and a tap opens the book card.
     books = EMPTY_BOOKS,
+    // EpisodeEntities rows (services/entityIndex.js): the people, places,
+    // films and the rest the episode names, marked the same way and opening
+    // their own card (user: "the names of list should have highlighted in
+    // transcription and when clic go to card").
+    entities = EMPTY_BOOKS,
 }, ref) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -966,12 +981,24 @@ const TranscriptHighlighter = forwardRef(({
     // ── Book marks: word globalIndex → EpisodeBooks id (0 = plain word) ──────
     // One typed array for the whole transcript, rebuilt when the text or the
     // book list changes; every Chunk reads its own words from it.
-    const wordBook = useMemo(
-        () => (books?.length && computed.chunks.length ? buildBookMarks(computed.chunks, books) : NO_MARKS),
-        [computed, books],
-    );
+    // Entities share the array as negative ids: the matcher wants a title and
+    // the spellings that were heard, which an entity has too. Books go first,
+    // so a title wins where the two overlap. A book the entity pass found is
+    // still a book — it keeps the purple band whichever path found it — so
+    // the kind rides in the id (encodeEntityId).
+    const wordBook = useMemo(() => {
+        if (!computed.chunks.length || (!books?.length && !entities?.length)) return NO_MARKS;
+        const marked = [
+            ...(books || []),
+            ...(entities || []).filter(e => Number(e.id) > 0)
+                .map(e => ({ id: encodeEntityId(e), title: e.canonical, heard_as: [e.surface] })),
+        ];
+        return buildBookMarks(computed.chunks, marked);
+    }, [computed, books, entities]);
     const booksRef = useRef(books);
     useEffect(() => { booksRef.current = books; }, [books]);
+    const entitiesRef = useRef(entities);
+    useEffect(() => { entitiesRef.current = entities; }, [entities]);
 
     // ── Pause while looking up (Settings toggle) ─────────────────────────────
     // Opening a word or sentence card pauses playback; closing it resumes —
@@ -1089,12 +1116,31 @@ const TranscriptHighlighter = forwardRef(({
 
     // ── Book card (tap on a bold title) ──────────────────────────────────────
     const [bookSheet, setBookSheet] = useState(null);
+    const [entitySheet, setEntitySheet] = useState(null);
     const onBookPress = useCallback((bookId, startMs) => {
-        const book = (booksRef.current || []).find(b => Number(b.id) === Number(bookId));
+        const id = Number(bookId);
+        if (id < 0) {                                  // a person, a place, a film…
+            const entityId = decodeEntityId(id);
+            const entity = (entitiesRef.current || []).find(e => Number(e.id) === entityId);
+            if (!entity) return;
+            setEntitySheet({ entity, startMs: Math.round(startMs || 0) });
+            pauseForLookup();
+            return;
+        }
+        const book = (booksRef.current || []).find(b => Number(b.id) === id);
         if (!book) return;
         setBookSheet({ book, startMs: Math.round(startMs || 0) });
         pauseForLookup();
     }, [pauseForLookup]);
+    const closeEntitySheet = useCallback(() => {
+        setEntitySheet(null);
+        resumeAfterLookup();
+    }, [resumeAfterLookup]);
+    const onEntityReplay = useCallback((ms) => {
+        setEntitySheet(null);
+        doSeek(ms);
+        resumeAfterLookup();
+    }, [doSeek, resumeAfterLookup]);
     const closeBookSheet = useCallback(() => {
         setBookSheet(null);
         resumeAfterLookup();
@@ -1286,6 +1332,7 @@ const TranscriptHighlighter = forwardRef(({
                 onReplay={onWordReplay}
             />
             <BookSheet data={bookSheet} onClose={closeBookSheet} onReplay={onBookReplay} />
+            <EntitySheet data={entitySheet} onClose={closeEntitySheet} onReplay={onEntityReplay} />
 
             {statusPane ?? (
                 <>
@@ -1665,7 +1712,7 @@ const Chunk = React.memo(({
                         return (
                             <Text key={run.key}>
                                 <Text
-                                    style={styles.bookTitle}
+                                    style={isNameMark(run.bookId) ? styles.nameTitle : styles.bookTitle}
                                     suppressHighlighting
                                     onPress={() => onBookPress(run.bookId, run.startMs)}
                                 >
@@ -1723,20 +1770,30 @@ const Word = React.memo(({
     const highlightOn  = withAlpha(transcriptHighlight, transcriptHighlightAlpha);
     const highlightOff = withAlpha(transcriptHighlight, 0);
     // A book title: a purple band with the primary text colour, spoken or
-    // not. Decided inside the animated style — an animated colour applied
+    // not; a name the episode mentions (negative id): the same on a cream
+    // band. Decided inside the animated style — an animated colour applied
     // natively wins over any static style in the array.
     const isBook = !!bookId;
-    const bookBand = withAlpha(colors.purple, 0.26);
-    const bookText = colors.textPrimary;
+    const bookBand = isNameMark(bookId)
+        ? withAlpha(colors.nameBand, colors.nameBandAlpha)
+        : withAlpha(colors.purple, 0.26);
+    const bookText = isNameMark(bookId) ? colors.nameInk : colors.textPrimary;
     const animStyle = useAnimatedStyle(() => {
         if (isBook) {
-            return {
-                color: bookText,
-                backgroundColor: bookBand,
-                textShadowColor: 'transparent',
+            // The band stays, so the mark reads as one thing before and after
+            // it is said — but the word being spoken lights up like any other
+            // (user: "when pass by highlight dont illuminate"). Future and
+            // spoken words share the band's ink; only the active one changes.
+            const style = {
+                color: interpolateColor(colorState.value, [1, 2], [bookText, transcriptActive]),
+                textShadowColor: interpolateColor(colorState.value, [1, 2], ['transparent', transcriptGlow]),
                 textShadowOffset: { width: 0, height: 0 },
-                textShadowRadius: 0,
+                textShadowRadius: interpolate(colorState.value, [1, 2], [0, transcriptGlowRadius], 'clamp'),
+                backgroundColor: hasHighlight
+                    ? interpolateColor(colorState.value, [1, 2], [bookBand, highlightOn])
+                    : bookBand,
             };
+            return style;
         }
         const style = {
             color: interpolateColor(colorState.value, [0, 1, 2], [transcriptFuture, transcriptSpoken, transcriptActive]),
@@ -1807,6 +1864,7 @@ const makeStyles = (colors) => StyleSheet.create({
     // purple behind the words, text in the primary colour — bold alone
     // vanished in the dimmed past/future text of both themes.
     bookTitle: { backgroundColor: withAlpha(colors.purple, 0.26), color: colors.textPrimary, fontWeight: '600' },
+    nameTitle: { backgroundColor: withAlpha(colors.nameBand, colors.nameBandAlpha), color: colors.nameInk, fontWeight: '600' },
 
     keypointRow: {
         flexDirection: 'row',

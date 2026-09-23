@@ -9,6 +9,15 @@ import { USER_AGENT } from './userAgent';
 // Wikimedia asks every client for an identifying User-Agent.
 export const WIKIPEDIA_HEADERS = { 'User-Agent': USER_AGENT, Accept: 'application/json' };
 
+/** An <Image> source for a picture that may be Wikimedia's: their servers
+ *  refuse an image request without a real User-Agent, and React Native's
+ *  default is one they refuse. Other hosts get the bare URL. */
+export const imageSourceFor = (uri) => (
+    /(?:wikimedia|wikipedia)\.org\//.test(String(uri || ''))
+        ? { uri, headers: { 'User-Agent': USER_AGENT } }
+        : { uri }
+);
+
 const slugOf = (title) => encodeURIComponent(title.trim().replace(/ /g, '_'));
 const summaryUrl = (lang, title) => `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${slugOf(title)}`;
 const wikitextUrl = (lang, title) =>
@@ -63,6 +72,19 @@ export const fetchWikipediaSummary = async (title, lang = 'en', signal) => {
         disambiguation: d.type === 'disambiguation',
         lang,
     };
+};
+
+/** Titles Wikipedia's own search returns for a query, best first. Used when
+ *  an exact title is the wrong sense of a word — "Stern" the ship's back
+ *  rather than Stern the dealer — so the episode's own hint can be searched
+ *  with (services/entityIndex.js). */
+export const searchWikipediaTitles = async (query, { lang = 'en', limit = 5, signal } = {}) => {
+    const q = String(query || '').trim();
+    if (!q) return [];
+    const url = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&format=json`
+        + `&srlimit=${limit}&srsearch=${encodeURIComponent(q)}`;
+    const d = await getJson(url, signal);
+    return (d?.query?.search || []).map(r => r.title).filter(Boolean);
 };
 
 const titleCase = (s) => s.split(' ').map(w => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ');
