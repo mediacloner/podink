@@ -39,6 +39,7 @@ import {
 import { notifyLibraryChange } from './libraryEvents';
 import { indexEpisodeBooks } from './bookIndex';
 import { analyzeIfAuto } from './aiService';
+import { tagIfAuto } from './entityIndex';
 import { log } from './logService';
 import { splitSentences } from './sentenceBoundary';
 import { alignEpisodeWithAsr } from './bookService';
@@ -727,10 +728,13 @@ const _process = async (entry) => {
         // switch is off, there is no key, or the request failed — then the
         // scan runs here instead, on the transcript as recognised.
         const scanBooks = () => indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
+        // Last of all, when switched on: what the episode names, read from the
+        // text the assistant has corrected (entityIndex.tagIfAuto).
+        const tag = () => tagIfAuto(entry.id).catch(() => {});
         // Book text needs no assistant pass (nothing was misheard); the books
         // it mentions are still worth finding.
-        if (alignMode) scanBooks();
-        else analyzeIfAuto(entry.id).then(done => { if (!done) scanBooks(); }, scanBooks);
+        if (alignMode) scanBooks().then(tag);
+        else analyzeIfAuto(entry.id).then(done => (done ? undefined : scanBooks()), scanBooks).then(tag);
 
         log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length });
         entry.resolve(segments);

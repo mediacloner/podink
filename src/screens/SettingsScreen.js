@@ -19,7 +19,7 @@ import {
 } from '../services/dictionaryService';
 import { onLibraryChange } from '../services/libraryEvents';
 import {
-    AI_AUTO_KEY, AI_FIX_KEY, AI_MODEL_KEY, AI_MODELS, DEFAULT_AI_MODEL, OPENAI_KEY_KEY, estimateEpisodeCost, resolveAIModel,
+    AI_AUTO_KEY, AI_AUTO_TAG_KEY, AI_FIX_KEY, AI_MODEL_KEY, AI_MODELS, DEFAULT_AI_MODEL, OPENAI_KEY_KEY, estimateEpisodeCost, resolveAIModel,
 } from '../services/aiService';
 import { showAlert } from '../components/AppAlert';
 import { OPENROUTER_KEY } from '../services/maiTranscriptionService';
@@ -103,6 +103,7 @@ const SettingsScreen = () => {
     const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
     const [aiAuto, setAiAuto] = useState(false);
     const [aiFix, setAiFix] = useState(true);
+    const [aiTag, setAiTag] = useState(false);
     const [tmdbKey, setTmdbKey] = useState('');
     const [tmdbDraft, setTmdbDraft] = useState('');
     const [tmdbEditing, setTmdbEditing] = useState(false);
@@ -205,16 +206,18 @@ const SettingsScreen = () => {
 
     const loadAssistantPrefs = async () => {
         try {
-            const [key, model, auto, fix] = await Promise.all([
+            const [key, model, auto, fix, tag] = await Promise.all([
                 AsyncStorage.getItem(OPENAI_KEY_KEY),
                 AsyncStorage.getItem(AI_MODEL_KEY),
                 AsyncStorage.getItem(AI_AUTO_KEY),
                 AsyncStorage.getItem(AI_FIX_KEY),
+                AsyncStorage.getItem(AI_AUTO_TAG_KEY),
             ]);
             setAiKey((key || '').trim());
             setAiModel(resolveAIModel(model));
             setAiAuto(auto === '1');
             setAiFix(fix !== '0');
+            setAiTag(tag === '1');
         } catch (e) {}
     };
     const saveAiKey = async () => {
@@ -238,6 +241,10 @@ const SettingsScreen = () => {
     const saveAiFix = async (on) => {
         setAiFix(on);
         try { await AsyncStorage.setItem(AI_FIX_KEY, on ? '1' : '0'); } catch (e) {}
+    };
+    const saveAiTag = async (on) => {
+        setAiTag(on);
+        try { await AsyncStorage.setItem(AI_AUTO_TAG_KEY, on ? '1' : '0'); } catch (e) {}
     };
 
     const saveTranslationLang = async (code) => {
@@ -883,7 +890,7 @@ const SettingsScreen = () => {
                         accessibilityLabel="Summarise every episode after it is transcribed"
                     />
                 </View>
-                <View style={styles.settingRow}>
+                <View style={[styles.settingRow, styles.rowBorder]}>
                     <View style={{ flex: 1 }}>
                         <View style={styles.settingHead}>
                             <Icon name="edit-3" size={15} color={colors.accent} />
@@ -900,6 +907,26 @@ const SettingsScreen = () => {
                         thumbColor={aiFix ? colors.accent : colors.textSecondary}
                         ios_backgroundColor={colors.surfaceHigh}
                         accessibilityLabel="Also let the model correct the transcript"
+                    />
+                </View>
+                <View style={styles.settingRow}>
+                    <View style={{ flex: 1 }}>
+                        <View style={styles.settingHead}>
+                            <Icon name="tag" size={15} color={colors.accent} />
+                            <Text style={styles.settingTitle}>Tag after every transcription</Text>
+                        </View>
+                        <Text style={[styles.settingHint, styles.indent]}>
+                            Last of all, once the transcript and the summary are done, the people, places, books, films, programmes, podcasts, records, phrasal verbs and idioms the episode names are found and looked up, ready under the tag in the Player. Off, they are found when you ask there. About a quarter of a cent an hour on Luna.
+                        </Text>
+                    </View>
+                    <Switch
+                        value={aiTag}
+                        onValueChange={saveAiTag}
+                        disabled={!aiKey}
+                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.accent, 0.45) }}
+                        thumbColor={aiTag && aiKey ? colors.accent : colors.textSecondary}
+                        ios_backgroundColor={colors.surfaceHigh}
+                        accessibilityLabel="Tag what every episode names after it is transcribed"
                     />
                 </View>
             </View>
