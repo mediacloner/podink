@@ -359,7 +359,7 @@ const spelledInNotes = (heard, known) => {
  * their words is dropped, a pair that corrects both ways is dropped, and a
  * fix that would apply more than MAX_FIX_COUNT times is kept but not applied.
  */
-export const acceptFixes = (raw, rows, { known = '' } = {}) => {
+const acceptFixes = (raw, rows, { known = '' } = {}) => {
     const fixes = [], dropped = [];
     const seen = new Set();
     const notesWords = knownWords(known);
@@ -410,10 +410,8 @@ const _running = new Map();   // episodeId → Promise
  * ({ instructions, schemaName, schema, input, maxOutputTokens }) and resolves
  * { json, usage }, the shape api/openai.requestJson returns.
  *
- * The comparison (services/maiChapterTest.js) hands it an OpenRouter request
- * and runs the phone's transcript and MAI's through this same reading — same
- * model, same notes, same part splitting — so what differs between the two
- * answers is the transcript and nothing else.
+ * Kept apart from analyzeEpisode so one reading can be made through another
+ * request path, or without writing anything down.
  *
  * `prepared` is preparePass's answer when the caller already has it.
  */
