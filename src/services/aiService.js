@@ -475,7 +475,7 @@ export const costOf = (model, usage) => dollars(model, usage);
  * a message fit for the sheet (`kind` says why: 'nokey', 'notranscript',
  * or the api/openai kinds). Two callers share one run.
  */
-export const analyzeEpisode = (episodeId, { force = false } = {}) => {
+export const analyzeEpisode = (episodeId, { force = false, scanBooks = true } = {}) => {
     const active = _running.get(episodeId);
     if (active) return active;
     const p = (async () => {
@@ -547,7 +547,9 @@ export const analyzeEpisode = (episodeId, { force = false } = {}) => {
         // scan is run again now that the corrections are in. Also when the
         // episode was never scanned at all: the after-every-transcription
         // path leaves it to this, so the scan happens once, on the best text.
-        if (fixes.length > 0 || !ep.books_indexed_at) {
+        // Not when the tag pass follows (whisperService → entityIndex.tagIfAuto):
+        // it reads the corrected text too and brings the books itself.
+        if (scanBooks && (fixes.length > 0 || !ep.books_indexed_at)) {
             indexEpisodeBooks(episodeId, { force: true, front: true }).catch(() => {});
         }
         return { summary, chapters, fixes, cost, model, usage };
@@ -566,7 +568,7 @@ export const analyzeIfAuto = async (episodeId) => {
     if (!(await isAutoAnalyzeOn())) return null;
     if (!(await getOpenAIKey())) return null;
     try {
-        return await analyzeEpisode(episodeId, { force: true });
+        return await analyzeEpisode(episodeId, { force: true, scanBooks: !(await isAutoTagOn()) });
     } catch (_) {
         return null;   // logged by analyzeEpisode; the sheet offers a retry
     }

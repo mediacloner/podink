@@ -376,9 +376,9 @@ const PlayerScreen = ({ route, navigation }) => {
     useEffect(() => { setEntities([]); setPhrases([]); refetchEntities(); }, [refetchEntities]);
     useEffect(() => {
         // Not while the text is still growing: the finished job scans it.
-        if (!ep || !segments.length || ep.books_indexed_at || isRadio || transcribing || isQueued) return;
+        if (!ep || !segments.length || ep.books_indexed_at || ep.entities_indexed_at || isRadio || transcribing || isQueued) return;
         indexEpisodeBooks(epId, { front: true }).catch(() => {});
-    }, [epId, ep?.books_indexed_at, segments.length, isRadio, transcribing, isQueued]);
+    }, [epId, ep?.books_indexed_at, ep?.entities_indexed_at, segments.length, isRadio, transcribing, isQueued]);
     useEffect(() => {
         // Names from the notes, for a transcript scanned before this existed;
         // 'names-indexed' below reloads the text with the corrections in.
