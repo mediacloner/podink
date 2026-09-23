@@ -30,7 +30,7 @@ import { requestJson } from '../api/openai';
 import { getEpisodeById, isRadioFeedUrl, recordApiSpend, replaceEpisodeAnalysis } from '../database/queries';
 import { getNameCorrectedTranscript, indexEpisodeNames } from './nameIndex';
 import { indexEpisodeBooks } from './bookIndex';
-import { countPhrase, normalizePhrase } from './nameText';
+import { countPhrase, fold, normalizePhrase } from './nameText';
 import { showNotesPlainText } from './showNotes';
 import { formatClock, sentencesWithTimes } from './sentenceBoundary';
 import { langEnglishName } from '../components/transcript/translate';
@@ -44,21 +44,34 @@ export const AI_MODEL_KEY = '@ai_model';
 export const AI_AUTO_KEY = '@ai_auto_analyze';      // '1' | '0'; absent = off
 export const AI_FIX_KEY = '@ai_fix_transcript';     // '1' | '0'; absent = on
 
-// Prices per million tokens (checked 2026-09-22) — for the log line
+// Prices per million tokens (OpenAI's page, 2026-09-23) — for the log line
 // and the "about a cent" hint, not for billing.
 export const AI_MODELS = [
-    { id: 'gpt-5.6-luna', label: 'Luna', tier: 'Budget', inPerM: 0.20, outPerM: 1.20, recommended: true },
-    { id: 'gpt-5.6-sol', label: 'Sol', tier: 'Flagship', inPerM: 2.00, outPerM: 10.00 },
+    { id: 'gpt-6-luna', label: 'Luna', tier: 'Budget', inPerM: 0.10, outPerM: 0.50, recommended: true },
+    { id: 'gpt-6-sol', label: 'Sol', tier: 'Flagship', inPerM: 2.00, outPerM: 10.00 },
 ];
 export const DEFAULT_AI_MODEL = AI_MODELS[0].id;
+// Models the picker no longer offers. A run made on one is still priced at
+// its own rate on the statistics page, and a saved choice moves on to the
+// model that replaced it. (gpt-5.6-sol had been listed here at $2/$10;
+// OpenAI charged $4/$20 for it.)
+export const RETIRED_AI_MODELS = [
+    { id: 'gpt-5.6-luna', label: 'Luna (5.6)', inPerM: 0.20, outPerM: 1.20, successor: 'gpt-6-luna' },
+    { id: 'gpt-5.6-terra', label: 'Terra (5.6)', inPerM: 2.00, outPerM: 12.00 },
+    { id: 'gpt-5.6-sol', label: 'Sol (5.6)', inPerM: 4.00, outPerM: 20.00, successor: 'gpt-6-sol' },
+];
+/** The model a saved choice means today: itself, its successor, or the default. */
+export const resolveAIModel = (id) => {
+    if (AI_MODELS.some(m => m.id === id)) return id;
+    return RETIRED_AI_MODELS.find(m => m.id === id)?.successor || DEFAULT_AI_MODEL;
+};
 
 export const getOpenAIKey = async () => {
     try { return ((await AsyncStorage.getItem(OPENAI_KEY_KEY)) || '').trim(); } catch (_) { return ''; }
 };
 export const getAIModel = async () => {
     try {
-        const v = await AsyncStorage.getItem(AI_MODEL_KEY);
-        return AI_MODELS.some(m => m.id === v) ? v : DEFAULT_AI_MODEL;
+        return resolveAIModel(await AsyncStorage.getItem(AI_MODEL_KEY));
     } catch (_) { return DEFAULT_AI_MODEL; }
 };
 export const isAutoAnalyzeOn = async () => {
@@ -67,7 +80,7 @@ export const isAutoAnalyzeOn = async () => {
 export const isFixTranscriptOn = async () => {
     try { return (await AsyncStorage.getItem(AI_FIX_KEY)) !== '0'; } catch (_) { return true; }
 };
-export const modelInfo = (id) => AI_MODELS.find(m => m.id === id) || AI_MODELS[0];
+export const modelInfo = (id) => AI_MODELS.find(m => m.id === id) || RETIRED_AI_MODELS.find(m => m.id === id) || AI_MODELS[0];
 
 // Failures carry a `kind` so the caller can tell a missing key from a
 // network problem and say something useful (api/openai.js uses the same set).
@@ -319,10 +332,37 @@ const snapChapters = (raw, sentences, durationMs) => {
 const ENDS_POSSESSIVE = /['’]s[^\p{L}\p{N}]*$/iu;
 const MAX_HEARD_WORDS = 6;
 const MAX_CORRECT_WORDS = 8;
+// A fix is a replacement of every occurrence, so one that would land this
+// often is held back for the listener to see rather than written in. On an
+// hour about Constantine, three of four models proposed "Constantine →
+// Constantina" for the one place a daughter was named, and 98 emperors
+// would have changed sex.
+const MAX_FIX_COUNT = 12;
 
-const acceptFixes = (raw, rows) => {
+/** The words of a text, folded like the transcript; `fold` drops digits, so
+ *  numbers ride along as they are ("in 212" is "in" and "212", and the
+ *  notes not saying 212 is what keeps that fix). */
+const foldWords = (text) => [...fold(text).split(' '), ...(String(text || '').match(/\d+/g) || [])].filter(Boolean);
+/** The words the title and the notes spell out. */
+const knownWords = (text) => new Set(foldWords(text));
+/** A heard phrase made only of words the notes themselves use is spelled
+ *  the way the notes spell things — a name the model wants to change in
+ *  one sentence, not a mishearing to fix everywhere. */
+const spelledInNotes = (heard, known) => {
+    const words = foldWords(heard);
+    return words.length > 0 && words.every(w => known.has(w));
+};
+
+/**
+ * The model's proposals, checked against the transcript and the notes.
+ * `known` is the episode title and notes: a heard phrase spelled entirely in
+ * their words is dropped, a pair that corrects both ways is dropped, and a
+ * fix that would apply more than MAX_FIX_COUNT times is kept but not applied.
+ */
+export const acceptFixes = (raw, rows, { known = '' } = {}) => {
     const fixes = [], dropped = [];
     const seen = new Set();
+    const notesWords = knownWords(known);
     for (const f of raw || []) {
         const heard = normalizePhrase(f.heard);
         // The heard token's own possessive comes back when the fix is
@@ -339,16 +379,25 @@ const acceptFixes = (raw, rows) => {
         if (seen.has(key)) continue;
         const { count, firstMs } = countPhrase(rows, heard);
         if (!count) { dropped.push(`${heard} (not in the text)`); continue; }
+        if (spelledInNotes(heard, notesWords)) { dropped.push(`${heard} (spelled so in the notes)`); continue; }
         seen.add(key);
         const kind = ['name', 'title', 'place', 'word'].includes(f.kind) ? f.kind : 'word';
         const confidence = f.confidence === 'medium' ? 'medium' : 'high';
         fixes.push({
             heard, correct, kind, confidence, count, firstMs,
             context: String(f.context || '').trim().slice(0, 400),
-            applied: !(kind === 'word' && confidence === 'medium'),
+            applied: !(kind === 'word' && confidence === 'medium') && count <= MAX_FIX_COUNT,
         });
     }
-    return { fixes, dropped };
+    // "Marie Celeste → Mary Celeste" and "Mary Celeste → Marie Celeste" in one
+    // answer: the model is of two minds, and applying both is a coin toss.
+    const correctOf = new Map(fixes.map(f => [f.heard.toLowerCase(), f.correct.toLowerCase()]));
+    const kept = fixes.filter((f) => {
+        if (correctOf.get(f.correct.toLowerCase()) !== f.heard.toLowerCase()) return true;
+        dropped.push(`${f.heard} ↔ ${f.correct} (corrects both ways)`);
+        return false;
+    });
+    return { fixes: kept, dropped };
 };
 
 // ─── The pass ────────────────────────────────────────────────────────────────
@@ -466,7 +515,7 @@ export const analyzeEpisode = (episodeId, { force = false } = {}) => {
                 add(r.usage);
                 raw.push(...(r.json?.corrections || []));
             }
-            ({ fixes, dropped } = acceptFixes(raw, rows));
+            ({ fixes, dropped } = acceptFixes(raw, rows, { known: `${ep.title || ''}\n${notes}` }));
         }
 
         await replaceEpisodeAnalysis(episodeId, { summary, chapters, fixes, model });

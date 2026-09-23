@@ -23,10 +23,10 @@ import { applyNameCorrections, findNameCorrections, nameCandidates } from './nam
 import { showNotesPlainText } from './showNotes';
 import { OPENROUTER_KEY } from './maiTranscriptionService';
 
-// Prices per million tokens (OpenRouter, 2026-09-22) — for the line under
+// Prices per million tokens (OpenRouter, 2026-09-23) — for the line under
 // each answer, not for billing.
 export const CHAPTER_TEST_MODELS = [
-    { id: 'openai/gpt-5.6-luna', label: 'Luna', input: 0.20, output: 1.20 },
+    { id: 'openai/gpt-6-luna', label: 'Luna', input: 0.10, output: 0.50 },
     { id: 'google/gemini-3-flash-preview', label: 'Gemini 3 Flash', input: 0.50, output: 3.00 },
 ];
 
@@ -83,8 +83,8 @@ const openRouterRequest = (key, modelId) => async ({ instructions, schemaName, s
 /** The names pass on whichever transcript. The candidates come from the
  *  episode's own title, author and notes, so both transcripts are scanned
  *  against the same list — each with the spellings it actually got wrong. */
-const withNames = (rows, candidates) => (
-    rows.length && candidates.length ? applyNameCorrections(rows, findNameCorrections(rows, candidates)) : rows
+const withNames = (rows, candidates, known) => (
+    rows.length && candidates.length ? applyNameCorrections(rows, findNameCorrections(rows, candidates, { known })) : rows
 );
 
 const dollars = (model, usage) => (usage.input * model.input + usage.output * model.output) / 1e6;
@@ -103,12 +103,12 @@ export const testMaiChapters = async (episode, onResult = () => {}) => {
     const [mai, localRows] = await Promise.all([getMaiTranscript(ep.id), getTranscriptsForEpisode(ep.id)]);
     if (!mai.segments.length) throw new Error('Run the MAI transcription test first.');
     const notes = episodeNotes(ep);
-    const candidates = nameCandidates({
-        title: ep.title || '', author: ep.podcast_author || '', notes: showNotesPlainText(ep.description || ''),
-    });
+    const named = { title: ep.title || '', author: ep.podcast_author || '', notes: showNotesPlainText(ep.description || '') };
+    const candidates = nameCandidates(named);
+    const known = `${named.title}\n${named.author}\n${named.notes}`;
     const sources = [
-        localRows.length ? { key: 'local', label: 'Phone transcript', rows: withNames(localRows, candidates) } : null,
-        { key: 'mai', label: 'MAI transcript', rows: withNames(mai.segments, candidates) },
+        localRows.length ? { key: 'local', label: 'Phone transcript', rows: withNames(localRows, candidates, known) } : null,
+        { key: 'mai', label: 'MAI transcript', rows: withNames(mai.segments, candidates, known) },
     ].filter(Boolean);
 
     const results = [];

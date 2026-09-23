@@ -19,7 +19,7 @@ import {
 } from '../services/dictionaryService';
 import { onLibraryChange } from '../services/libraryEvents';
 import {
-    AI_AUTO_KEY, AI_FIX_KEY, AI_MODEL_KEY, AI_MODELS, DEFAULT_AI_MODEL, OPENAI_KEY_KEY, estimateEpisodeCost,
+    AI_AUTO_KEY, AI_FIX_KEY, AI_MODEL_KEY, AI_MODELS, DEFAULT_AI_MODEL, OPENAI_KEY_KEY, estimateEpisodeCost, resolveAIModel,
 } from '../services/aiService';
 import { showAlert } from '../components/AppAlert';
 import { OPENROUTER_KEY } from '../services/maiTranscriptionService';
@@ -212,7 +212,7 @@ const SettingsScreen = () => {
                 AsyncStorage.getItem(AI_FIX_KEY),
             ]);
             setAiKey((key || '').trim());
-            setAiModel(AI_MODELS.some(m => m.id === model) ? model : DEFAULT_AI_MODEL);
+            setAiModel(resolveAIModel(model));
             setAiAuto(auto === '1');
             setAiFix(fix !== '0');
         } catch (e) {}
