@@ -105,7 +105,11 @@ const styles = StyleSheet.create({
         borderRadius: radii.xl,
         minWidth: 112,
     },
-    plainPill: { backgroundColor: 'transparent', paddingHorizontal: 2, paddingVertical: 4, minWidth: 0 },
+    // A plain pill loses its fill and border, not its footprint: it sits in
+    // the same box as the pills above and below it, so "Transcript" under a
+    // "Downloaded" pill centres where that label does instead of hugging the
+    // column's right edge.
+    plainPill: { backgroundColor: 'transparent' },
     label: { fontSize: 12, fontWeight: '600' },
     labelSolid: { fontWeight: '700' },
     disabled: { opacity: 0.45 },
