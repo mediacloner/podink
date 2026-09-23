@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **The assistant's passes read the transcript once at full price, not three times.** The summary and chapters, the corrections and the tag pass each sent the whole hour to OpenAI, and each paid for all of it — on the Constantine episode 62k input tokens, none of them cached (user: “fix santences, summarize and tagging is possible can do in one shot, more fast and more cheap?”). One merged request would have saved the same money but not the time, and asked one answer to do three jobs; instead the three stay apart and now open with exactly the same prefix — the same instructions, one schema with room for every pass's answer, the episode and its transcript — with the pass's own task in a last message, so OpenAI bills the second and third reading at a tenth. The chapters pass goes first and writes the cache; the corrections and, when the tag pass follows, its reading then run side by side instead of one after the other, and only the catalogue lookups wait for the corrections. A live check on the Constantine transcript: 76,312 of 76,341 input tokens cached on the two passes after the first. About 40 % cheaper an hour and roughly a quarter faster; a pass asked for later in the Player, after the cache has gone, costs what it did (`services/transcriptReading.js`, `aiService.analyzeEpisode`, `entityIndex.askEntities`).
+
 ## [5.6.0] - 2026-09-23
 
 ### Added

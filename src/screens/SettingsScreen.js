@@ -794,7 +794,7 @@ const SettingsScreen = () => {
                         <Text style={styles.settingTitle}>OpenAI API key</Text>
                     </View>
                     <Text style={[styles.settingHint, styles.indent]}>
-                        Made at platform.openai.com under API keys, with a little prepaid credit on the account — a ChatGPT subscription does not include it. Usage is billed there per episode ({estimateEpisodeCost(aiModel, 3600, { fixes: aiFix })} for an hour of audio with the model below). Stored only on this device.
+                        Made at platform.openai.com under API keys, with a little prepaid credit on the account — a ChatGPT subscription does not include it. Usage is billed there per episode ({estimateEpisodeCost(aiModel, 3600, { fixes: aiFix, cached: true })} for an hour of audio with the model below). Stored only on this device.
                     </Text>
                     {aiKeyEditing || !aiKey ? (
                         <View style={[styles.tokenRow, styles.indent]}>
@@ -859,7 +859,7 @@ const SettingsScreen = () => {
                                         </View>
                                     )}
                                 </View>
-                                <Text style={styles.modelDesc}>{m.tier} · {m.id} · {estimateEpisodeCost(m.id, 3600, { fixes: aiFix })} for an hour of audio</Text>
+                                <Text style={styles.modelDesc}>{m.tier} · {m.id} · {estimateEpisodeCost(m.id, 3600, { fixes: aiFix, cached: true })} for an hour of audio</Text>
                             </View>
                             <View style={styles.modelMeta}>
                                 <View style={[styles.radio, selected && styles.radioOn]}>

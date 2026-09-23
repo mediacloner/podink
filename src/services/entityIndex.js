@@ -24,8 +24,9 @@
  * rule the assistant's corrections live by.
  */
 import { getEpisodeById, recordApiSpend, replaceEpisodeEntities } from '../database/queries';
-import { acceptPhrases, PHRASE_INSTRUCTIONS, PHRASE_SCHEMA } from './phraseIndex';
+import { acceptPhrases, PHRASE_INSTRUCTIONS } from './phraseIndex';
 import { assistantRequest, costOf, episodeNotes, episodeParts, getOpenAIKey, isAutoTagOn } from './aiService';
+import { ENTITY_TYPES, readingRequest } from './transcriptReading';
 import { getCorrectedTranscript } from './nameIndex';
 import { countPhrase } from './nameText';
 import { searchGoodreads } from '../api/goodreads';
@@ -36,7 +37,7 @@ import { fetchWikipediaSummary, isListPage, searchWikipediaTitles } from '../api
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
-export const ENTITY_TYPES = ['person', 'place', 'book', 'film', 'tv', 'podcast', 'album'];
+export { ENTITY_TYPES };
 export const TYPE_LABEL = {
     person: 'Person', place: 'Place', book: 'Book', film: 'Film', tv: 'Television', podcast: 'Podcast', album: 'Record',
 };
@@ -47,7 +48,11 @@ export const TYPE_ICON = {
 const MAX_PER_PART = 40;
 const RESOLVE_AT_ONCE = 4;
 
-const INSTRUCTIONS = `You list what a podcast episode names: the people, places, books, films, television programmes, other podcasts and records its speakers talk about, from an automatic transcript with one sentence per line.
+// The last message of a request that starts with the episode
+// (services/transcriptReading.js), so the text it reads can be cached.
+const INSTRUCTIONS = `Task: list what this episode names, and the phrases it uses. Fill "entities" and "phrases" only.
+
+Under "entities", list the people, places, books, films, television programmes, other podcasts and records its speakers talk about.
 
 For each one give:
 - "surface": the words exactly as the transcript has them, copied character for character, at most six words. Where the transcript spells it several ways, use the first.
@@ -61,30 +66,6 @@ Include what the speakers name and actually talk about. Leave out the presenter,
 At most ${MAX_PER_PART} for this text, the ones a listener might want to look up. Cover every kind that appears — a programme or a record named once still belongs on the list — rather than listing more of one kind. Return an empty list when there is nothing worth listing.
 
 ${PHRASE_INSTRUCTIONS}`;
-
-const SCHEMA = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['entities', 'phrases'],
-    properties: {
-        phrases: PHRASE_SCHEMA,
-        entities: {
-            type: 'array',
-            items: {
-                type: 'object',
-                additionalProperties: false,
-                required: ['surface', 'canonical', 'type', 'hint', 'context'],
-                properties: {
-                    surface: { type: 'string' },
-                    canonical: { type: 'string' },
-                    type: { type: 'string', enum: ENTITY_TYPES },
-                    hint: { type: 'string' },
-                    context: { type: 'string' },
-                },
-            },
-        },
-    },
-};
 
 const YEAR = /\b(1[5-9]\d{2}|20\d{2})\b/;
 const trim = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -371,13 +352,15 @@ export const isIndexingEntities = (episodeId) => _running.has(episodeId);
  * (Settings → Episode assistant → tag after every transcription). Resolves
  * to the pass's answer, or null when the switch is off, there is no key, or
  * the run failed — the sheet in the Player offers it again either way.
+ * `answers` and `model` are the reading the episode assistant already asked
+ * for beside its fixes (analyzeEpisode's `alongside`), when there is one.
  */
 export const willTagAuto = async () => (await isAutoTagOn()) && !!(await getOpenAIKey());
 
-export const tagIfAuto = async (episodeId) => {
+export const tagIfAuto = async (episodeId, { answers = null, model } = {}) => {
     if (!(await willTagAuto())) return null;
     try {
-        return await indexEpisodeEntities(episodeId);
+        return await indexEpisodeEntities(episodeId, answers ? { answers, model } : {});
     } catch (e) {
         log('SERVICE', 'Automatic entity scan failed', { id: episodeId, error: e?.message || String(e) });
         return null;
@@ -385,11 +368,43 @@ export const tagIfAuto = async (episodeId) => {
 };
 
 /**
+ * The model's reading of one prepared text (aiService.episodeParts), before
+ * anything is checked against the transcript: { raw, rawPhrases, usage,
+ * parts }. Also what the episode assistant runs beside its fixes when the tag
+ * pass follows it (analyzeEpisode's `alongside`), on the text it has just
+ * cached.
+ */
+export const askEntities = async (prepared, request, { onPart = () => {} } = {}) => {
+    const { episodeId, texts } = prepared;
+    const usage = { input: 0, output: 0, cached: 0 };
+    const raw = [];
+    const rawPhrases = [];
+    for (let i = 0; i < texts.length; i++) {
+        const r = await request(readingRequest({
+            text: texts[i], task: INSTRUCTIONS, episodeId, maxOutputTokens: 12000,
+        }));
+        usage.input += r.usage?.input || 0;
+        usage.output += r.usage?.output || 0;
+        usage.cached += r.usage?.cached || 0;
+        raw.push(...(r.json?.entities || []));
+        rawPhrases.push(...(r.json?.phrases || []));
+        onPart(i + 1);
+    }
+    return { raw, rawPhrases, usage, parts: texts.length };
+};
+
+/**
  * Finds what the episode names and looks each one up. Resolves
  * { found, resolved, cost }; rejects with `kind` 'nokey' or 'notranscript'
  * when there is nothing to work with. Two callers share one run.
+ *
+ * `answers` is askEntities' answer when it was already asked for (beside the
+ * assistant's fixes, with `model` the model that gave it): only the checking
+ * and the lookups are left. The model read the text before the fixes; what
+ * it names is matched on the text after them, which is the one the
+ * transcript shows — and it tends to hand back the right spelling anyway.
  */
-export const indexEpisodeEntities = (episodeId, { request, model, onProgress = () => {} } = {}) => {
+export const indexEpisodeEntities = (episodeId, { request, model, answers = null, onProgress = () => {} } = {}) => {
     const active = _running.get(episodeId);
     if (active) return active;
     const p = (async () => {
@@ -399,28 +414,16 @@ export const indexEpisodeEntities = (episodeId, { request, model, onProgress = (
         const rows = await getCorrectedTranscript(episodeId);
         if (!rows.length) throw Object.assign(new Error('This episode has no transcript yet.'), { kind: 'notranscript' });
 
-        let ask = request;
         let modelId = model;
-        if (!ask) ({ request: ask, model: modelId } = await assistantRequest());
-
-        const notes = episodeNotes(ep);
-        const { head, parts } = episodeParts(ep, rows, notes);
-        const usage = { input: 0, output: 0, cached: 0 };
-        const raw = [];
-        const rawPhrases = [];
-        for (let i = 0; i < parts.length; i++) {
-            const r = await ask({
-                instructions: INSTRUCTIONS, schemaName: 'episode_entities', schema: SCHEMA,
-                input: `${head}\n\nTranscript:\n${parts[i].join('\n')}`,
-                maxOutputTokens: 12000,
-            });
-            usage.input += r.usage?.input || 0;
-            usage.output += r.usage?.output || 0;
-            usage.cached += r.usage?.cached || 0;
-            raw.push(...(r.json?.entities || []));
-            rawPhrases.push(...(r.json?.phrases || []));
-            onProgress(Math.round((i + 1) / (parts.length + 1) * 100));
+        let reading = answers;
+        if (!reading) {
+            let ask = request;
+            if (!ask) ({ request: ask, model: modelId } = await assistantRequest());
+            const prepared = episodeParts(ep, rows, episodeNotes(ep));
+            const n = prepared.texts.length;
+            reading = await askEntities(prepared, ask, { onPart: i => onProgress(Math.round(i / (n + 1) * 100)) });
         }
+        const { raw, rawPhrases, usage, parts } = reading;
         const entities = accept(raw, rows);
         const phrases = acceptPhrases(rawPhrases, rows);
 
@@ -435,7 +438,7 @@ export const indexEpisodeEntities = (episodeId, { request, model, onProgress = (
                 if (r) { Object.assign(e, r, { resolvedAt: Date.now() }); resolved += 1; }
                 else e.resolvedAt = Date.now();
             }));
-            onProgress(Math.round((parts.length + (i + block.length) / Math.max(1, entities.length)) / (parts.length + 1) * 100));
+            onProgress(Math.round((parts + (i + block.length) / Math.max(1, entities.length)) / (parts + 1) * 100));
         }
 
         await replaceEpisodeEntities(episodeId, entities, phrases);
@@ -445,13 +448,13 @@ export const indexEpisodeEntities = (episodeId, { request, model, onProgress = (
             tokensIn: usage.input, tokensCached: usage.cached, tokensOut: usage.output, cost,
         });
         log('SERVICE', 'Entity scan finished', {
-            id: episodeId, title: ep.title, model: modelId, parts: parts.length,
+            id: episodeId, title: ep.title, model: modelId, parts, askedBeside: !!answers,
             proposed: raw.length, kept: entities.length, resolved,
             phrasal: phrases.filter(p => p.kind === 'phrasal').length,
             idioms: phrases.filter(p => p.kind === 'idiom').length,
             phrasesProposed: rawPhrases.length,
             byType: ENTITY_TYPES.map(t => `${t}:${entities.filter(e => e.type === t).length}`).join(' '),
-            tokensIn: usage.input, tokensOut: usage.output, cost: `$${cost.toFixed(4)}`, ms: Date.now() - t0,
+            tokensIn: usage.input, tokensCached: usage.cached, tokensOut: usage.output, cost: `$${cost.toFixed(4)}`, ms: Date.now() - t0,
         });
         try { notifyLibraryChange({ type: 'entities-indexed', episodeId, count: entities.length, phrases: phrases.length }); } catch (_) {}
         return { found: entities.length, resolved, phrases: phrases.length, cost };
