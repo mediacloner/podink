@@ -26,9 +26,9 @@
 import { getEpisodeById, recordApiSpend, replaceEpisodeEntities } from '../database/queries';
 import { acceptPhrases, PHRASE_INSTRUCTIONS } from './phraseIndex';
 import { assistantRequest, costOf, episodeNotes, episodeParts, getOpenAIKey, isAutoTagOn } from './aiService';
-import { ENTITY_TYPES, readingRequest } from './transcriptReading';
+import { ENTITY_TYPES, PEOPLE_TYPES, readingRequest } from './transcriptReading';
 import { getCorrectedTranscript } from './nameIndex';
-import { countPhrase } from './nameText';
+import { countPhrase, fold, keyWord } from './nameText';
 import { searchGoodreads } from '../api/goodreads';
 import { searchOpenLibraryByTitle } from '../api/openLibrary';
 import { searchITunes } from '../api/itunes';
@@ -37,12 +37,14 @@ import { fetchWikipediaSummary, isListPage, searchWikipediaTitles } from '../api
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
-export { ENTITY_TYPES };
+export { ENTITY_TYPES, PEOPLE_TYPES };
 export const TYPE_LABEL = {
     person: 'Person', place: 'Place', book: 'Book', film: 'Film', tv: 'Television', podcast: 'Podcast', album: 'Record',
+    guest: 'Guest', host: 'Presenter',
 };
 export const TYPE_ICON = {
     person: 'user', place: 'map-pin', book: 'book', film: 'film', tv: 'tv', podcast: 'mic', album: 'disc',
+    guest: 'message-circle', host: 'user-check',
 };
 
 const MAX_PER_PART = 40;
@@ -57,11 +59,11 @@ Under "entities", list the people, places, books, films, television programmes, 
 For each one give:
 - "surface": the words exactly as the transcript has them, copied character for character, at most six words. Where the transcript spells it several ways, use the first.
 - "canonical": what the thing is really called, spelled properly.
-- "type": one of person, place, book, film, tv, podcast, album. A podcast is a podcast, not television, even when it is only trailed.
+- "type": one of person, place, book, film, tv, podcast, album, guest, host. A podcast is a podcast, not television, even when it is only trailed. "host" is only the presenter or narrator of this series — the journalist whose programme it is; whoever presents another show that is trailed or advertised is a person. "guest" is someone the programme itself interviewed or recorded for this episode: an interviewee, a guest, a diplomat or relative speaking to the presenter. A public figure heard only in archive or news audio — a president's speech, a press conference — is a person, as is everyone the episode talks about. Each one once, under one type.
 - "hint": what this episode says about it, in a few words — an author, a year, a director, a country, a role. This is what tells one thing of the same name from another, so write what would let a librarian pick the right one: "the 1965 Herbert novel", "the Roman emperor", "Villeneuve's adaptation".
 - "context": the transcript line it appears in, copied as written.
 
-Include what the speakers name and actually talk about. Leave out the presenter, the guests and the programme itself; a place named only to locate another place; a figure of speech; anything you cannot point to in the text. A recogniser misspelling belongs in "surface" with the true spelling in "canonical" — that pairing is the point of the list.
+Include what the speakers name and actually talk about — every person named with a first and last name, the relatives and ordinary people in the story as well as the famous. List the presenter as host and the people heard speaking as guest. Leave out the programme itself; a place named only to locate another place; a figure of speech; anything you cannot point to in the text. A recogniser misspelling belongs in "surface" with the true spelling in "canonical" — that pairing is the point of the list.
 
 At most ${MAX_PER_PART} for this text, the ones a listener might want to look up. Cover every kind that appears — a programme or a record named once still belongs on the list — rather than listing more of one kind. Return an empty list when there is nothing worth listing.
 
@@ -153,6 +155,9 @@ const KIND_MARKERS = {
     person: /\b(emperor|empress|king|queen|prince|princess|pharaoh|caliph|sultan|tsar|shah|chief|duke|duchess|earl|count|countess|baron|baroness|lord|lady|knight|noble|nobleman|noblewoman|saint|bishop|archbishop|cardinal|pope|monk|nun|priest|priestess|abbot|rabbi|imam|prophet|apostle|martyr|preacher|theologian|missionary|god|goddess|deity|deities|divinity|mythology|mythological|legendary|hero|heroine|titan|nymph|politician|president|minister|senator|governor|mayor|chancellor|ambassador|diplomat|statesman|leader|ruler|founder|figure|activist|revolutionary|rebel|general|admiral|commander|officer|soldier|consul|caesar|tribune|actor|actress|comedian|presenter|broadcaster|host|journalist|author|writer|novelist|poet|playwright|historian|philosopher|scholar|scientist|physicist|chemist|biologist|mathematician|astronomer|economist|engineer|architect|inventor|explorer|painter|sculptor|artist|composer|musician|singer|rapper|dancer|footballer|cricketer|athlete|boxer|player|manager|coach|businessman|businesswoman|entrepreneur|executive|banker|lawyer|judge|physician|surgeon|doctor|teacher|professor|criminal|hacker|spy|born|died|\d{3,4}\s*[\u2013-]\s*(?:c\.\s*)?\d{3,4})\b/i,
     place: /\b(city|town|village|capital|country|region|province|county|state|island|river|bridge|mountain|lake|sea|district|municipality|settlement|kingdom|empire|colony|site|ruins|castle|cathedral|church|palace|square|street)\b/i,
 };
+// A presenter or a guest is described as a person is.
+KIND_MARKERS.host = KIND_MARKERS.person;
+KIND_MARKERS.guest = KIND_MARKERS.person;
 const looksLike = (page, type) => {
     const re = KIND_MARKERS[type];
     return !re || re.test(`${page.description || ''} ${String(page.extract || '').slice(0, 400)}`);
@@ -162,6 +167,16 @@ const looksLike = (page, type) => {
 // model's "Constantine (2005 film)" are the same name, and the comparison
 // below must see that they are.
 const bareTitle = (t) => String(t || '').toLowerCase().replace(/\s*\([^)]*\)\s*$/, '').trim();
+
+// Two spellings of one person's name: the first name and the surname sound
+// the same, middle names aside — "James Franklin Jeffrey" is James Jeffrey,
+// "Imad Moustapha" is Imad Mustafa, "Imad Mughniyeh" is somebody else.
+const sameName = (a, b) => {
+    const x = fold(a).split(' ').filter(Boolean);
+    const y = fold(b).split(' ').filter(Boolean);
+    if (x.length < 2 || y.length < 2) return false;
+    return keyWord(x[0]) === keyWord(y[0]) && keyWord(x[x.length - 1]) === keyWord(y[y.length - 1]);
+};
 
 const fromWikipedia = async (entity, signal) => {
     const wanted = bareTitle(entity.canonical);
@@ -180,21 +195,42 @@ const fromWikipedia = async (entity, signal) => {
     // together — but only a hit that carries the name it was searched for:
     // "Naissus, Constantine's birthplace" must not become Helena's article
     // because Helena's article says "Constantine".
-    if (!page) {
-        const titles = await searchWikipediaTitles(`${entity.canonical} ${entity.hint}`.trim(), { limit: 5, signal })
-            .catch(() => []);
+    // A long hint drowns the name ("Imad Mustafa Syrian diplomat who led the
+    // delegation in Muscat" finds nothing), so the search is tried again with
+    // two of its words, then with the name alone.
+    const person = PEOPLE_TYPES.has(entity.type);
+    const queries = [...new Set([
+        `${entity.canonical} ${entity.hint}`.trim(),
+        `${entity.canonical} ${hintWords(entity.hint).slice(0, 2).join(' ')}`.trim(),
+        entity.canonical,
+    ])];
+    const tried = new Set([entity.canonical.toLowerCase()]);
+    for (const query of queries) {
+        if (page) break;
+        const titles = await searchWikipediaTitles(query, { limit: 5, signal }).catch(() => []);
         for (const title of titles) {
-            if (String(title).toLowerCase() === entity.canonical.toLowerCase()) continue;   // already tried
+            if (tried.has(String(title).toLowerCase())) continue;
+            tried.add(String(title).toLowerCase());
             const t = bareTitle(title);
-            if (!(t.includes(wanted) || wanted.includes(t))) continue;
+            if (!(t.includes(wanted) || wanted.includes(t) || (person && sameName(t, wanted)))) continue;
+            // A namesake's page says who it is in its title: "Josh Baker
+            // (musician)" is not the journalist the episode's hint describes.
+            const qualifier = /\(([^)]+)\)\s*$/.exec(String(title));
+            if (person && qualifier && !agrees({ description: qualifier[1] }, entity.hint)) continue;
             const candidate = await summary(title);
             if (candidate && agrees(candidate, entity.hint)) { page = candidate; break; }
         }
     }
 
     // Failing both, the exact article stands on its own when it is plainly
-    // the right kind of thing — a city is a city whatever the hint said.
-    if (!page && exact) page = exact;
+    // the right kind of thing — a city is a city whatever the hint said, and
+    // a person talked about is usually the famous one. Not a guest or the
+    // presenter: they are more often somebody's namesake, and "Josh Baker,
+    // presenter of the series" is not the American football player.
+    // Nor a first name alone: "Sarah" in the episode is not the Biblical one.
+    const speaker = entity.type === 'guest' || entity.type === 'host';
+    const oneName = person && !/\s/.test(entity.canonical.trim());
+    if (!page && exact && !oneName && !(speaker && hintWords(entity.hint).length)) page = exact;
     if (!page) return null;
     return {
         source: 'wikipedia',

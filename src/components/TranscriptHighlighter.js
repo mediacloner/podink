@@ -35,6 +35,8 @@ import EntitySheet from './transcript/EntitySheet';
 import IdiomSheet from './transcript/IdiomSheet';
 import { buildPhraseMarks, isIdiomMark, phraseIdOf } from '../services/phraseIndex';
 import { buildBookMarks } from '../services/bookText';
+import { keyWord } from '../services/nameText';
+import { PEOPLE_TYPES } from '../services/transcriptReading';
 import { isSentenceEnd } from '../services/sentenceBoundary';
 
 // Unicode-aware edge-trim so accented loanwords ('café', 'résumé') keep
@@ -345,6 +347,9 @@ const TranscriptHighlighter = forwardRef(({
     // The advertisements (getEpisodeAds): a faint line where each begins,
     // naming it and how long it runs; a tap skips to where the episode resumes.
     ads = EMPTY_BOOKS,
+    // False sets names, books and idioms in the plain text — still tappable,
+    // only not bold (the switch in the tag list).
+    boldMarks = true,
 }, ref) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -1042,9 +1047,9 @@ const TranscriptHighlighter = forwardRef(({
         const marked = [
             ...(books || []),
             ...(entities || []).filter(e => Number(e.id) > 0)
-                .map(e => ({ id: encodeEntityId(e), title: e.canonical, heard_as: [e.surface] })),
+                .map(e => ({ id: encodeEntityId(e), title: e.canonical, heard_as: [e.surface], soundAlike: PEOPLE_TYPES.has(e.type) })),
         ];
-        return buildBookMarks(computed.chunks, marked);
+        return buildBookMarks(computed.chunks, marked, keyWord);
     }, [computed, books, entities]);
     const booksRef = useRef(books);
     useEffect(() => { booksRef.current = books; }, [books]);
@@ -1310,13 +1315,14 @@ const TranscriptHighlighter = forwardRef(({
                 wordBook={wordBook}
                 onPhrasePress={onPhrasePress}
                 wordPhrase={wordPhrase}
+                boldMarks={boldMarks}
                 onCellLayout={onCellLayout}
             />
         );
     }, [
         fontSize, lineHeight, activeChunkSV, activeIndexSV, isPlayingSV,
         onChunkPress, onChunkDoublePress, onTranslate, onWordPress, onBookPress, wordBook,
-        onPhrasePress, wordPhrase,
+        onPhrasePress, wordPhrase, boldMarks,
         onCellLayout, onKeypointPress,
     ]);
 
@@ -1655,7 +1661,8 @@ const chunkEqual = (p, n) =>
     p.onTranslate === n.onTranslate &&
     p.onWordPress === n.onWordPress && p.onCellLayout === n.onCellLayout &&
     p.onBookPress === n.onBookPress && p.wordBook === n.wordBook &&
-    p.onPhrasePress === n.onPhrasePress && p.wordPhrase === n.wordPhrase;
+    p.onPhrasePress === n.onPhrasePress && p.wordPhrase === n.wordPhrase &&
+    p.boldMarks === n.boldMarks;
 
 // The chunk's words grouped into runs of plain text, book titles and
 // phrases, so the sentence view can set a title in bold, underline a phrasal
@@ -1676,7 +1683,7 @@ const Chunk = React.memo(({
     item, index, fontSize, lineHeight,
     activeChunkSV, activeIndexSV, isPlayingSV,
     onPress, onDoublePress, onTranslate, onWordPress, onBookPress, wordBook, onCellLayout,
-    onPhrasePress, wordPhrase = NO_MARKS,
+    onPhrasePress, wordPhrase = NO_MARKS, boldMarks = true,
 }) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -1859,6 +1866,7 @@ const Chunk = React.memo(({
                             phrase={w.globalIndex < wordPhrase.length ? wordPhrase[w.globalIndex] : 0}
                             phraseJoinsNext={w.globalIndex + 1 < wordPhrase.length && wordPhrase[w.globalIndex] !== 0 && wordPhrase[w.globalIndex + 1] === wordPhrase[w.globalIndex]}
                             onPhrasePress={onPhrasePress}
+                            boldMarks={boldMarks}
                         />
                     ))}
                 </Text>
@@ -1888,7 +1896,7 @@ const Chunk = React.memo(({
                             return (
                                 <Text key={run.key}>
                                     <Text
-                                        style={isIdiomMark(run.phrase) ? styles.idiomRun : styles.phrasalRun}
+                                        style={isIdiomMark(run.phrase) ? (boldMarks ? [styles.idiomRun, !isPast && styles.markFuture] : null) : styles.phrasalRun}
                                         suppressHighlighting
                                         onPress={() => onPhrasePress(run.phrase, run.startMs, chunkIndex)}
                                     >
@@ -1901,7 +1909,7 @@ const Chunk = React.memo(({
                         return (
                             <Text key={run.key}>
                                 <Text
-                                    style={isNameMark(run.bookId) ? styles.nameTitle : styles.bookTitle}
+                                    style={boldMarks ? [isNameMark(run.bookId) ? styles.nameTitle : styles.bookTitle, !isPast && styles.markFuture] : null}
                                     suppressHighlighting
                                     onPress={() => onBookPress(run.bookId, run.startMs)}
                                 >
@@ -1927,7 +1935,7 @@ const Word = React.memo(({
     word, chunkIndex, fontSize, lineHeight,
     activeIndexSV, isPlayingSV, onWordPress,
     bookId = 0, bookJoinsNext = false, onBookPress,
-    phrase = 0, phraseJoinsNext = false, onPhrasePress,
+    phrase = 0, phraseJoinsNext = false, onPhrasePress, boldMarks = true,
 }) => {
     const { colors } = useTheme();
     const colorState = useSharedValue(0); // 0 future · 1 spoken · 2 active
@@ -1953,58 +1961,34 @@ const Word = React.memo(({
     // (text shadow — dark theme) or a highlighter band behind the glyphs
     // (background — paper theme, where a blurred shadow looks like a smudge).
     const {
-        transcriptFuture, transcriptSpoken, transcriptActive,
+        transcriptFuture, transcriptMarkFuture, transcriptSpoken, transcriptActive,
         transcriptGlow, transcriptGlowRadius, transcriptHighlight, transcriptHighlightAlpha,
     } = colors;
     const hasHighlight = transcriptHighlightAlpha > 0;
     const highlightOn  = withAlpha(transcriptHighlight, transcriptHighlightAlpha);
     const highlightOff = withAlpha(transcriptHighlight, 0);
-    // A book title: a purple band with the primary text colour, spoken or
-    // not; a name the episode mentions (negative id): the same on a cream
-    // band. Decided inside the animated style — an animated colour applied
-    // natively wins over any static style in the array.
-    const isBook = !!bookId;
-    const bookBand = isNameMark(bookId)
-        ? withAlpha(colors.nameBand, colors.nameBandAlpha)
-        : withAlpha(colors.purple, 0.26);
-    const bookText = isNameMark(bookId) ? colors.nameInk : colors.textPrimary;
-    // A phrase, when no name claims the word: an idiom keeps the reading
-    // colours on a green band, a phrasal verb is only underlined.
+    // Book titles, names the episode mentions and idioms are only set in
+    // bold, in the reading colours, with no band (user: "for places, podcast
+    // etc only I want a bit bold but not highlight", then "idiom and booktile
+    // is the same than name title"); a phrasal verb is only underlined.
     const phraseMark = bookId ? 0 : phrase;
-    const idiomBand = isIdiomMark(phraseMark) ? withAlpha(colors.phraseBand, colors.phraseBandAlpha) : null;
+    // Not yet read, a bold mark is a firmer grey than the text around it, so
+    // it still reads as a mark ahead of the voice.
+    const bold = boldMarks && (!!bookId || isIdiomMark(phraseMark));
+    const futureInk = bold ? transcriptMarkFuture : transcriptFuture;
     const animStyle = useAnimatedStyle(() => {
-        if (isBook) {
-            // The band stays, so the mark reads as one thing before and after
-            // it is said — but the word being spoken lights up like any other
-            // (user: "when pass by highlight dont illuminate"). Future and
-            // spoken words share the band's ink; only the active one changes.
-            const style = {
-                color: interpolateColor(colorState.value, [1, 2], [bookText, transcriptActive]),
-                textShadowColor: interpolateColor(colorState.value, [1, 2], ['transparent', transcriptGlow]),
-                textShadowOffset: { width: 0, height: 0 },
-                textShadowRadius: interpolate(colorState.value, [1, 2], [0, transcriptGlowRadius], 'clamp'),
-                backgroundColor: hasHighlight
-                    ? interpolateColor(colorState.value, [1, 2], [bookBand, highlightOn])
-                    : bookBand,
-            };
-            return style;
-        }
         const style = {
-            color: interpolateColor(colorState.value, [0, 1, 2], [transcriptFuture, transcriptSpoken, transcriptActive]),
+            color: interpolateColor(colorState.value, [0, 1, 2], [futureInk, transcriptSpoken, transcriptActive]),
             textShadowColor: interpolateColor(colorState.value, [1, 2], ['transparent', transcriptGlow]),
             textShadowOffset: { width: 0, height: 0 },
             textShadowRadius: interpolate(colorState.value, [1, 2], [0, transcriptGlowRadius], 'clamp'),
         };
-        if (idiomBand) {
-            style.backgroundColor = hasHighlight
-                ? interpolateColor(colorState.value, [1, 2], [idiomBand, highlightOn])
-                : idiomBand;
-        } else if (hasHighlight) {
+        if (hasHighlight) {
             // Same hue at alpha 0 → alpha on, so the fade never passes through black.
             style.backgroundColor = interpolateColor(colorState.value, [1, 2], [highlightOff, highlightOn]);
         }
         return style;
-    }, [colors, isBook, bookBand, bookText, idiomBand]);
+    }, [colors, futureInk]);
 
     // Tokens carry their own spacing (" word"). Keep the whitespace outside the
     // animated span so the highlight band hugs the glyphs, not the gap before them.
@@ -2037,7 +2021,7 @@ const Word = React.memo(({
             {lead}
             {/* The band runs on under the space when the next word belongs to
                 the same title. */}
-            <Animated.Text style={[{ fontSize, lineHeight, fontWeight: bookId ? '600' : '500' }, underline, animStyle]}>
+            <Animated.Text style={[{ fontSize, lineHeight, fontWeight: bold ? '700' : '500' }, underline, animStyle]}>
                 {core}{joins ? trail : ''}
             </Animated.Text>
             {joins ? '' : trail}
@@ -2068,10 +2052,11 @@ const makeStyles = (colors) => StyleSheet.create({
     // A book title inside a sentence: a highlighter band in the palette's
     // purple behind the words, text in the primary colour — bold alone
     // vanished in the dimmed past/future text of both themes.
-    bookTitle: { backgroundColor: withAlpha(colors.purple, 0.26), color: colors.textPrimary, fontWeight: '600' },
-    nameTitle: { backgroundColor: withAlpha(colors.nameBand, colors.nameBandAlpha), color: colors.nameInk, fontWeight: '600' },
+    bookTitle: { fontWeight: '700' },
+    nameTitle: { fontWeight: '700' },
     phrasalRun: { textDecorationLine: 'underline' },
-    idiomRun: { backgroundColor: withAlpha(colors.phraseBand, colors.phraseBandAlpha) },
+    idiomRun: { fontWeight: '700' },
+    markFuture: { color: colors.transcriptMarkFuture },
 
     keypointRow: {
         flexDirection: 'row',

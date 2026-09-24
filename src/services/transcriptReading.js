@@ -22,7 +22,11 @@
  */
 import { PHRASE_SCHEMA } from './phraseIndex';
 
-export const ENTITY_TYPES = ['person', 'place', 'book', 'film', 'tv', 'podcast', 'album'];
+// 'guest' is someone who speaks in the episode, 'host' the show's own
+// presenter, each listed apart from the people the episode talks about.
+export const ENTITY_TYPES = ['person', 'place', 'book', 'film', 'tv', 'podcast', 'album', 'guest', 'host'];
+/** The kinds that are people: looked up, pictured and marked as a person is. */
+export const PEOPLE_TYPES = new Set(['person', 'guest', 'host']);
 
 export const READING_INSTRUCTIONS = `You read automatic transcripts of podcast episodes for an app that helps people listen and learn English. The transcript was made on a phone: one sentence per line, each led by the time it starts, as [mm:ss] or [h:mm:ss]. The recogniser misspells names; the episode notes, when given, spell them right — use the notes for spelling and to recognise the segments the show announces, never as a source of what was said.
 

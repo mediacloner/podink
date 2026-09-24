@@ -21,7 +21,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 import { radii, useStyles, useTheme } from '../../theme';
 import SheetModal, { SheetIconButton } from './SheetModal';
 import { shareText } from './share';
-import { TYPE_ICON, TYPE_LABEL } from '../../services/entityIndex';
+import { PEOPLE_TYPES, TYPE_ICON, TYPE_LABEL } from '../../services/entityIndex';
 import { imageSourceFor } from '../../api/wikipedia';
 import { lookUpPodcast, subscribeToPodcast } from '../../services/podcastSubscribe';
 import { showAlert } from '../AppAlert';
@@ -112,7 +112,7 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
     const showOther = !!other && (!entity.source_url || SOURCE_LABEL[entity.source] !== other.label);
     const heardDiffers = entity.surface && entity.surface.toLowerCase() !== entity.canonical.toLowerCase();
     const rating = entity.rating != null ? Number(entity.rating) : null;
-    const portrait = entity.type === 'person' || entity.type === 'place';
+    const portrait = PEOPLE_TYPES.has(entity.type) || entity.type === 'place';
     // Podcast and record art is square; the book-cover frame cropped it.
     const square = entity.type === 'podcast' || entity.type === 'album';
     // Three buttons do not fit one row at a readable size ("Apple Podca…"):
@@ -206,7 +206,7 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
                     >
                         <Image
                             source={imageSourceFor(entity.image_url)}
-                            style={[st.imageFill, entity.type === 'person' && st.imageFace]}
+                            style={[st.imageFill, PEOPLE_TYPES.has(entity.type) && st.imageFace]}
                             resizeMode='cover'
                             accessibilityIgnoresInvertColors
                         />
