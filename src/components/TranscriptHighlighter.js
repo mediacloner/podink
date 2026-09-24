@@ -33,7 +33,7 @@ import WordPopover from './transcript/WordPopover';
 import BookSheet from './transcript/BookSheet';
 import EntitySheet from './transcript/EntitySheet';
 import IdiomSheet from './transcript/IdiomSheet';
-import { buildPhraseMarks, isIdiomMark, phraseIdOf } from '../services/phraseIndex';
+import { buildPhraseMarks, isIdiomMark, knownPhrasals, phraseIdOf } from '../services/phraseIndex';
 import { buildBookMarks } from '../services/bookText';
 import { keyWord } from '../services/nameText';
 import { PEOPLE_TYPES } from '../services/transcriptReading';
@@ -1060,12 +1060,20 @@ const TranscriptHighlighter = forwardRef(({
     // A second array beside the names', so a word can be both a phrase's and
     // nobody's name without the two fighting over one slot; where they do
     // overlap the name wins (Word, bookRuns).
-    const wordPhrase = useMemo(() => {
-        if (!computed.chunks.length || !phrases?.length) return NO_MARKS;
-        return buildPhraseMarks(computed.chunks, phrases);
+    // The tag pass's phrases, and the dictionary's phrasal verbs it did not
+    // list (phraseIndex.knownPhrasals) — every transcript gets those, tagged
+    // or not.
+    const allPhrases = useMemo(() => {
+        if (!computed.chunks.length) return phrases || EMPTY_BOOKS;
+        const known = knownPhrasals(computed.chunks, phrases);
+        return known.length ? [...(phrases || []), ...known] : (phrases || EMPTY_BOOKS);
     }, [computed, phrases]);
-    const phrasesRef = useRef(phrases);
-    useEffect(() => { phrasesRef.current = phrases; }, [phrases]);
+    const wordPhrase = useMemo(() => {
+        if (!computed.chunks.length || !allPhrases.length) return NO_MARKS;
+        return buildPhraseMarks(computed.chunks, allPhrases);
+    }, [computed, allPhrases]);
+    const phrasesRef = useRef(allPhrases);
+    useEffect(() => { phrasesRef.current = allPhrases; }, [allPhrases]);
 
     // ── Pause while looking up (Settings toggle) ─────────────────────────────
     // Opening a word or sentence card pauses playback; closing it resumes —
