@@ -402,6 +402,9 @@ const EpisodeItem = ({
                     exiting={FadeOut.duration(150)}
                     style={styles.description}
                 >
+                    {/* The row cuts the title at two lines; the unfolded
+                        notes start with all of it. */}
+                    <Text style={styles.descriptionTitle}>{episode.title}</Text>
                     <ShowNotes html={episode.description} />
                     {expandOnPress && (
                         <Pill
@@ -511,6 +514,7 @@ const makeStyles = (colors) => StyleSheet.create({
 
     /* Description */
     description: { paddingHorizontal: 20, paddingBottom: 16 },
+    descriptionTitle: { ...type.title, fontSize: 16, fontWeight: '700', lineHeight: 22, color: colors.textPrimary, marginBottom: 10 },
     playPill: { alignSelf: 'flex-start', marginTop: 12 },
 });
 
