@@ -19,6 +19,7 @@
  * confirmed, every place the transcript says its title — in any of the
  * spellings that led to it — is marked (`buildBookMarks`).
  */
+import { FUNCTION_WORDS } from './dictionaryHtml';
 
 // A capitalised word, apostrophes and hyphens included (O'Brien, Prawer-Jhabvala).
 const CAP = "\\p{Lu}[\\p{L}\\p{N}'’\\-]*";   // any script's capital: Çetin, İnanç, Éric
@@ -398,23 +399,37 @@ export const bibliographyCandidates = (rows, titles, author, siteBase = 5000) =>
 /**
  * Which words of the built transcript belong to which book.
  * @param chunks  TranscriptHighlighter's chunks: [{ words: [{ text, globalIndex }] }]
- * @param books   EpisodeBooks rows ({ id, title, heard_as })
+ * @param books   EpisodeBooks rows ({ id, title, heard_as }); `soundAlike`
+ *                (a person) also marks a spelling of the name that sounds the
+ *                same: "Deborah Tice" said where the list has "Debra Tice".
+ * @param soundKey  a word's phonetic key (nameText.keyWord), for soundAlike;
+ *                passed in because nameText already imports this module.
  * @returns Int32Array indexed by word globalIndex — the book's row id, or 0.
  *   A one-word title ("Boulder", "Flashlight") only counts where the
  *   transcript capitalised it, so "carrying a flashlight" stays plain.
  */
-export const buildBookMarks = (chunks, books) => {
+// Everyday words that are also names, not taken as a lone name.
+const LONE_NAME_STOP = new Set(['all', 'will', 'may', 'june', 'april', 'august', 'rose', 'grace', 'hope', 'joy',
+    'faith', 'bill', 'art', 'sue', 'pat', 'don', 'rob', 'jack', 'frank', 'guy', 'ray', 'dawn', 'summer', 'new', 'said']);
+
+export const buildBookMarks = (chunks, books, soundKey = null) => {
     let total = 0;
     for (const ch of chunks || []) for (const w of ch.words) if (w.globalIndex + 1 > total) total = w.globalIndex + 1;
     const marks = new Int32Array(total);
     if (!total || !books?.length) return marks;
 
     const toks = new Array(total).fill('');
+    const bare = new Array(total).fill('');   // without a possessive: "Austin's", "James'" → austin, james
     const caps = new Uint8Array(total);
+    const ends = new Uint8Array(total);       // the word closes a sentence
+    const breaks = new Uint8Array(total);     // punctuation after the word: "Foley," ends a name
     for (const ch of chunks) {
         for (const w of ch.words) {
             toks[w.globalIndex] = normTok(w.text);
+            bare[w.globalIndex] = normTok(String(w.text).replace(/['’]s?(?=[^\p{L}\p{N}]*$)/u, ''));
             caps[w.globalIndex] = /^\s*[^\p{L}\p{N}]*\p{Lu}/u.test(w.text) ? 1 : 0;
+            ends[w.globalIndex] = /[.!?…]["”’)\]]*\s*$/.test(w.text) ? 1 : 0;
+            breaks[w.globalIndex] = /[^\p{L}\p{N}'’]$/u.test(String(w.text).trim()) ? 1 : 0;
         }
     }
 
@@ -431,6 +446,91 @@ export const buildBookMarks = (chunks, books) => {
                 i = end - 1;
             }
         }
+    }
+
+    // A person's name spelled another way: two words or more, every one
+    // capitalised, the surname as listed and the other words with the same
+    // phonetic key (nameText.keyWord) — "Deborah" and "Debra" are both "dbr".
+    if (!soundKey) return marks;
+    const keyMemo = new Map();
+    const keyOf = (t) => { let k = keyMemo.get(t); if (k === undefined) { k = soundKey(t); keyMemo.set(t, k); } return k; };
+    for (const book of books) {
+        const id = Number(book.id) || 0;
+        if (!id || !book.soundAlike) continue;
+        for (const variant of bookVariants(book)) {
+            const L = variant.length;
+            if (L < 2) continue;
+            const keys = variant.map(keyOf);
+            for (let i = 0; i + L <= total; i++) {
+                if (toks[i + L - 1] !== variant[L - 1]) continue;
+                let ok = true;
+                for (let k = 0; ok && k < L; k++) {
+                    // A word already this person's may be taken in: the model's
+                    // "Deborah" alone was marked first, and the name runs on.
+                    const other = marks[i + k] && marks[i + k] !== id;
+                    if (other || !caps[i + k] || (k < L - 1 && keyOf(toks[i + k]) !== keys[k])) ok = false;
+                }
+                if (!ok) continue;
+                for (let k = 0; k < L; k++) marks[i + k] = id;
+                i += L - 1;
+            }
+        }
+    }
+
+    // A person called by one name after the list has them in full: "Austin",
+    // "James' mother", "Deborah". A capitalised word that is a listed
+    // person's first name (or sounds like it) or surname is theirs; when
+    // several listed people share it ("James" Foley, Mattis, Jeffrey; three
+    // Tices) it is the one whose full name was said last before it, and
+    // nobody's when none was.
+    const byPart = new Map();   // name word → [{ id, first }]
+    const addPart = (word, id) => {
+        if (!word || word.length < 3) return;
+        const list = byPart.get(word) || [];
+        if (!list.includes(id)) list.push(id);
+        byPart.set(word, list);
+    };
+    const firstKeys = new Map();   // phonetic key of a first name → [id]
+    for (const book of books) {
+        const id = Number(book.id) || 0;
+        if (!id || !book.soundAlike) continue;
+        for (const variant of bookVariants(book)) {
+            if (variant.length < 2) continue;
+            addPart(variant[0], id);
+            addPart(variant[variant.length - 1], id);
+            const k = keyOf(variant[0]);
+            if (k.length >= 3) {   // "Ali" and "All" are both "al": too short to go on
+                const list = firstKeys.get(k) || [];
+                if (!list.includes(id)) list.push(id);
+                firstKeys.set(k, list);
+            }
+        }
+    }
+    if (!byPart.size) return marks;
+    // A capitalised word beside it that is not the sentence's first word is
+    // another name: "Diane Foley" is not James Foley, "James Baker" not him.
+    const nameAt = (j) => j >= 0 && j < total && caps[j] && !marks[j] && j > 0 && !ends[j - 1];
+    const full = marks.slice();     // the marks so far are whole names
+    const lastSaid = new Map();     // id → index of its latest whole-name word
+    for (let i = 0; i < total; i++) {
+        if (full[i]) { lastSaid.set(full[i], i); continue; }
+        if (marks[i] || !caps[i] || bare[i].length < 3) continue;
+        // A common word capitalised by the sentence it opens ("All diplomacy",
+        // "Will they…") is not somebody's first name.
+        if (FUNCTION_WORDS.has(bare[i]) || LONE_NAME_STOP.has(bare[i])) continue;
+        if (nameAt(i - 1) && !breaks[i - 1] || nameAt(i + 1) && !breaks[i]) continue;
+        const ids = byPart.get(bare[i]) || firstKeys.get(keyOf(bare[i]));
+        if (!ids) continue;
+        let pick = ids.length === 1 ? ids[0] : 0;
+        if (ids.length > 1) {
+            let best = -1;
+            for (const id of ids) {
+                const at = lastSaid.has(id) ? lastSaid.get(id) : -1;
+                if (at > best) { best = at; pick = id; }
+            }
+            if (best < 0) pick = 0;
+        }
+        if (pick) marks[i] = pick;
     }
     return marks;
 };

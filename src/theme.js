@@ -50,6 +50,7 @@ const dark = {
     // Transcript reading palette (warm, low-glare). The current word glows
     // (text shadow); the highlight band is off (alpha 0).
     transcriptFuture: '#3A3530',
+    transcriptMarkFuture: '#71665A', // a bold mark (name, book, idiom) not yet read: firmer than the future text
     transcriptSpoken: '#A09078',
     transcriptActive: '#FFF6E8',
     transcriptGlow: 'rgba(79,172,254,0.75)',
@@ -110,6 +111,7 @@ const paper = {
     // current word is the deepest ink on a highlighter-yellow band. No glow —
     // a blurred shadow on a light page reads as a smudge.
     transcriptFuture: '#ABA294',
+    transcriptMarkFuture: '#6E665B',
     transcriptSpoken: '#3F3931',
     transcriptActive: '#0F0D0B',
     transcriptGlow: 'transparent',

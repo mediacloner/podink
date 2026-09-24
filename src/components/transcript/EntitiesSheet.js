@@ -10,7 +10,7 @@ import { Feather as Icon } from '@expo/vector-icons';
 import { radii, useStyles, useTheme, withAlpha } from '../../theme';
 import SheetModal, { SheetIconButton } from './SheetModal';
 import { getEpisodeBooks, getEpisodeEntities, getEpisodePhrases } from '../../database/queries';
-import { ENTITY_TYPES, TYPE_ICON, TYPE_LABEL, indexEpisodeEntities, isIndexingEntities } from '../../services/entityIndex';
+import { ENTITY_TYPES, PEOPLE_TYPES, TYPE_ICON, TYPE_LABEL, indexEpisodeEntities, isIndexingEntities } from '../../services/entityIndex';
 import { formatClock } from '../../services/sentenceBoundary';
 import { imageSourceFor } from '../../api/wikipedia';
 
@@ -18,11 +18,11 @@ import { imageSourceFor } from '../../api/wikipedia';
 // places at final"): what a listener goes on to find comes first, the
 // idioms (IDIOMS, not an entity type) after it, the people and places last.
 const IDIOMS = 'idiom';
-const LIST_ORDER = ['podcast', 'book', IDIOMS, 'film', 'tv', 'album', 'person', 'place'];
+const LIST_ORDER = ['podcast', 'book', IDIOMS, 'film', 'tv', 'album', 'person', 'place', 'guest', 'host'];
 
-const PLURAL = { person: 'People', place: 'Places', book: 'Books', film: 'Films', tv: 'Television', podcast: 'Podcasts', album: 'Records' };
+const PLURAL = { person: 'People', place: 'Places', book: 'Books', film: 'Films', tv: 'Television', podcast: 'Podcasts', album: 'Records', guest: 'Guests', host: 'Presenter' };
 
-const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, onOpenSettings }) => {
+const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, onOpenSettings, showMarks = true, onToggleMarks }) => {
     const { colors } = useTheme();
     const st = useStyles(makeStyles);
     const epId = episode?.id;
@@ -111,7 +111,7 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, o
                             {!!item.image_url && (
                                 <Image
                                     source={imageSourceFor(item.image_url)}
-                                    style={[st.thumbImage, item.type === 'person' && st.thumbFace]}
+                                    style={[st.thumbImage, PEOPLE_TYPES.has(item.type) && st.thumbFace]}
                                     resizeMode='cover'
                                     accessibilityIgnoresInvertColors
                                 />
@@ -136,6 +136,14 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, o
             <Icon name='tag' size={13} color={colors.textMuted} />
             <Text style={st.label}>What this episode names</Text>
             <View style={{ flex: 1 }} />
+            {!!onToggleMarks && (
+                <SheetIconButton
+                    icon='bold'
+                    label={showMarks ? 'Plain names in the transcript' : 'Bold names in the transcript'}
+                    active={showMarks}
+                    onPress={onToggleMarks}
+                />
+            )}
             {(rows.length > 0 || episode?.entities_indexed_at) && !running && <SheetIconButton icon='refresh-cw' label='Look again' onPress={run} />}
         </View>
     );

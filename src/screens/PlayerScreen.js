@@ -48,6 +48,7 @@ import { useTheme, useStyles, radii, withAlpha, THEMES } from '../theme';
 // Minimum gap between transcript re-fetches while live transcription streams
 // 'transcript-progress' events — keeps chunk rebuilds >= 1.5s apart.
 const LIVE_REFETCH_MIN_MS = 1500;
+const TRANSCRIPT_MARKS_KEY = '@transcript_marks';   // '0' = names, books, idioms not in bold
 
 const PlayerScreen = ({ route, navigation }) => {
     const { colors, isDark } = useTheme();
@@ -127,6 +128,20 @@ const PlayerScreen = ({ route, navigation }) => {
         if (!idiomCard) return;
         AsyncStorage.getItem('@translation_lang').then(v => { if (v) setTranslationLang(v); }).catch(() => {});
     }, [idiomCard]);
+    // The bold of the marks in the transcript — names, books, idioms — can be
+    // turned off from the tag list (user: "I want in tag a button to enable or
+    // disable the bold text"); they stay tappable, only plain (user: "eliminate
+    // the bold not means that eliminates likns"). Remembered across episodes.
+    const [showMarks, setShowMarks] = useState(true);
+    useEffect(() => {
+        AsyncStorage.getItem(TRANSCRIPT_MARKS_KEY).then(v => { if (v === '0') setShowMarks(false); }).catch(() => {});
+    }, []);
+    const toggleMarks = useCallback(() => {
+        setShowMarks(on => {
+            AsyncStorage.setItem(TRANSCRIPT_MARKS_KEY, on ? '0' : '1').catch(() => {});
+            return !on;
+        });
+    }, []);
     // Books the transcript mentions (EpisodeBooks rows) — bold titles + book card.
     const [books, setBooks] = useState([]);
     // What the episode names (EpisodeEntities), marked in the text like books.
@@ -813,6 +828,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         books={books}
                         entities={entities}
                         phrases={phrases}
+                        boldMarks={showMarks}
                         chapters={chapters}
                         ads={ads}
                     />
@@ -886,6 +902,8 @@ const PlayerScreen = ({ route, navigation }) => {
                     onOpenEntity={setEntityCard}
                     onOpenIdiom={setIdiomCard}
                     onOpenSettings={openSettingsFromSheet}
+                    showMarks={showMarks}
+                    onToggleMarks={toggleMarks}
                 />
                 <EntitySheet
                     data={entityCard}
