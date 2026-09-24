@@ -169,6 +169,12 @@ export const reportTranscriptionError = (e, episode = null) => {
 export const reportDownloadError = (e) => {
     if (e?.code === 'OFFLINE') {
         showAlert('Offline', 'You need an internet connection to download episodes.');
+    } else if (e?.code === 'HTTP' || e?.code === 'NOT_AUDIO') {
+        // The feed lists the episode, but its host did not hand over the file.
+        showAlert(
+            'Audio not available',
+            `The podcast's server didn't send this episode's audio${e.status ? ` (error ${e.status})` : ''}. The problem is on their side and is often fixed within hours — try again later.\n\nReason: ${e.message}`,
+        );
     } else {
         showAlert('Download failed', 'Could not download this episode. Please try again.');
     }
