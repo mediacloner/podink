@@ -8,6 +8,7 @@ import Pill from './Pill';
 import ShowNotes from './ShowNotes';
 import { type, useStyles, useTheme } from '../theme';
 import { onTranscriptProgress, getLastProgress } from '../services/whisperService';
+import { isEnriching, onEnrichmentChange } from '../services/enrichment';
 import { isBookTranscript, needsSync, textDoesNotFit } from '../services/bookService';
 import { artworkSource } from '../api/userAgent';
 
@@ -71,6 +72,14 @@ const EpisodeItem = ({
     // re-renders this row only, never the whole screen.
     const [progress, setProgress] = useState(0);
     const rotation = useSharedValue(0);
+    // After the transcript, the passes that run on their own (summary, tags…).
+    const [enriching, setEnriching] = useState(() => isEnriching(episode.id));
+    useEffect(() => {
+        setEnriching(isEnriching(episode.id));
+        return onEnrichmentChange((id) => {
+            if (id === String(episode.id)) setEnriching(isEnriching(episode.id));
+        });
+    }, [episode.id]);
 
     useEffect(() => {
         if (!isTranscribing) {
@@ -300,6 +309,14 @@ const EpisodeItem = ({
                                         onPress={() => onTranscribe(episode)}
                                         accessibilityLabel="Transcribe episode"
                                     />
+                                ) : enriching && episode.has_transcript ? (
+                                    <Pill
+                                        variant="indigo"
+                                        icon="star"
+                                        label="Enriching…"
+                                        trailingLoading
+                                        accessibilityLabel="Transcript done. Repairing punctuation, writing the summary and finding what it names"
+                                    />
                                 ) : isSyncing ? (
                                     <Pill
                                         variant="orange"
@@ -403,24 +420,30 @@ const EpisodeItem = ({
                     style={styles.description}
                 >
                     {/* The row cuts the title at two lines; the unfolded
-                        notes start with all of it. */}
-                    <Text style={styles.descriptionTitle}>{episode.title}</Text>
+                        notes start with all of it, and the Play button sits
+                        beside it on the right, level with its last line (user: "the play/resume
+                        button in feed have to be on the top right in
+                        description", then "of bottom of the row on title"),
+                        not after notes that can run long. */}
+                    <View style={styles.descriptionHead}>
+                        <Text style={styles.descriptionTitle}>{episode.title}</Text>
+                        {expandOnPress && (
+                            <Pill
+                                variant="blue"
+                                solid
+                                icon="play"
+                                // In-progress beats played: a finished episode's
+                                // position resets to 0, so position > 0 means a
+                                // re-listen is underway and the tap will resume.
+                                label={episode.play_position > 0
+                                    ? 'Resume'
+                                    : (episode.is_played ? 'Play again' : 'Play')}
+                                onPress={() => onPress(episode)}
+                                style={styles.headPill}
+                            />
+                        )}
+                    </View>
                     <ShowNotes html={episode.description} />
-                    {expandOnPress && (
-                        <Pill
-                            variant="blue"
-                            solid
-                            icon="play"
-                            // In-progress beats played: a finished episode's
-                            // position resets to 0, so position > 0 means a
-                            // re-listen is underway and the tap will resume.
-                            label={episode.play_position > 0
-                                ? 'Resume'
-                                : (episode.is_played ? 'Play again' : 'Play')}
-                            onPress={() => onPress(episode)}
-                            style={styles.playPill}
-                        />
-                    )}
                 </Animated.View>
             )}
         </View>
@@ -514,8 +537,11 @@ const makeStyles = (colors) => StyleSheet.create({
 
     /* Description */
     description: { paddingHorizontal: 20, paddingBottom: 16 },
-    descriptionTitle: { ...type.title, fontSize: 16, fontWeight: '700', lineHeight: 22, color: colors.textPrimary, marginBottom: 10 },
-    playPill: { alignSelf: 'flex-start', marginTop: 12 },
+    descriptionHead: { flexDirection: 'row', alignItems: 'flex-end', gap: 12, marginBottom: 10 },
+    // The title's line box runs a few px below its letters; lifted by as
+    // much, the pill leaves the same gap above the notes as the title does.
+    headPill: { marginBottom: 3 },
+    descriptionTitle: { ...type.title, flex: 1, fontSize: 16, fontWeight: '700', lineHeight: 22, color: colors.textPrimary },
 });
 
 export default React.memo(EpisodeItem);

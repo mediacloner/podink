@@ -7,6 +7,7 @@ const variantColors = (colors) => ({
     blue: colors.accent,
     green: colors.success,
     orange: colors.warning,
+    indigo: colors.indigo,
     danger: colors.danger,
     neutral: colors.textMuted,
 });
