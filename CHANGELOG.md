@@ -12,6 +12,9 @@
 - **What this episode names lists podcasts, books and idioms first, people and places last.** The groups followed the order the model's kinds were defined in, people first, so the things worth going on to — another podcast, a book, an idiom to learn — sat under a long list of names (user: “What this epidose names Have to be podcast books and idioms on the top people and places at final”). The list now runs Podcasts, Books, Idioms, then Films, Television and Records, then People and Places (`components/transcript/EntitiesSheet.js`).
 - **An unfolded episode starts with its whole title.** A row cuts the title at two lines — “Rights for the Unborn: How Should We Protect Future…” — and unfolding it showed the notes without the rest (user: “in the description of the podcast you need to put again the title is the title cut in the main card”). The notes now open with the full title in bold, in every list that shows the row (`components/EpisodeItem.js`).
 
+### Fixed
+- **A download the podcast's server refuses no longer counts as downloaded.** The latest episode of *The Town with Matthew Belloni* — “Jeffrey Katzenberg on Why Hollywood Must Embrace AI” — is still in the feed, but its host's CDN answers with a 503 and a 282-byte error page, while the episodes before it download normally (user: “the last episode identify like a wrong podcast … could be happens that they remove the episode to rss?”). The app never looked at the answer: it saved the error page as the episode's mp3, marked it downloaded, failed to transcribe it, and reused the same page on every retry because the file was there. A download now has to come back as a success and as audio — not a web page, not under 16 KB — or nothing is kept and an *Audio not available* alert says the server did not send it (error 503) and to try later; a file that small left by an earlier build is fetched again (`services/downloadService.js`, `reportDownloadError`).
+
 ## [5.6.0] - 2026-09-23
 
 ### Added

@@ -79,14 +79,43 @@ export const SHERPA_MODELS = {
 /**
  * Downloads a file to the device's local filesystem
  */
+// Smaller than this is not an episode: it is the page a server sends in place
+// of the audio. The shortest real episodes are well over a megabyte.
+const MIN_AUDIO_BYTES = 16 * 1024;
+
+const headerOf = (headers, name) => {
+    const key = Object.keys(headers || {}).find(k => k.toLowerCase() === name);
+    return key ? String(headers[key]) : '';
+};
+
+/**
+ * Throws when a finished download is not the audio: the server answered with
+ * an error (Megaphone's CDN sent a 282-byte "An error occurred" page with a
+ * 503 for one episode of The Town, 2026-09-24, and it was saved as the mp3),
+ * or with a page instead of a file. `code` is 'HTTP' or 'NOT_AUDIO'.
+ */
+const checkAudioResponse = (result, file) => {
+    const status = Number(result?.status) || 0;
+    if (status && (status < 200 || status > 299)) {
+        throw Object.assign(new Error(`The server answered ${status} instead of sending the audio`), { code: 'HTTP', status });
+    }
+    const type = headerOf(result?.headers, 'content-type').toLowerCase();
+    const size = new File(file.uri).size || 0;
+    if (/^text\/|html|json|xml/.test(type) || size < MIN_AUDIO_BYTES) {
+        throw Object.assign(new Error(`The server sent ${type || 'something'} (${size} bytes), not audio`), { code: 'NOT_AUDIO', status });
+    }
+};
+
 export const downloadAudioFile = async (url, filename, onProgress) => {
     const destinationFile = new File(Paths.document, filename);
 
     // Only trust a fully-written final file. (Rename-on-complete below
-    // guarantees the final path is never a truncated partial.)
-    if (destinationFile.exists && destinationFile.size > 0) {
+    // guarantees the final path is never a truncated partial.) One too small
+    // to be audio is an error page an earlier build kept: fetch again.
+    if (destinationFile.exists && destinationFile.size >= MIN_AUDIO_BYTES) {
         return destinationFile.uri;
     }
+    try { if (destinationFile.exists) destinationFile.delete(); } catch (_) {}
 
     // Download to a temp path and rename on completion. An interrupted download
     // (network drop / app kill) then leaves only a .part file — never a
@@ -107,7 +136,8 @@ export const downloadAudioFile = async (url, filename, onProgress) => {
                 }
             }
         );
-        await download.downloadAsync();
+        const result = await download.downloadAsync();
+        checkAudioResponse(result, tmpFile);
         // Replace any stale final file, then promote the temp file.
         try { if (destinationFile.exists) destinationFile.delete(); } catch (_) {}
         await FileSystem.moveAsync({ from: tmpFile.uri, to: destinationFile.uri });
