@@ -25,6 +25,7 @@ import { TYPE_ICON, TYPE_LABEL } from '../../services/entityIndex';
 import { imageSourceFor } from '../../api/wikipedia';
 import { lookUpPodcast, subscribeToPodcast } from '../../services/podcastSubscribe';
 import { showAlert } from '../AppAlert';
+import ImageViewer, { imageForViewer } from './ImageViewer';
 
 const FOLD_CHARS = 420;
 
@@ -90,6 +91,13 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
     }, [blurb, folded]);
 
     const openUrl = useCallback((url) => { if (url) Linking.openURL(url).catch(() => {}); }, []);
+    // The card's picture is cropped to a frame; a tap shows all of it.
+    const [zoomImage, setZoomImage] = useState(null);
+    useEffect(() => { setZoomImage(null); }, [entity]);
+    const openImage = useCallback(() => {
+        imageForViewer(entity?.image_url, entity?.canonical).then(setZoomImage);
+    }, [entity]);
+    const closeImage = useCallback(() => setZoomImage(null), []);
     const onShare = useCallback(() => {
         if (!entity) return;
         const line = entity.subtitle ? `${entity.canonical} — ${entity.subtitle}` : entity.canonical;
@@ -189,14 +197,20 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
         <SheetModal visible={visible} onClose={onClose} header={header} footer={footer} maxHeight='88%'>
             <View style={st.head}>
                 {entity.image_url ? (
-                    <View style={[st.image, portrait && st.imagePortrait, square && st.imageSquare, st.imageClip]}>
+                    <TouchableOpacity
+                        style={[st.image, portrait && st.imagePortrait, square && st.imageSquare, st.imageClip]}
+                        onPress={openImage}
+                        activeOpacity={0.8}
+                        accessibilityRole='imagebutton'
+                        accessibilityLabel='Show the whole picture'
+                    >
                         <Image
                             source={imageSourceFor(entity.image_url)}
                             style={[st.imageFill, entity.type === 'person' && st.imageFace]}
                             resizeMode='cover'
                             accessibilityIgnoresInvertColors
                         />
-                    </View>
+                    </TouchableOpacity>
                 ) : (
                     <View style={[st.image, portrait && st.imagePortrait, square && st.imageSquare, st.imageEmpty]}>
                         <Icon name={TYPE_ICON[entity.type] || 'tag'} size={22} color={colors.textMuted} />
@@ -246,6 +260,7 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
                     <Text style={st.context}>“{entity.context}”</Text>
                 </>
             )}
+            <ImageViewer image={zoomImage} onClose={closeImage} />
         </SheetModal>
     );
 };

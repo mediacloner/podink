@@ -417,11 +417,13 @@ const phraseSpellings = (phrases, word, bases) => {
 
 /**
  * @param dict    opened dictionary (findKeys / readRecord)
- * @param query   { word, prevWords, nextWords, forceWord }
+ * @param query   { word, prevWords, nextWords, forceWord, phrase }
  *                forceWord: skip the phrase candidates (user asked for the word itself)
+ *                phrase: the words are one known phrase (the episode pass found
+ *                it), to be looked for under each of its words, not only the first
  * @returns null when nothing matched, else
  *   { tapped, context, phrases, phrasal, headingPhrases, candidate, entry,
- *     bodies, targets, alternates, phraseIsEntry, phraseTries, trail }
+ *     bodies, targets, alternates, phraseIsEntry, phraseTries, trail, knownPhrase }
  */
 export const lookupEntry = (dict, query) => {
     const word = cleanToken(query.word);
@@ -466,9 +468,11 @@ export const lookupEntry = (dict, query) => {
     // crossed" for "kept your fingers crossed") and the candidate itself.
     // Other runs are matched the other way round, from the entry's headings
     // (analyzeEntry).
+    const knownPhrase = !!query.phrase && !query.forceWord && nextWords.length + prevWords.length > 0;
     const headingPhrases = uniqueFold([
         ...(candidate !== word ? [hit.attempt, candidate] : []),
         ...phrasal,
+        ...(knownPhrase ? [context.words.join(' ')] : []),
     ]);
     const phraseTries = headingPhrases.length && !entryHasSpace
         ? phraseSpellings(headingPhrases, word, [hit.entry, ...hit.targets, ...hit.alternates])
@@ -488,6 +492,7 @@ export const lookupEntry = (dict, query) => {
         phraseIsEntry,
         phraseTries,
         trail: buildTrail(candidate, word, hit.entry, hit.targets),
+        knownPhrase,
     };
 };
 
@@ -568,6 +573,13 @@ export const analyzeEntry = (dict, result, styleKey) => {
     for (const phrase of result.phrasal) {
         const verb = phrase.split(' ')[0];
         if (lower(verb) !== lower(word)) for (const v of stemVariants(verb)) offer(v, verb);
+    }
+    // A known phrase that is not a verb + particle is filed under its content
+    // word: "go missing" under missing, "come clean" under clean.
+    if (result.knownPhrase) {
+        for (const w of result.context.words) {
+            if (lower(w) !== lower(word) && !FUNCTION_WORDS.has(lower(w))) for (const v of stemVariants(w)) offer(v, w);
+        }
     }
     for (const { base, replace } of fallbacks) {
         const hit = resolveEntry(dict, base);
