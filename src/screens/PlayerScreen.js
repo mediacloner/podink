@@ -20,7 +20,7 @@ import {
 import {
     getSyncingId, isBookTranscript, isSyncing, needsSync, onBookSyncChange, queueVoiceSync, textDoesNotFit,
 } from '../services/bookService';
-import { getEpisodeById, getEpisodeBooks, getEpisodeEntities, getEpisodePhrases, getMaiTranscript } from '../database/queries';
+import { getEpisodeById, getEpisodeBooks, getEpisodeChapters, getEpisodeEntities, getEpisodePhrases, getMaiTranscript } from '../database/queries';
 import CloudTranscriptSheet from '../components/transcript/CloudTranscriptSheet';
 import EntitiesSheet from '../components/transcript/EntitiesSheet';
 import EntitySheet from '../components/transcript/EntitySheet';
@@ -374,6 +374,13 @@ const PlayerScreen = ({ route, navigation }) => {
         try { setPhrases(await getEpisodePhrases(epId)); } catch (_) {}
     }, [epId]);
     useEffect(() => { setEntities([]); setPhrases([]); refetchEntities(); }, [refetchEntities]);
+    // The assistant's chapters, as the transcript's dividers (in place of the
+    // ten-minute marks) once the episode has them.
+    const [chapters, setChapters] = useState([]);
+    const refetchChapters = useCallback(async () => {
+        try { setChapters(await getEpisodeChapters(epId)); } catch (_) {}
+    }, [epId]);
+    useEffect(() => { setChapters([]); refetchChapters(); }, [refetchChapters]);
     useEffect(() => {
         // Not while the text is still growing: the finished job scans it.
         if (!ep || !segments.length || ep.books_indexed_at || ep.entities_indexed_at || isRadio || transcribing || isQueued) return;
@@ -443,6 +450,7 @@ const PlayerScreen = ({ route, navigation }) => {
                 // The episode assistant wrote its summary, chapters and fixes:
                 // the fixes change the text, the rest lives on the episode row.
                 if (payload.fixes > 0) refetchTranscript();
+                refetchChapters();
                 getEpisodeById(epId).then(row => { if (row) setEp(row); }).catch(() => {});
             } else if (payload.type === 'transcript-error') {
                 setTranscribing(false);
@@ -460,7 +468,7 @@ const PlayerScreen = ({ route, navigation }) => {
             unsub();
             if (st.timer) clearTimeout(st.timer);
         };
-    }, [epId, refetchTranscript, refetchMai, refetchEntities, navigation]);
+    }, [epId, refetchTranscript, refetchMai, refetchEntities, refetchChapters, navigation]);
 
     // ── Transcription queue state for this episode ────────────────────────────
     // Matching the book text to the voice (bookService's own queue).
@@ -798,6 +806,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         books={books}
                         entities={entities}
                         phrases={phrases}
+                        chapters={chapters}
                     />
                 )}
 

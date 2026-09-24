@@ -157,6 +157,9 @@ const LOOKAHEAD_MS = 550;                // scaled by playback rate on the UI th
 const WORD_LEVEL_RADIUS = 1;             // prev + current + next chunk → word-by-word
 const KEYPOINT_INTERVAL_MS = 10 * 60 * 1000;
 const KEYPOINT_HEIGHT = 36;              // fixed — used in both layout and scroll math
+// A chapter divider (time over title, up to two lines): only the first
+// estimate — its measured height replaces this once it has been on screen.
+const CHAPTER_HEIGHT = 58;
 const SEEK_CHUNK_GAP = 3;                // chunk jumps larger than this fade-snap
 // A paragraph is also the unit the reader taps, slides to translate and keeps
 // in the notebook, so one runaway sentence must not become all of them: past
@@ -333,6 +336,12 @@ const TranscriptHighlighter = forwardRef(({
     // form alone ("picked it up" → "pick up"); idioms sit on a green band and
     // open their own card.
     phrases = EMPTY_BOOKS,
+    // EpisodeChapters rows (services/aiService.js): when the episode has
+    // them, the dividers in the text are its chapters — time and title, a tap
+    // plays from there — in place of a mark every ten minutes (user: "we have
+    // a splitter in the text to identy the time 10 20 etc I think i better to
+    // put the same of the chapter").
+    chapters = EMPTY_BOOKS,
 }, ref) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -516,8 +525,27 @@ const TranscriptHighlighter = forwardRef(({
 
             // Derive display rows + word timing arrays in one pass.
             const _displayItems = [];
-            let nextKp = KEYPOINT_INTERVAL_MS;
-            for (const chunk of builtChunks) {
+            // A chapter opens before the paragraph it starts in, unless it
+            // starts in that paragraph's second half — then before the next.
+            // Chapter times are the model's, read off the transcript, so they
+            // rarely fall exactly on a paragraph's first word.
+            const marks = chapters.filter(c => Number.isFinite(c.start_ms));
+            let ci = 0;
+            let nextKp = marks.length ? Infinity : KEYPOINT_INTERVAL_MS;
+            for (let j = 0; j < builtChunks.length; j++) {
+                const chunk = builtChunks[j];
+                const next = builtChunks[j + 1];
+                const endMs = next ? next.startMs : chunk.words[chunk.words.length - 1].startMs + 1000;
+                while (ci < marks.length && marks[ci].start_ms < (chunk.startMs + endMs) / 2) {
+                    const c = marks[ci++];
+                    _displayItems.push({
+                        type: 'chapter',
+                        id: `ch${c.start_ms}`,
+                        timeMs: c.start_ms,
+                        label: formatTime(c.start_ms),
+                        title: c.title,
+                    });
+                }
                 while (chunk.startMs >= nextKp) {
                     _displayItems.push({
                         type: 'keypoint',
@@ -575,7 +603,7 @@ const TranscriptHighlighter = forwardRef(({
             if (handle?.cancel) handle.cancel();
             if (timer) clearTimeout(timer);
         };
-    }, [segments]);
+    }, [segments, chapters]);
 
     // ── Measured layout — estimates first, real onLayout heights as they land ─
     //
@@ -601,6 +629,8 @@ const TranscriptHighlighter = forwardRef(({
             const len = st.measured.get(item.id)
                 ?? (item.type === 'keypoint'
                     ? KEYPOINT_HEIGHT + CHUNK_MARGIN
+                    : item.type === 'chapter'
+                    ? CHAPTER_HEIGHT + CHUNK_MARGIN
                     : estimateChunkHeight(item.words, m.charWidth, m.contentWidth, m.lineHeight) + CHUNK_MARGIN);
             lengths[j] = len;
             y += len;
@@ -1243,6 +1273,9 @@ const TranscriptHighlighter = forwardRef(({
         if (item.type === 'keypoint') {
             return <KeypointRow item={item} onPress={onKeypointPress} />;
         }
+        if (item.type === 'chapter') {
+            return <ChapterRow item={item} onPress={onKeypointPress} />;
+        }
         return (
             <Chunk
                 item={item}
@@ -1546,6 +1579,28 @@ const KeypointRow = React.memo(({ item, onPress }) => {
         <View style={styles.keypointLine} />
         <Text style={styles.keypointLabel}>{item.label}</Text>
         <View style={styles.keypointLine} />
+    </Pressable>
+    );
+});
+
+// A chapter: the keypoint's line and time, with the chapter's title under it.
+const ChapterRow = React.memo(({ item, onPress }) => {
+    const styles = useStyles(makeStyles);
+    const CHUNK_RIPPLE = useStyles(rippleFor);
+    return (
+    <Pressable
+        onPress={() => onPress(item.timeMs)}
+        android_ripple={CHUNK_RIPPLE}
+        style={({ pressed }) => [styles.chapterRow, pressed && styles.pressedChunk]}
+        accessibilityRole="button"
+        accessibilityLabel={`Chapter at ${item.label}: ${item.title}. Play from here`}
+    >
+        <View style={styles.chapterRule}>
+            <View style={styles.keypointLine} />
+            <Text style={styles.keypointLabel}>{item.label}</Text>
+            <View style={styles.keypointLine} />
+        </View>
+        <Text style={styles.chapterTitle} numberOfLines={2}>{item.title}</Text>
     </Pressable>
     );
 });
@@ -1989,6 +2044,9 @@ const makeStyles = (colors) => StyleSheet.create({
     },
     keypointLine: { flex: 1, height: 0.5, backgroundColor: colors.hairline },
     keypointLabel: { color: colors.transcriptSpoken, fontSize: 11, fontWeight: '700', letterSpacing: 1.2, paddingHorizontal: 10 },
+    chapterRow: { minHeight: CHAPTER_HEIGHT, justifyContent: 'center', paddingVertical: 6, marginBottom: CHUNK_MARGIN },
+    chapterRule: { flexDirection: 'row', alignItems: 'center' },
+    chapterTitle: { color: colors.textPrimary, fontSize: 14, fontWeight: '700', textAlign: 'center', marginTop: 6, paddingHorizontal: 12 },
 
     fadeEdge: { position: 'absolute', left: 0, right: 0 },
 
