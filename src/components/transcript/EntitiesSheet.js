@@ -14,6 +14,12 @@ import { ENTITY_TYPES, TYPE_ICON, TYPE_LABEL, indexEpisodeEntities, isIndexingEn
 import { formatClock } from '../../services/sentenceBoundary';
 import { imageSourceFor } from '../../api/wikipedia';
 
+// The list's order (user: "podcast books and idioms on the top people and
+// places at final"): what a listener goes on to find comes first, the
+// idioms (IDIOMS, not an entity type) after it, the people and places last.
+const IDIOMS = 'idiom';
+const LIST_ORDER = ['podcast', 'book', IDIOMS, 'film', 'tv', 'album', 'person', 'place'];
+
 const PLURAL = { person: 'People', place: 'Places', book: 'Books', film: 'Films', tv: 'Television', podcast: 'Podcasts', album: 'Records' };
 
 const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, onOpenSettings }) => {
@@ -75,7 +81,9 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, o
                 facts: [b.year, b.pages ? `${b.pages} pages` : ''].filter(Boolean).join(' \u00b7 '),
                 blurb: b.description || '', rating: b.rating, ratings_count: b.ratings_count,
             }));
-        return ENTITY_TYPES
+        return LIST_ORDER
+            .filter(type => type !== IDIOMS && ENTITY_TYPES.includes(type))
+            .concat(ENTITY_TYPES.filter(type => !LIST_ORDER.includes(type)))
             .map(type => ({
                 type,
                 items: type === 'book'
@@ -84,6 +92,44 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, o
             }))
             .filter(g => g.items.length);
     }, [rows, books]);
+
+    const renderGroup = (group) => (
+        <View key={group.type} style={{ marginBottom: 18 }}>
+            <Text style={st.groupLabel}>{PLURAL[group.type] || TYPE_LABEL[group.type]}</Text>
+            <View style={st.list}>
+                {group.items.map((item, i) => (
+                    <TouchableOpacity
+                        key={item.id}
+                        style={[st.row, i > 0 && st.rowBorder]}
+                        onPress={() => onOpenEntity?.({ entity: item, startMs: item.first_ms })}
+                        activeOpacity={0.7}
+                        accessibilityRole='button'
+                        accessibilityLabel={`${item.canonical}, ${TYPE_LABEL[item.type]}`}
+                    >
+                        <View style={[st.thumb, st.thumbEmpty]}>
+                            <Icon name={TYPE_ICON[item.type] || 'tag'} size={14} color={colors.textMuted} />
+                            {!!item.image_url && (
+                                <Image
+                                    source={imageSourceFor(item.image_url)}
+                                    style={[st.thumbImage, item.type === 'person' && st.thumbFace]}
+                                    resizeMode='cover'
+                                    accessibilityIgnoresInvertColors
+                                />
+                            )}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                            <Text style={st.name} numberOfLines={1}>{item.canonical}</Text>
+                            <Text style={st.meta} numberOfLines={1}>
+                                {[item.subtitle, item.facts].filter(Boolean).join(' · ')
+                                    || (item.source ? '' : 'not in any catalogue')}
+                            </Text>
+                        </View>
+                        {item.first_ms != null && <Text style={st.time}>{formatClock(item.first_ms)}</Text>}
+                    </TouchableOpacity>
+                ))}
+            </View>
+        </View>
+    );
 
     const header = (
         <View style={st.labelRow}>
@@ -129,43 +175,7 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, o
                 </View>
             )}
 
-            {groups.map(group => (
-                <View key={group.type} style={{ marginBottom: 18 }}>
-                    <Text style={st.groupLabel}>{PLURAL[group.type] || TYPE_LABEL[group.type]}</Text>
-                    <View style={st.list}>
-                        {group.items.map((item, i) => (
-                            <TouchableOpacity
-                                key={item.id}
-                                style={[st.row, i > 0 && st.rowBorder]}
-                                onPress={() => onOpenEntity?.({ entity: item, startMs: item.first_ms })}
-                                activeOpacity={0.7}
-                                accessibilityRole='button'
-                                accessibilityLabel={`${item.canonical}, ${TYPE_LABEL[item.type]}`}
-                            >
-                                <View style={[st.thumb, st.thumbEmpty]}>
-                                    <Icon name={TYPE_ICON[item.type] || 'tag'} size={14} color={colors.textMuted} />
-                                    {!!item.image_url && (
-                                        <Image
-                                            source={imageSourceFor(item.image_url)}
-                                            style={[st.thumbImage, item.type === 'person' && st.thumbFace]}
-                                            resizeMode='cover'
-                                            accessibilityIgnoresInvertColors
-                                        />
-                                    )}
-                                </View>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={st.name} numberOfLines={1}>{item.canonical}</Text>
-                                    <Text style={st.meta} numberOfLines={1}>
-                                        {[item.subtitle, item.facts].filter(Boolean).join(' · ')
-                                            || (item.source ? '' : 'not in any catalogue')}
-                                    </Text>
-                                </View>
-                                {item.first_ms != null && <Text style={st.time}>{formatClock(item.first_ms)}</Text>}
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
-            ))}
+            {groups.filter(g => rank(g.type) < rank(IDIOMS)).map(renderGroup)}
 
             {/* The idioms the same reading found, each opening its own card
                 (user: "the list of idioms appear in list of people, films,
@@ -197,8 +207,15 @@ const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, o
                     </View>
                 </View>
             )}
+
+            {groups.filter(g => rank(g.type) > rank(IDIOMS)).map(renderGroup)}
         </SheetModal>
     );
+};
+
+const rank = (type) => {
+    const i = LIST_ORDER.indexOf(type);
+    return i < 0 ? LIST_ORDER.length : i;
 };
 
 const makeStyles = (colors) => StyleSheet.create({

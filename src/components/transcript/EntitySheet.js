@@ -105,6 +105,12 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
     const heardDiffers = entity.surface && entity.surface.toLowerCase() !== entity.canonical.toLowerCase();
     const rating = entity.rating != null ? Number(entity.rating) : null;
     const portrait = entity.type === 'person' || entity.type === 'place';
+    // Podcast and record art is square; the book-cover frame cropped it.
+    const square = entity.type === 'podcast' || entity.type === 'album';
+    // Three buttons do not fit one row at a readable size ("Apple Podca…"):
+    // the links keep the first row and Replay takes the whole second one.
+    const links = (entity.source_url ? 1 : 0) + (showOther ? 1 : 0) + (isPodcast && show !== false ? 1 : 0);
+    const replayOwnRow = links >= 2;
 
     const header = (
         <>
@@ -166,7 +172,7 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
             )}
             {data?.startMs != null && !!onReplay && (
                 <TouchableOpacity
-                    style={[st.actionBtn, st.replayBtn]}
+                    style={[st.actionBtn, st.replayBtn, replayOwnRow && st.fullRow]}
                     onPress={() => onReplay(data.startMs)}
                     activeOpacity={0.8}
                     accessibilityRole='button'
@@ -183,7 +189,7 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
         <SheetModal visible={visible} onClose={onClose} header={header} footer={footer} maxHeight='88%'>
             <View style={st.head}>
                 {entity.image_url ? (
-                    <View style={[st.image, portrait && st.imagePortrait, st.imageClip]}>
+                    <View style={[st.image, portrait && st.imagePortrait, square && st.imageSquare, st.imageClip]}>
                         <Image
                             source={imageSourceFor(entity.image_url)}
                             style={[st.imageFill, entity.type === 'person' && st.imageFace]}
@@ -192,7 +198,7 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
                         />
                     </View>
                 ) : (
-                    <View style={[st.image, portrait && st.imagePortrait, st.imageEmpty]}>
+                    <View style={[st.image, portrait && st.imagePortrait, square && st.imageSquare, st.imageEmpty]}>
                         <Icon name={TYPE_ICON[entity.type] || 'tag'} size={22} color={colors.textMuted} />
                     </View>
                 )}
@@ -253,6 +259,7 @@ const makeStyles = (colors) => StyleSheet.create({
     head: { flexDirection: 'row', alignItems: 'flex-start', gap: 16, marginBottom: 6 },
     image: { width: 84, height: 126, borderRadius: 10, backgroundColor: colors.hairlineFaint },
     imagePortrait: { width: 96, height: 96, borderRadius: 48 },
+    imageSquare: { width: 110, height: 110 },
     imageEmpty: { alignItems: 'center', justifyContent: 'center', borderWidth: 0.5, borderColor: colors.hairline },
     imageClip: { overflow: 'hidden' },
     imageFill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -272,13 +279,14 @@ const makeStyles = (colors) => StyleSheet.create({
     inlineLink: { alignSelf: 'flex-start', marginTop: 2, marginBottom: 6 },
     inlineLinkText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
 
-    actions: { flexDirection: 'row', gap: 10, paddingTop: 14 },
+    actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingTop: 14 },
     actionBtn: {
         flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
         gap: 7, paddingVertical: 13, paddingHorizontal: 10, borderRadius: radii.pill,
     },
     actionBtnGhost: { backgroundColor: colors.hairlineFaint, borderWidth: 0.5, borderColor: colors.hairline },
     replayBtn: { backgroundColor: colors.accent },
+    fullRow: { flexBasis: '100%' },
     actionText: { fontSize: 14, fontWeight: '700' },
 });
 
