@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Dimensions, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Image, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather as Icon } from '@expo/vector-icons';
+import { bigArtwork } from '../../api/itunes';
+import { imageSourceFor } from '../../api/wikipedia';
 
 // Full-screen picture viewer for the word card's Wikipedia thumbnail.
 //
@@ -17,6 +19,28 @@ import { Feather as Icon } from '@expo/vector-icons';
 //    so this is the one place with fixed colours.
 //
 // `image` is null (hidden) or { uri, thumbUri, width, height, caption, headers }.
+
+// A card's picture (an entity's portrait, art or cover) opened whole: its
+// catalogue URL asked for at a larger size where the catalogue sizes by URL —
+// a Wikimedia thumbnail, an iTunes artwork — with the card's own image as the
+// thumbnail (a Wikimedia original narrower than the asked size errors, and
+// the viewer then keeps the thumbnail). The size comes from the thumbnail,
+// already cached, so the picture fits uncropped; a square when it will not say.
+const WIKIMEDIA_THUMB = /(\/thumb\/.+)\/(\d+)px-([^/?]+)(?:\?.*)?$/;
+export const imageForViewer = async (uri, caption) => {
+    if (!uri) return null;
+    let large = uri;
+    if (WIKIMEDIA_THUMB.test(uri)) large = uri.replace(WIKIMEDIA_THUMB, (m, path, px, name) => `${path}/${Math.max(Number(px), 1280)}px-${name}`);
+    else if (/mzstatic\.com\//.test(uri)) large = bigArtwork(uri, 1200);
+    const { headers } = imageSourceFor(uri);
+    const size = await new Promise(resolve => {
+        const done = (width, height) => resolve({ width, height });
+        const fail = () => resolve({ width: 1, height: 1 });
+        if (headers) Image.getSizeWithHeaders(uri, headers, done, fail);
+        else Image.getSize(uri, done, fail);
+    });
+    return { uri: large, thumbUri: large !== uri ? uri : null, ...size, caption, headers };
+};
 
 const MAX_SCALE = 5;
 const DOUBLE_TAP_SCALE = 2.5;

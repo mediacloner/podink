@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
 import { useTheme, useStyles, radii, withAlpha } from '../../theme';
+import ImageViewer, { imageForViewer } from './ImageViewer';
 import SheetModal, { SheetIconButton } from './SheetModal';
 import { shareText } from './share';
 import { openLibrarySearchUrl } from '../../api/openLibrary';
@@ -52,6 +53,12 @@ const BookSheet = ({ data, onClose, onReplay }) => {
     }, [description, folded]);
 
     const openUrl = useCallback((url) => { if (url) Linking.openURL(url).catch(() => {}); }, []);
+    const [zoomImage, setZoomImage] = useState(null);
+    useEffect(() => { setZoomImage(null); }, [book]);
+    const openImage = useCallback(() => {
+        imageForViewer(book?.cover_url, book?.title).then(setZoomImage);
+    }, [book]);
+    const closeImage = useCallback(() => setZoomImage(null), []);
     const openLibraryUrl = book ? (book.openlibrary_url || openLibrarySearchUrl(book.title)) : null;
     const goodreadsUrl = book ? (book.goodreads_url || goodreadsSearchUrl(book.author ? `${book.title} ${book.author}` : book.title)) : null;
     const onShare = useCallback(() => {
@@ -123,7 +130,9 @@ const BookSheet = ({ data, onClose, onReplay }) => {
                 <View>
                     <View style={st.head}>
                         {book.cover_url ? (
-                            <Image source={{ uri: book.cover_url }} style={st.cover} accessibilityIgnoresInvertColors />
+                            <TouchableOpacity onPress={openImage} activeOpacity={0.8} accessibilityRole='imagebutton' accessibilityLabel='Show the whole cover'>
+                                <Image source={{ uri: book.cover_url }} style={st.cover} accessibilityIgnoresInvertColors />
+                            </TouchableOpacity>
                         ) : (
                             <View style={[st.cover, st.coverEmpty]}>
                                 <Icon name='book-open' size={22} color={colors.textMuted} />
@@ -173,6 +182,7 @@ const BookSheet = ({ data, onClose, onReplay }) => {
                     )}
                 </View>
             )}
+            <ImageViewer image={zoomImage} onClose={closeImage} />
         </SheetModal>
     );
 };
