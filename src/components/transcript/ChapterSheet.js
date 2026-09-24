@@ -60,7 +60,6 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
         getAIModel().then(setModel).catch(() => {});
         isFixTranscriptOn().then(setWithFixes).catch(() => {});
         setRunning(isAnalyzing(epId));
-        setPunctDone(null);
     }, [visible, epId, load]);
 
     // A pass that lands while the sheet is open (this button, or the
