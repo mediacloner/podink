@@ -13,6 +13,8 @@ import { showAlert } from '../components/AppAlert';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon, MaterialCommunityIcons } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
+import EpisodeSwipeRow from '../components/EpisodeSwipeRow';
+import { closeOpenRow } from '../components/SwipeableRow';
 import EmptyState from '../components/EmptyState';
 import LoadingBar from '../components/LoadingBar';
 import SettingsGearButton from '../components/SettingsGearButton';
@@ -441,20 +443,22 @@ const SubscribedTimeline = ({ navigation }) => {
     }, [navigation]);
 
     const renderItem = useCallback(({ item }) => (
-        <EpisodeItem
-            episode={item}
-            onPress={handleOpenEpisode}
-            onDownload={handleDownload}
-            onTranscribe={handleTranscribe}
-            onCancel={handleCancel}
-            isDownloading={item.id in downloads}
-            downloadProgress={downloads[item.id] ?? 0}
-            isTranscribing={activeId === item.id}
-            isQueued={queuedIds.includes(item.id)}
-            showArtwork
-            expandOnPress
-            onMarkSeen={handleMarkSeen}
-        />
+        <EpisodeSwipeRow episode={item} isDownloading={item.id in downloads}>
+            <EpisodeItem
+                episode={item}
+                onPress={handleOpenEpisode}
+                onDownload={handleDownload}
+                onTranscribe={handleTranscribe}
+                onCancel={handleCancel}
+                isDownloading={item.id in downloads}
+                downloadProgress={downloads[item.id] ?? 0}
+                isTranscribing={activeId === item.id}
+                isQueued={queuedIds.includes(item.id)}
+                showArtwork
+                expandOnPress
+                onMarkSeen={handleMarkSeen}
+            />
+        </EpisodeSwipeRow>
     ), [
         handleOpenEpisode, handleDownload, handleTranscribe, handleCancel, handleMarkSeen,
         downloads, activeId, queuedIds,
@@ -586,6 +590,7 @@ const SubscribedTimeline = ({ navigation }) => {
                 onRefresh={() => handleRefresh(true)}
                 refreshing={false}
                 renderItem={renderItem}
+                onScrollBeginDrag={closeOpenRow}
                 initialNumToRender={10}
                 maxToRenderPerBatch={10}
                 windowSize={7}

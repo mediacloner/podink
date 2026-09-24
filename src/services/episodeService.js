@@ -3,7 +3,7 @@ import NetInfo from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
 import {
-    clearPlayProgress, deleteEpisodeLocalData, deleteEpisodeRow, deletePodcast, getAllLocalAudioPaths,
+    clearPlayProgress, deleteEpisodeLocalData, deleteEpisodeTranscript, deleteEpisodeRow, deletePodcast, getAllLocalAudioPaths,
     getEpisodesForPodcastFeed, getLocalCollectionFeedUrls, getPodcastByFeedUrl, getStaleFinishedDownloads,
     isLocalFeedUrl, isYouTubeFeedUrl, LOCAL_KIND, markEpisodeFinished, markEpisodeSeen, saveEpisode,
     updateEpisodeLocalPath, YOUTUBE_KIND,
@@ -258,6 +258,16 @@ export const removeEpisodeDownload = async (episode) => {
     if (episode.local_audio_path) await deleteAudioFile(episode.local_audio_path);
     await deleteEpisodeLocalData(id);
     notifyLibraryChange({ type: 'episode-delete', episodeId: id });
+};
+
+/**
+ * Drop an episode's transcript (and any cloud one) and keep its audio — the
+ * swipe right on a downloaded row. The episode can be transcribed again.
+ */
+export const removeEpisodeTranscript = async (episode) => {
+    log('UI', 'Remove transcript', { id: episode.id, title: episode.title });
+    await deleteEpisodeTranscript(episode.id, { includeMai: true });
+    notifyLibraryChange({ type: 'transcript-delete', episodeId: episode.id });
 };
 
 /**
