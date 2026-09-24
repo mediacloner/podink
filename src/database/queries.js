@@ -702,7 +702,7 @@ export const getEpisodesNeedingNameScan = async () => {
 export const getEpisodeChapters = async (episodeId) => {
   const db = await openDatabaseContext();
   return db.getAllAsync(
-    `SELECT id, start_ms, end_ms, title, blurb, source FROM EpisodeChapters WHERE episode_id = ? ORDER BY start_ms ASC`,
+    `SELECT id, start_ms, end_ms, title, blurb, source FROM EpisodeChapters WHERE episode_id = ? AND source != 'ad' ORDER BY start_ms ASC`,
     [episodeId]
   );
 };
@@ -717,11 +717,23 @@ export const getEpisodeFixes = async (episodeId) => {
 };
 
 /** One analysis replaces the last: summary, chapters and fixes together. */
-export const replaceEpisodeAnalysis = async (episodeId, { summary, chapters, fixes, model }, indexedAt = Date.now()) => {
+/** The advertisements the assistant found (aiService.snapAds), start order.
+ *  They live in EpisodeChapters as source 'ad' — cleared with the chapters
+ *  wherever a transcript goes, and left out of getEpisodeChapters. */
+export const getEpisodeAds = async (episodeId) => {
+  const db = await openDatabaseContext();
+  return db.getAllAsync(
+    `SELECT id, start_ms, end_ms, title AS label FROM EpisodeChapters WHERE episode_id = ? AND source = 'ad' ORDER BY start_ms ASC`,
+    [episodeId]
+  );
+};
+
+export const replaceEpisodeAnalysis = async (episodeId, { summary, chapters, ads, fixes, model }, indexedAt = Date.now()) => {
   const db = await openDatabaseContext();
   await runInTxn(db, async () => {
     await db.runAsync(`DELETE FROM EpisodeChapters WHERE episode_id = ?`, [episodeId]);
-    for (const c of chapters || []) {
+    const adRows = (ads || []).map(a => ({ ...a, title: a.label || 'Advertisement', source: 'ad' }));
+    for (const c of [...(chapters || []), ...adRows]) {
       await db.runAsync(
         `INSERT INTO EpisodeChapters (episode_id, start_ms, end_ms, title, blurb, source) VALUES (?, ?, ?, ?, ?, ?)`,
         [episodeId, Math.round(c.startMs), c.endMs != null ? Math.round(c.endMs) : null, c.title, c.blurb || null, c.source || 'ai']

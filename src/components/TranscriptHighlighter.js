@@ -342,6 +342,9 @@ const TranscriptHighlighter = forwardRef(({
     // a splitter in the text to identy the time 10 20 etc I think i better to
     // put the same of the chapter").
     chapters = EMPTY_BOOKS,
+    // The advertisements (getEpisodeAds): a faint line where each begins,
+    // naming it and how long it runs; a tap skips to where the episode resumes.
+    ads = EMPTY_BOOKS,
 }, ref) => {
     const { colors } = useTheme();
     const styles = useStyles(makeStyles);
@@ -531,6 +534,8 @@ const TranscriptHighlighter = forwardRef(({
             // rarely fall exactly on a paragraph's first word.
             const marks = chapters.filter(c => Number.isFinite(c.start_ms));
             let ci = 0;
+            const adMarks = ads.filter(a => Number.isFinite(a.start_ms) && Number.isFinite(a.end_ms));
+            let ai = 0;
             let nextKp = marks.length ? Infinity : KEYPOINT_INTERVAL_MS;
             for (let j = 0; j < builtChunks.length; j++) {
                 const chunk = builtChunks[j];
@@ -544,6 +549,15 @@ const TranscriptHighlighter = forwardRef(({
                         timeMs: c.start_ms,
                         label: formatTime(c.start_ms),
                         title: c.title,
+                    });
+                }
+                while (ai < adMarks.length && adMarks[ai].start_ms < (chunk.startMs + endMs) / 2) {
+                    const a = adMarks[ai++];
+                    _displayItems.push({
+                        type: 'ad',
+                        id: `ad${a.start_ms}`,
+                        timeMs: a.end_ms,
+                        label: `Ad${a.label ? ` · ${a.label}` : ''} · ${formatTime(a.end_ms - a.start_ms)} · skip`,
                     });
                 }
                 while (chunk.startMs >= nextKp) {
@@ -603,7 +617,7 @@ const TranscriptHighlighter = forwardRef(({
             if (handle?.cancel) handle.cancel();
             if (timer) clearTimeout(timer);
         };
-    }, [segments, chapters]);
+    }, [segments, chapters, ads]);
 
     // ── Measured layout — estimates first, real onLayout heights as they land ─
     //
@@ -627,7 +641,7 @@ const TranscriptHighlighter = forwardRef(({
             const item = items[j];
             offsets[j] = y;
             const len = st.measured.get(item.id)
-                ?? (item.type === 'keypoint'
+                ?? (item.type === 'keypoint' || item.type === 'ad'
                     ? KEYPOINT_HEIGHT + CHUNK_MARGIN
                     : item.type === 'chapter'
                     ? CHAPTER_HEIGHT + CHUNK_MARGIN
@@ -1276,6 +1290,9 @@ const TranscriptHighlighter = forwardRef(({
         if (item.type === 'chapter') {
             return <ChapterRow item={item} onPress={onKeypointPress} />;
         }
+        if (item.type === 'ad') {
+            return <AdRow item={item} onPress={onKeypointPress} />;
+        }
         return (
             <Chunk
                 item={item}
@@ -1578,6 +1595,26 @@ const KeypointRow = React.memo(({ item, onPress }) => {
     >
         <View style={styles.keypointLine} />
         <Text style={styles.keypointLabel}>{item.label}</Text>
+        <View style={styles.keypointLine} />
+    </Pressable>
+    );
+});
+
+// An advertisement: the keypoint's line, with what it is and how long; the
+// tap goes to its end (item.timeMs), skipping it.
+const AdRow = React.memo(({ item, onPress }) => {
+    const styles = useStyles(makeStyles);
+    const CHUNK_RIPPLE = useStyles(rippleFor);
+    return (
+    <Pressable
+        onPress={() => onPress(item.timeMs)}
+        android_ripple={CHUNK_RIPPLE}
+        style={({ pressed }) => [styles.keypointRow, pressed && styles.pressedChunk]}
+        accessibilityRole="button"
+        accessibilityLabel={`${item.label.replace(/ · skip$/, '')}. Skip the advertisement`}
+    >
+        <View style={styles.keypointLine} />
+        <Text style={[styles.keypointLabel, styles.adLabel]} numberOfLines={1}>{item.label}</Text>
         <View style={styles.keypointLine} />
     </Pressable>
     );
@@ -2044,6 +2081,7 @@ const makeStyles = (colors) => StyleSheet.create({
     },
     keypointLine: { flex: 1, height: 0.5, backgroundColor: colors.hairline },
     keypointLabel: { color: colors.transcriptSpoken, fontSize: 11, fontWeight: '700', letterSpacing: 1.2, paddingHorizontal: 10 },
+    adLabel: { letterSpacing: 0.4, flexShrink: 1, color: colors.textMuted },
     chapterRow: { minHeight: CHAPTER_HEIGHT, justifyContent: 'center', paddingVertical: 6, marginBottom: CHUNK_MARGIN },
     chapterRule: { flexDirection: 'row', alignItems: 'center' },
     chapterTitle: { color: colors.textPrimary, fontSize: 14, fontWeight: '700', textAlign: 'center', marginTop: 6, paddingHorizontal: 12 },
