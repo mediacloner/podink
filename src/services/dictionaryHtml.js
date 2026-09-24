@@ -212,7 +212,9 @@ const LDOCE_FLAGS = {
     proncodes: { color: true }, pron: { color: true }, neutral: { color: true }, amevarpron: { color: true },
     level: { small: true }, freq: { small: true },
     pos: { i: true, color: true }, gram: { i: true, color: true },
-    registerlab: { small: true }, geo: { small: true },
+    // A region label inside a bold phrase ("go missing British English")
+    // is not part of the phrase's heading.
+    registerlab: { small: true }, geo: { small: true, b: false },
     sensenum: { b: true, color: true },
     signpost: { small: true, b: true },
     example: { example: true }, gramexa: { example: true }, colloexa: { example: true },
@@ -575,6 +577,7 @@ export const normalizeForSearch = (text) => {
 // ("• to look up", "▪ give up"), stress marks and brackets removed.
 const headingWords = (boldText) => normalizeForSearch(boldText).norm
     .replace(/^[\s•▪▸►▶·◆■□●○◇*→➤➔-]+/, '')
+    .replace(/[\s•▪▸►▶·◆■□●○◇*→➤➔]+$/, '')     // an example bullet set bold after it ("go missing •")
     .replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')   // optional complements: "(from sth)", "[on sb]"
     .replace(/[~:;,.!?]/g, ' ')
     .replace(/(^|\s)\d+(?=\s|$)/g, ' ')        // sense numbers set in bold beside the heading

@@ -288,7 +288,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                 const query = override
                     ? { word: override.word, forceWord: true }
                     : phraseWords?.length > 1
-                        ? { word: phraseWords[0], prevWords: [], nextWords: phraseWords.slice(1) }
+                        ? { word: phraseWords[0], prevWords: [], nextWords: phraseWords.slice(1), phrase: true }
                         : { word, prevWords: data?.prevWords || [], nextWords: data?.nextWords || [] };
                 const t0 = Date.now();
                 const res = lookupWord(dictId, query);
