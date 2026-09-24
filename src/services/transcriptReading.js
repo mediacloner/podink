@@ -42,6 +42,21 @@ const CHAPTERS = {
     },
 };
 
+// The advertisements, each to be skipped as a whole (the Player's Skip ad).
+const ADS = {
+    type: 'array',
+    items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['start', 'end', 'label'],
+        properties: {
+            start: { type: 'string', description: 'Time copied from the transcript line where the advertisement begins, mm:ss or h:mm:ss' },
+            end: { type: 'string', description: 'Time copied from the first transcript line after it, where the episode resumes' },
+            label: { type: 'string', description: 'The sponsor or what is promoted, in a few words' },
+        },
+    },
+};
+
 const CORRECTIONS = {
     type: 'array',
     items: {
@@ -78,10 +93,11 @@ export const READING_SCHEMA_NAME = 'episode_reading';
 export const READING_SCHEMA = {
     type: 'object',
     additionalProperties: false,
-    required: ['summary', 'chapters', 'corrections', 'entities', 'phrases'],
+    required: ['summary', 'chapters', 'ads', 'corrections', 'entities', 'phrases'],
     properties: {
         summary: { type: 'string' },
         chapters: CHAPTERS,
+        ads: ADS,
         corrections: CORRECTIONS,
         entities: ENTITIES,
         phrases: PHRASE_SCHEMA,

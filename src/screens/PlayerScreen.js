@@ -20,10 +20,11 @@ import {
 import {
     getSyncingId, isBookTranscript, isSyncing, needsSync, onBookSyncChange, queueVoiceSync, textDoesNotFit,
 } from '../services/bookService';
-import { getEpisodeById, getEpisodeBooks, getEpisodeChapters, getEpisodeEntities, getEpisodePhrases, getMaiTranscript } from '../database/queries';
+import { getEpisodeAds, getEpisodeById, getEpisodeBooks, getEpisodeChapters, getEpisodeEntities, getEpisodePhrases, getMaiTranscript } from '../database/queries';
 import CloudTranscriptSheet from '../components/transcript/CloudTranscriptSheet';
 import EntitiesSheet from '../components/transcript/EntitiesSheet';
 import EntitySheet from '../components/transcript/EntitySheet';
+import SkipAdButton from '../components/transcript/SkipAdButton';
 import IdiomSheet from '../components/transcript/IdiomSheet';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { buildTranscriptExport, shareText } from '../components/transcript/share';
@@ -376,11 +377,14 @@ const PlayerScreen = ({ route, navigation }) => {
     useEffect(() => { setEntities([]); setPhrases([]); refetchEntities(); }, [refetchEntities]);
     // The assistant's chapters, as the transcript's dividers (in place of the
     // ten-minute marks) once the episode has them.
+    // …and the advertisements the same pass found, for Skip ad.
     const [chapters, setChapters] = useState([]);
+    const [ads, setAds] = useState([]);
     const refetchChapters = useCallback(async () => {
         try { setChapters(await getEpisodeChapters(epId)); } catch (_) {}
+        try { setAds(await getEpisodeAds(epId)); } catch (_) {}
     }, [epId]);
-    useEffect(() => { setChapters([]); refetchChapters(); }, [refetchChapters]);
+    useEffect(() => { setChapters([]); setAds([]); refetchChapters(); }, [refetchChapters]);
     useEffect(() => {
         // Not while the text is still growing: the finished job scans it.
         if (!ep || !segments.length || ep.books_indexed_at || ep.entities_indexed_at || isRadio || transcribing || isQueued) return;
@@ -681,7 +685,10 @@ const PlayerScreen = ({ route, navigation }) => {
                         </View>
                     )}
                 </View>
-                {!isRadio && (displaySegments.length > 0 || (!isImportedEpisode(ep) && !!ep?.local_audio_path)) && (
+                {/* The header icons show from the first frame: the episode row says
+                    whether it has a transcript, so they do not wait for the
+                    text to load (user: "I want the icons from the begining"). */}
+                {!isRadio && (hasTranscript || (!isImportedEpisode(ep) && !!ep?.local_audio_path)) && (
                     <TouchableOpacity
                         onPress={() => setCloudSheet(true)}
                         hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
@@ -692,7 +699,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         <Icon name='cloud' size={18} color={withAlpha(headerFg, viewMai ? 1 : 0.75)} />
                     </TouchableOpacity>
                 )}
-                {!isRadio && hasTranscript && displaySegments.length > 0 && (
+                {!isRadio && hasTranscript && (
                     <TouchableOpacity
                         onPress={() => setEntitiesSheet(true)}
                         hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
@@ -703,7 +710,7 @@ const PlayerScreen = ({ route, navigation }) => {
                         <Icon name='tag' size={18} color={withAlpha(headerFg, 0.75)} />
                     </TouchableOpacity>
                 )}
-                {!isRadio && hasTranscript && displaySegments.length > 0 && (
+                {!isRadio && hasTranscript && (
                     <TouchableOpacity
                         onPress={() => setChapterSheet(true)}
                         hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
@@ -807,7 +814,12 @@ const PlayerScreen = ({ route, navigation }) => {
                         entities={entities}
                         phrases={phrases}
                         chapters={chapters}
+                        ads={ads}
                     />
+                )}
+
+                {!isRadio && ads.length > 0 && !radioNotice && !audioError && audioStatus === '' && (
+                    <SkipAdButton ads={ads} onSkip={seekFromChapter} />
                 )}
 
                 {radioNotice ? (

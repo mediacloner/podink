@@ -41,6 +41,7 @@ import { indexEpisodeBooks } from './bookIndex';
 import { indexEpisodeNames } from './nameIndex';
 import { analyzeIfAuto } from './aiService';
 import { askEntities, tagIfAuto, willTagAuto } from './entityIndex';
+import { whileEnriching } from './enrichment';
 import { log } from './logService';
 import { splitSentences } from './sentenceBoundary';
 import { alignEpisodeWithAsr } from './bookService';
@@ -732,24 +733,26 @@ const _process = async (entry) => {
         // books itself, author and all — the title scan stands aside, and only
         // the names pass, which the scan would have run first, still goes
         // ahead so the model reads the names as the notes spell them.
-        const willTag = await willTagAuto();
-        const scanBooks = willTag
-            ? () => indexEpisodeNames(entry.id, { force: true }).catch(() => {})
-            : () => indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
-        // Last of all, when switched on: what the episode names, matched on
-        // the text the assistant has corrected (entityIndex.tagIfAuto). When
-        // the assistant runs, the model is asked beside its fixes, on the
-        // transcript the chapters pass has just put in OpenAI's cache
-        // (services/transcriptReading.js); only the checking and the lookups
-        // wait for the fixes. Asked on its own when that did not happen.
-        const tag = (done) => tagIfAuto(entry.id, { answers: done?.alongside, model: done?.model }).catch(() => {});
-        // Book text needs no assistant pass (nothing was misheard); the books
-        // it mentions are still worth finding.
-        if (alignMode) scanBooks().then(() => tag(null));
-        else {
-            analyzeIfAuto(entry.id, { alongside: willTag ? askEntities : null })
+        // The row reads "Enriching…" from here until the last pass is done
+        // (services/enrichment.js); a failed pass only ends it sooner.
+        whileEnriching(entry.id, async () => {
+            const willTag = await willTagAuto();
+            const scanBooks = willTag
+                ? () => indexEpisodeNames(entry.id, { force: true }).catch(() => {})
+                : () => indexEpisodeBooks(entry.id, { force: true, front: true }).catch(() => {});
+            // Last of all, when switched on: what the episode names, matched on
+            // the text the assistant has corrected (entityIndex.tagIfAuto). When
+            // the assistant runs, the model is asked beside its fixes, on the
+            // transcript the chapters pass has just put in OpenAI's cache
+            // (services/transcriptReading.js); only the checking and the lookups
+            // wait for the fixes. Asked on its own when that did not happen.
+            const tag = (done) => tagIfAuto(entry.id, { answers: done?.alongside, model: done?.model }).catch(() => {});
+            // Book text needs no assistant pass (nothing was misheard); the books
+            // it mentions are still worth finding.
+            if (alignMode) return scanBooks().then(() => tag(null));
+            return analyzeIfAuto(entry.id, { alongside: willTag ? askEntities : null })
                 .then(async (done) => { if (!done) await scanBooks(); return tag(done); }, () => scanBooks().then(() => tag(null)));
-        }
+        }).catch(() => {});
 
         log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length });
         entry.resolve(segments);

@@ -126,11 +126,13 @@ export const estimateEpisodeCost = (model, durationSec, opts) => formatDollars(e
 
 // Each is the last message of a request that starts with the episode
 // (services/transcriptReading.js), so the text they read can be cached.
-const CHAPTERS_INSTRUCTIONS = `Task: write the table of contents and a short summary of this episode. Fill "summary" and "chapters" only.
+const CHAPTERS_INSTRUCTIONS = `Task: write the table of contents and a short summary of this episode, and list its advertisements. Fill "summary", "chapters" and "ads" only.
 
 Chapters: divide the episode into its natural sections — a story, a guest, a topic, a book discussed, an advertising break. Between three and twelve for an hour of audio; a section shorter than about two minutes belongs with its neighbour. The first chapter starts at the first line. Each chapter's "start" is a time copied from the transcript line where that section begins. The title is at most eight words, written like a listener's table of contents — what the section is about, not a tease; an advertising break is titled "Advertisement". The blurb is one plain sentence saying what happens in the section.
 
 Summary: three or four sentences in plain English saying what the episode is about and what it covers, for someone deciding whether to listen. No preamble, no opinions, no "in this episode".
+
+Ads: every advertisement, however short, so the listener can skip it — a sponsor read (also when the host reads it in their own voice, woven into the talk), "this episode is brought to you by…", an inserted commercial, a trailer or promotion for another show. Not the show's own introduction, its theme music, or the hosts asking for reviews or subscriptions. "start" is the time of the line where the advertisement begins; "end" is the time of the first line after it, where the episode resumes. Consecutive advertisements in one break are one entry. "label" is the sponsor or the show promoted, in a few words ("Squarespace", "Trailer: The Rest Is History"). An empty list when there are none.
 
 When told the text is one part of a longer episode, do the same for that part only.`;
 
@@ -304,6 +306,51 @@ const snapChapters = (raw, sentences, durationMs) => {
     return merged;
 };
 
+const MIN_AD_MS = 5000;           // shorter is a mention, not a break
+const MAX_AD_MS = 8 * 60 * 1000;  // longer is the model mistaking a segment for one
+
+/** The sentence start nearest `t` within SNAP_MS, or `t` itself. */
+const snapToSentence = (t, starts) => {
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < starts.length; i++) {
+        const d = Math.abs(starts[i] - t);
+        if (d < bestD) { bestD = d; best = i; }
+        if (starts[i] > t + SNAP_MS) break;
+    }
+    return best >= 0 && bestD <= SNAP_MS ? starts[best] : t;
+};
+
+/**
+ * The ads as { startMs, endMs, label }: both ends on sentence starts, so a
+ * skip lands where the episode resumes; overlapping or touching breaks
+ * merged; anything too short or too long to be an ad dropped.
+ */
+const snapAds = (raw, sentences, durationMs) => {
+    const starts = sentences.map(s => s.startMs);
+    const end = durationMs > 0 ? durationMs : (sentences[sentences.length - 1]?.endMs ?? Infinity);
+    const ads = [];
+    for (const a of raw || []) {
+        const s = parseClock(a.start);
+        const e = parseClock(a.end);
+        if (s == null || e == null) continue;
+        const startMs = snapToSentence(s, starts);
+        const endMs = Math.min(end, snapToSentence(e, starts));
+        if (endMs - startMs < MIN_AD_MS || endMs - startMs > MAX_AD_MS) continue;
+        const label = String(a.label || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+        ads.push({ startMs, endMs, label });
+    }
+    ads.sort((a, b) => a.startMs - b.startMs);
+    const merged = [];
+    for (const a of ads) {
+        const prev = merged[merged.length - 1];
+        if (prev && a.startMs <= prev.endMs + 1000) {
+            prev.endMs = Math.max(prev.endMs, a.endMs);
+            if (a.label && !prev.label.includes(a.label)) prev.label = prev.label ? `${prev.label}, ${a.label}` : a.label;
+        } else merged.push({ ...a });
+    }
+    return merged;
+};
+
 const ENDS_POSSESSIVE = /['’]s[^\p{L}\p{N}]*$/iu;
 const MAX_HEARD_WORDS = 6;
 const MAX_CORRECT_WORDS = 8;
@@ -397,6 +444,7 @@ export const chaptersAndSummary = async ({ ep, rows, notes = '', request, prepar
         usage.input += u?.input || 0; usage.output += u?.output || 0; usage.cached += u?.cached || 0;
     };
     const rawChapters = [];
+    const rawAds = [];
     const partSummaries = [];
     for (let i = 0; i < parts.length; i++) {
         const r = await request(readingRequest({
@@ -404,6 +452,7 @@ export const chaptersAndSummary = async ({ ep, rows, notes = '', request, prepar
         }));
         add(r.usage);
         rawChapters.push(...(r.json?.chapters || []));
+        rawAds.push(...(r.json?.ads || []));
         if (r.json?.summary) partSummaries.push(String(r.json.summary).trim());
     }
     let summary = partSummaries.join('\n\n');
@@ -418,6 +467,7 @@ export const chaptersAndSummary = async ({ ep, rows, notes = '', request, prepar
     }
     return {
         summary, chapters: snapChapters(rawChapters, sentences, durationMs),
+        ads: snapAds(rawAds, sentences, durationMs),
         sentences, parts: parts.length, usage,
     };
 };
@@ -486,7 +536,7 @@ export const analyzeEpisode = (episodeId, { force = false, scanBooks = true, alo
         // reads the text first is the one that caches it for the rest.
         const pass = await chaptersAndSummary({ ep, rows, notes, prepared, request });
         add(pass.usage);
-        const { summary, chapters } = pass;
+        const { summary, chapters, ads } = pass;
 
         // Fixes, per part, and the pass alongside — side by side, both on
         // the cached text.
@@ -510,7 +560,7 @@ export const analyzeEpisode = (episodeId, { force = false, scanBooks = true, alo
             : Promise.resolve(null));
         const [{ fixes, dropped }, besides] = await Promise.all([askFixes(), askAlongside()]);
 
-        await replaceEpisodeAnalysis(episodeId, { summary, chapters, fixes, model });
+        await replaceEpisodeAnalysis(episodeId, { summary, chapters, ads, fixes, model });
         const cost = dollars(model, usage);
         // The statistics screen adds up what the assistant has cost
         // (schema v15); the log line below is for one run, this is for the month.
@@ -521,10 +571,11 @@ export const analyzeEpisode = (episodeId, { force = false, scanBooks = true, alo
         });
         log('SYSTEM', 'Episode assistant finished', {
             id: episodeId, title: ep.title, model, parts: parts.length, sentences: sentences.length,
-            chapters: chapters.length, fixes: fixes.length, notApplied: fixes.filter(f => !f.applied).length,
+            chapters: chapters.length, ads: ads.length, fixes: fixes.length, notApplied: fixes.filter(f => !f.applied).length,
             dropped: dropped.slice(0, 20), tokensIn: usage.input, tokensCached: usage.cached, tokensOut: usage.output,
             cost: `$${cost.toFixed(4)}`, ms: Date.now() - t0,
             chapterList: chapters.map(c => `${formatClock(c.startMs)} ${c.title}`),
+            adList: ads.map(a => `${formatClock(a.startMs)}–${formatClock(a.endMs)} ${a.label}`),
             fixList: fixes.map(f => `${f.heard} → ${f.correct} (${f.kind}, ${f.confidence}${f.applied ? '' : ', not applied'}) ×${f.count}`).slice(0, 60),
         });
         try { notifyLibraryChange({ type: 'analysis-indexed', episodeId, chapters: chapters.length, fixes: fixes.length }); } catch (_) {}
