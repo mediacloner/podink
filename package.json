@@ -1,6 +1,6 @@
 {
   "name": "podink",
-  "version": "5.6.0",
+  "version": "5.7.5",
   "private": true,
   "scripts": {
     "postinstall": "patch-package",

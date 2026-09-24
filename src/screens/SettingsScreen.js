@@ -783,7 +783,7 @@ const SettingsScreen = () => {
             <View style={styles.infoBanner}>
                 <Icon name="info" size={13} color={colors.warning} style={{ marginTop: 1 }} />
                 <Text style={styles.infoText}>
-                    A summary, chapters and transcript corrections written by a model at OpenAI, and — when a translation reads wrong — a second reading of that sentence with the lines before it, from the translation card. Text is sent there, with your own key, only when you ask. Audio leaves the phone only for a MAI test you start below.
+                    A summary, chapters, transcript corrections and repaired punctuation written by a model at OpenAI, and — when a translation reads wrong — a second reading of that sentence with the lines before it, from the translation card. Text is sent there, with your own key, only when you ask. Audio leaves the phone only for a MAI test you start below.
                 </Text>
             </View>
 
@@ -877,7 +877,7 @@ const SettingsScreen = () => {
                             <Text style={styles.settingTitle}>Summarise after every transcription</Text>
                         </View>
                         <Text style={[styles.settingHint, styles.indent]}>
-                            The summary and chapters are written as soon as a transcript finishes. Off, they are written when you ask from the Player.
+                            The summary and chapters are written as soon as a transcript finishes, after the stretches the recogniser ran into one long sentence have had their punctuation put back. Off, both happen when you ask from the Player.
                         </Text>
                     </View>
                     <Switch

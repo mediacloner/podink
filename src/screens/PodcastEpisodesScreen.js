@@ -8,6 +8,8 @@ import NetInfo from '@react-native-community/netinfo';
 import { Feather as Icon } from '@expo/vector-icons';
 import { showAlert } from '../components/AppAlert';
 import EpisodeItem from '../components/EpisodeItem';
+import EpisodeSwipeRow from '../components/EpisodeSwipeRow';
+import { closeOpenRow } from '../components/SwipeableRow';
 import EmptyState from '../components/EmptyState';
 import Pill from '../components/Pill';
 import {
@@ -269,17 +271,19 @@ const PodcastEpisodesScreen = ({ navigation, route }) => {
     }, []);
 
     const renderItem = useCallback(({ item }) => (
-        <EpisodeItem
-            episode={item}
-            onPress={openEpisode}
-            onDownload={handleDownload}
-            onTranscribe={handleTranscribe}
-            onCancel={handleCancel}
-            isDownloading={item.id in downloads}
-            downloadProgress={downloads[item.id] ?? 0}
-            isTranscribing={activeId === item.id}
-            isQueued={queuedIds.includes(item.id) && activeId !== item.id}
-        />
+        <EpisodeSwipeRow episode={item} isDownloading={item.id in downloads}>
+            <EpisodeItem
+                episode={item}
+                onPress={openEpisode}
+                onDownload={handleDownload}
+                onTranscribe={handleTranscribe}
+                onCancel={handleCancel}
+                isDownloading={item.id in downloads}
+                downloadProgress={downloads[item.id] ?? 0}
+                isTranscribing={activeId === item.id}
+                isQueued={queuedIds.includes(item.id) && activeId !== item.id}
+            />
+        </EpisodeSwipeRow>
     ), [openEpisode, handleDownload, handleTranscribe, handleCancel, downloads, activeId, queuedIds]);
 
     // ── Summary line ──────────────────────────────────────────────────────
@@ -399,6 +403,7 @@ const PodcastEpisodesScreen = ({ navigation, route }) => {
                 windowSize={7}
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
+                onScrollBeginDrag={closeOpenRow}
                 contentContainerStyle={shown.length === 0 ? { flex: 1 } : { paddingBottom: bottom + 130 }}
                 ListEmptyComponent={emptyState}
             />

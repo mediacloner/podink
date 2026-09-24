@@ -8,17 +8,23 @@
  * through its App Links — so tapping Goodreads opens Goodreads when it is
  * there, and the browser when it is not, with nothing to configure.
  *
+ * A podcast is the exception: the way out is into this app. The card finds the
+ * show's feed, shows the description the feed carries, and offers Subscribe
+ * (services/podcastSubscribe.js) instead of a link to another player.
+ *
  * `data` is { entity, startMs } or null; `entity` is an EpisodeEntities row
  * (services/entityIndex.js).
  */
-import React, { useCallback, useMemo, useState } from 'react';
-import { Image, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Image, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather as Icon } from '@expo/vector-icons';
 import { radii, useStyles, useTheme } from '../../theme';
 import SheetModal, { SheetIconButton } from './SheetModal';
 import { shareText } from './share';
 import { TYPE_ICON, TYPE_LABEL } from '../../services/entityIndex';
 import { imageSourceFor } from '../../api/wikipedia';
+import { lookUpPodcast, subscribeToPodcast } from '../../services/podcastSubscribe';
+import { showAlert } from '../AppAlert';
 
 const FOLD_CHARS = 420;
 
@@ -34,8 +40,8 @@ const elsewhere = (entity) => {
         case 'book': return { label: 'Goodreads', url: `https://www.goodreads.com/search?q=${q}` };
         case 'film':
         case 'tv': return { label: 'IMDb', url: `https://www.imdb.com/find/?q=${q}&s=tt` };
-        case 'album':
-        case 'podcast': return { label: 'Spotify', url: `https://open.spotify.com/search/${q}` };
+        case 'album': return { label: 'Spotify', url: `https://open.spotify.com/search/${q}` };
+        case 'podcast': return null;   // Subscribe, in this app
         default: return { label: 'Wikipedia', url: `https://en.wikipedia.org/wiki/Special:Search?search=${q}` };
     }
 };
@@ -46,8 +52,35 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
     const visible = !!data;
     const entity = data?.entity || null;
     const [expanded, setExpanded] = useState(false);
+    // A podcast's feed: { feedUrl, description, subscribed }, null while it is
+    // looked for, false when no show by that name was found.
+    const [show, setShow] = useState(null);
+    const [subscribing, setSubscribing] = useState(false);
+    const isPodcast = entity?.type === 'podcast';
 
-    const blurb = (entity?.blurb || '').trim();
+    useEffect(() => {
+        setShow(null);
+        setExpanded(false);
+        if (!isPodcast) return undefined;
+        let live = true;
+        lookUpPodcast(entity).then((r) => { if (live) setShow(r || false); }, () => { if (live) setShow(false); });
+        return () => { live = false; };
+    }, [entity, isPodcast]);
+
+    const subscribe = useCallback(async () => {
+        if (!show?.feedUrl || show.subscribed || subscribing) return;
+        setSubscribing(true);
+        try {
+            await subscribeToPodcast(show.feedUrl);
+            setShow(s => (s ? { ...s, subscribed: true } : s));
+        } catch (e) {
+            showAlert('Could not add podcast', e?.message || 'The feed did not load. Try again later.');
+        } finally {
+            setSubscribing(false);
+        }
+    }, [show, subscribing]);
+
+    const blurb = ((isPodcast && show?.description) || entity?.blurb || '').trim();
     const folded = !expanded && blurb.length > FOLD_CHARS;
     const shownBlurb = useMemo(() => {
         if (!folded) return blurb;
@@ -68,7 +101,7 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
     // The kind's own site, unless that is where the answer already came from —
     // a person found on Wikipedia does not need a second Wikipedia button.
     const other = elsewhere(entity);
-    const showOther = !entity.source_url || SOURCE_LABEL[entity.source] !== other.label;
+    const showOther = !!other && (!entity.source_url || SOURCE_LABEL[entity.source] !== other.label);
     const heardDiffers = entity.surface && entity.surface.toLowerCase() !== entity.canonical.toLowerCase();
     const rating = entity.rating != null ? Number(entity.rating) : null;
     const portrait = entity.type === 'person' || entity.type === 'place';
@@ -112,6 +145,23 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
                 >
                     <Icon name='external-link' size={14} color={colors.accent} />
                     <Text style={[st.actionText, { color: colors.accent }]} numberOfLines={1}>{other.label}</Text>
+                </TouchableOpacity>
+            )}
+            {isPodcast && show !== false && (
+                <TouchableOpacity
+                    style={[st.actionBtn, st.actionBtnGhost]}
+                    onPress={subscribe}
+                    disabled={!show || show.subscribed || subscribing}
+                    activeOpacity={0.8}
+                    accessibilityRole='button'
+                    accessibilityLabel={show?.subscribed ? 'In My Podcasts' : 'Subscribe in this app'}
+                >
+                    {!show || subscribing
+                        ? <ActivityIndicator size='small' color={colors.accent} />
+                        : <Icon name={show.subscribed ? 'check' : 'plus'} size={14} color={colors.accent} />}
+                    <Text style={[st.actionText, { color: colors.accent }]} numberOfLines={1}>
+                        {show?.subscribed ? 'Subscribed' : 'Subscribe'}
+                    </Text>
                 </TouchableOpacity>
             )}
             {data?.startMs != null && !!onReplay && (

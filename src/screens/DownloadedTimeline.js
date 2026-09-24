@@ -2,14 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     ActivityIndicator, View, Text, FlatList, TouchableOpacity, StyleSheet, Image,
 } from 'react-native';
-import { showAlert } from '../components/AppAlert';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
-import SwipeableRow, { closeOpenRow } from '../components/SwipeableRow';
+import EpisodeSwipeRow from '../components/EpisodeSwipeRow';
+import { closeOpenRow } from '../components/SwipeableRow';
 import EmptyState from '../components/EmptyState';
-import { getDownloadedEpisodes, deleteEpisodeTranscript } from '../database/queries';
+import { getDownloadedEpisodes } from '../database/queries';
 import {
     dequeueTranscription,
     onQueueChange,
@@ -17,8 +17,8 @@ import {
     getActiveId,
     getAbortingId,
 } from '../services/whisperService';
-import { removeEpisodeDownload, reportTranscriptionError, transcribeEpisode } from '../services/episodeService';
-import { onLibraryChange, notifyLibraryChange } from '../services/libraryEvents';
+import { reportTranscriptionError, transcribeEpisode } from '../services/episodeService';
+import { onLibraryChange } from '../services/libraryEvents';
 import { log } from '../services/logService';
 import { artworkSource } from '../api/userAgent';
 import { withAlpha, type, useStyles, useTheme } from '../theme';
@@ -78,29 +78,12 @@ const FolderHeader = React.memo(({ group, isExpanded, showSeparator, onToggleExp
 // into the render window, not just on expand.
 const EpisodeRow = React.memo(({
     episode, isActive, isQueued,
-    onOpenEpisode, onTranscribe, onCancel, onDelete, onRemoveTranscript,
+    onOpenEpisode, onTranscribe, onCancel, onChanged,
 }) => {
-    const { colors } = useTheme();
     const styles = useStyles(makeStyles);
     return (
     <View style={styles.episodeGroup}>
-        <SwipeableRow
-            leftAction={episode.has_transcript ? {
-                icon: 'x-circle',
-                label: 'Transcript',
-                color: colors.indigo,
-                dismiss: 'ack',
-                onPress: () => onRemoveTranscript(episode),
-                accessibilityLabel: `Remove transcript for ${episode.title}`,
-            } : undefined}
-            rightAction={{
-                icon: 'trash-2',
-                color: colors.danger,
-                dismiss: 'slide-out',
-                onPress: () => onDelete(episode),
-                accessibilityLabel: `Delete ${episode.title}`,
-            }}
-        >
+        <EpisodeSwipeRow episode={episode} deleteDismiss="slide-out" onChanged={onChanged}>
             <EpisodeItem
                 episode={episode}
                 cardStyle={styles.episodeCard}
@@ -110,7 +93,7 @@ const EpisodeRow = React.memo(({
                 isTranscribing={isActive}
                 isQueued={isQueued && !isActive}
             />
-        </SwipeableRow>
+        </EpisodeSwipeRow>
     </View>
     );
 });
@@ -313,27 +296,6 @@ const DownloadedTimeline = ({ navigation }) => {
         }
     }, []);
 
-    const handleRemoveTranscript = useCallback(async (episode) => {
-        log('UI', 'Remove transcript', { id: episode.id, title: episode.title });
-        await deleteEpisodeTranscript(episode.id, { includeMai: true });
-        notifyLibraryChange({ type: 'transcript-delete', episodeId: episode.id });
-        loadData();
-    }, [loadData]);
-
-    const handleDelete = useCallback(async (episode) => {
-        try {
-            // Shared with the finished-episode prompt: dequeues, stops the
-            // player if this is the loaded track, deletes file + transcript.
-            await removeEpisodeDownload(episode);
-        } catch (e) {
-            log('UI', 'Delete failed', { id: episode.id, error: e?.message || String(e) });
-            showAlert('Delete failed', 'Could not remove this episode. Please try again.');
-            loadData();
-            return false; // signal SwipeableRow to spring the row back
-        }
-        loadData();
-    }, [loadData]);
-
     const handleOpenEpisode = useCallback((episode) => {
         log('UI', 'Episode tapped → Player', { id: episode.id, title: episode.title });
         navigation.navigate('Player', { episode });
@@ -375,13 +337,12 @@ const DownloadedTimeline = ({ navigation }) => {
                 onOpenEpisode={handleOpenEpisode}
                 onTranscribe={handleTranscribe}
                 onCancel={handleCancel}
-                onDelete={handleDelete}
-                onRemoveTranscript={handleRemoveTranscript}
+                onChanged={loadData}
             />
         );
     }, [
         expandedKey, activeId, queuedIds,
-        handleToggleExpand, handleOpenEpisode, handleTranscribe, handleCancel, handleDelete, handleRemoveTranscript,
+        handleToggleExpand, handleOpenEpisode, handleTranscribe, handleCancel, loadData,
     ]);
 
     if (isLoading) {

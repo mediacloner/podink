@@ -20,12 +20,16 @@
  * or one over 25 words without a single comma. Across eight episodes that is
  * about a sixth of an hour's words — a fraction of a cent.
  *
+ * It runs as the first step of the assistant's own run (aiService.analyzeEpisode),
+ * before the summary and chapters, so every later reading sees the repaired
+ * sentences — after each transcription when that switch is on, and whenever
+ * the listener asks for the summary in the Player.
+ *
  * The repaired wording goes to Transcripts.text_fixed, which
  * getTranscriptsForEpisode reads in preference; Transcripts.text keeps the
  * recogniser's own, so the search index and any later re-run still see it.
  */
 import { getEpisodeById, getTranscriptsForEpisode, recordApiSpend, saveRepunctuation } from '../database/queries';
-import { assistantRequest, costOf } from './aiService';
 import { splitSentences } from './sentenceBoundary';
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
@@ -33,6 +37,7 @@ import { log } from './logService';
 const LONG_WORDS = 35;          // a sentence past this has lost a full stop
 const LONG_MS = 15000;          // …or this long, when the speaker is slow
 const UNBROKEN_WORDS = 25;      // …or this long with no comma at all
+const PARALLEL = 4;             // regions asked at once
 const REGION_MAX_WORDS = 400;   // one request's worth
 
 // A full stop the recogniser put in the middle of a thought — "a
@@ -90,7 +95,7 @@ const isLoose = (s) => s.words > LONG_WORDS
 
 /**
  * Row ranges worth sending, each with the sentence either side of it for
- * context. Exported for the tests and for the sheet's "N stretches" line.
+ * context. Exported for the tests.
  */
 export const findLooseRegions = (rows) => {
     const sentences = sentencesFromRows(rows);
@@ -149,12 +154,12 @@ const splitAcrossRows = (rows, from, to, out) => {
  * Repairs one episode's loose regions. Resolves
  * { regions, repaired, rejected, rows, cost } — `rejected` counts the
  * regions whose answer changed a word and was thrown away. Rejects only when
- * there is no key, no transcript, or nothing to repair.
+ * the episode or its transcript is gone.
  *
- * `request` and `model` default to the assistant's own (Settings → Episode
- * assistant); pass another pair to try a different model on the same text.
+ * `request`, `model` and `price(usage)` are the assistant's (analyzeEpisode
+ * passes its own), so this module needs nothing from aiService.
  */
-export const repunctuateEpisode = async (episodeId, { request, model, onProgress = () => {} } = {}) => {
+export const repunctuateEpisode = async (episodeId, { request, model, price }) => {
     const t0 = Date.now();
     const ep = await getEpisodeById(episodeId);
     if (!ep) throw Object.assign(new Error('This episode is gone.'), { kind: 'notranscript' });
@@ -163,19 +168,17 @@ export const repunctuateEpisode = async (episodeId, { request, model, onProgress
     const regions = findLooseRegions(rows);
     if (!regions.length) return { regions: 0, repaired: 0, rejected: 0, rows: 0, cost: 0 };
 
-    let ask = request;
-    let modelId = model;
-    if (!ask) ({ request: ask, model: modelId } = await assistantRequest());
-
     const head = `Podcast: ${ep.podcast_title || ''}\nEpisode: ${ep.title || ''}`;
     const usage = { input: 0, output: 0, cached: 0 };
     const updates = [];
     let rejected = 0;
-    for (let i = 0; i < regions.length; i++) {
+    // A few regions at a time: the summary waits on this, and one request
+    // after another made an hour with twenty loose stretches take minutes.
+    const repair = async (i) => {
         const { from, to } = regions[i];
         const before = rows.slice(from, to + 1).map(r => String(r.text || '').trim()).filter(Boolean).join(' ');
         try {
-            const r = await ask({
+            const r = await request({
                 instructions: INSTRUCTIONS, schemaName: 'repunctuated_text', schema: SCHEMA,
                 input: `${head}\n\nText:\n${before}`,
                 maxOutputTokens: Math.min(6000, regions[i].words * 4 + 400),
@@ -184,7 +187,7 @@ export const repunctuateEpisode = async (episodeId, { request, model, onProgress
             usage.output += r.usage?.output || 0;
             usage.cached += r.usage?.cached || 0;
             const after = String(r.json?.text || '').trim();
-            if (!after || letters(after) !== letters(before)) { rejected += 1; continue; }
+            if (!after || letters(after) !== letters(before)) { rejected += 1; return; }
             const texts = splitAcrossRows(rows, from, to, after);
             texts.forEach((text, k) => {
                 const row = rows[from + k];
@@ -194,20 +197,20 @@ export const repunctuateEpisode = async (episodeId, { request, model, onProgress
             log('SERVICE', 'Repunctuation region failed', { id: episodeId, region: i, error: e?.message || String(e) });
             rejected += 1;
         }
-        onProgress(Math.round((i + 1) / regions.length * 100));
-    }
+    };
+    let next = 0;
+    const worker = async () => { while (next < regions.length) await repair(next++); };
+    await Promise.all(Array.from({ length: Math.min(PARALLEL, regions.length) }, worker));
 
     if (updates.length) await saveRepunctuation(episodeId, updates);
-    const cost = modelId ? costOf(modelId, usage) : 0;
-    // A pass on someone else's model (the sheet's comparison) is billed by
-    // whoever that model is behind; the assistant's own is OpenAI's.
+    const cost = price(usage);
     await recordApiSpend({
-        provider: request ? 'openrouter' : 'openai', service: 'punctuation', model: modelId,
+        provider: 'openai', service: 'punctuation', model,
         episodeId, episodeTitle: ep.title, source: ep.podcast_title,
         tokensIn: usage.input, tokensCached: usage.cached, tokensOut: usage.output, cost,
     });
     log('SERVICE', 'Repunctuation finished', {
-        id: episodeId, title: ep.title, model: modelId, regions: regions.length,
+        id: episodeId, title: ep.title, model, regions: regions.length,
         repaired: regions.length - rejected, rejected, rows: updates.length,
         tokensIn: usage.input, tokensOut: usage.output, cost: `$${cost.toFixed(4)}`, ms: Date.now() - t0,
     });

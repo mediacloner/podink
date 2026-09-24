@@ -10,6 +10,7 @@ import { showAlert } from '../components/AppAlert';
 import { Feather as Icon, MaterialCommunityIcons } from '@expo/vector-icons';
 import EpisodeItem from '../components/EpisodeItem';
 import SwipeableRow, { closeOpenRow } from '../components/SwipeableRow';
+import EpisodeSwipeRow from '../components/EpisodeSwipeRow';
 import EmptyState from '../components/EmptyState';
 import SettingsGearButton from '../components/SettingsGearButton';
 import {
@@ -131,20 +132,21 @@ const PodcastRow = React.memo(({
                 style={styles.episodeGroup}
             >
                 {episodes.map(ep => (
-                    <EpisodeItem
-                        key={ep.id}
-                        episode={ep}
-                        onPress={onOpenEpisode}
-                        cardStyle={styles.episodeCard}
-                        onDownload={onDownload}
-                        onTranscribe={onTranscribe}
-                        onCancel={onCancel}
-                        onMarkSeen={onMarkSeen}
-                        isDownloading={ep.id in downloads}
-                        downloadProgress={downloads[ep.id] ?? 0}
-                        isTranscribing={activeId === ep.id}
-                        isQueued={queuedIds.includes(ep.id) && activeId !== ep.id}
-                    />
+                    <EpisodeSwipeRow key={ep.id} episode={ep} isDownloading={ep.id in downloads}>
+                        <EpisodeItem
+                            episode={ep}
+                            onPress={onOpenEpisode}
+                            cardStyle={styles.episodeCard}
+                            onDownload={onDownload}
+                            onTranscribe={onTranscribe}
+                            onCancel={onCancel}
+                            onMarkSeen={onMarkSeen}
+                            isDownloading={ep.id in downloads}
+                            downloadProgress={downloads[ep.id] ?? 0}
+                            isTranscribing={activeId === ep.id}
+                            isQueued={queuedIds.includes(ep.id) && activeId !== ep.id}
+                        />
+                    </EpisodeSwipeRow>
                 ))}
                 {/* The five above are the latest; the whole back catalogue
                     (the feed, read page by page) has its own screen. A
