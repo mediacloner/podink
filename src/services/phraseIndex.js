@@ -17,28 +17,28 @@
  * model merely believes was said is dropped.
  */
 import { countPhrase } from './nameText';
-import { OBJECTS } from './dictionaryLookup';
+import { OBJECTS, stemVariants } from './dictionaryLookup';
 
 export const PHRASE_KINDS = ['phrasal', 'idiom'];
 
-const MAX_PHRASAL = 40;
+const MAX_PHRASAL = 80;
 const MAX_IDIOMS = 15;
 
 export const PHRASE_INSTRUCTIONS = `Separately, under "phrases", list the phrasal verbs and idioms the speakers use — a listener learning English will tap them.
 
-- kind "phrasal": a verb with its particle or particles that together mean something — "pick up", "give in", "look forward to", "put up with". Include the ones an object splits: "picked it up", "turned the offer down", "sort the whole thing out".
+- kind "phrasal": a verb with its particle or particles that together mean something — "pick up", "give in", "look forward to", "put up with". Include the everyday ones too — "end up", "find out", "go on", "come back" — a learner needs those most. Include the ones an object splits: "picked it up", "turned the offer down", "sort the whole thing out".
 - kind "idiom": a fixed expression whose meaning is not the sum of its words — "the elephant in the room", "bite the bullet", "on the fence", "a long shot". Not a plain collocation ("make a decision") and not a literal use ("broke the ice on the pond").
 
 For each one give:
-- "surface": the words exactly as the transcript has them, copied character for character, from the verb to its last particle, or the whole idiom — at most eight words. List each different wording once.
+- "surface": the words exactly as the transcript has them, copied character for character, from the verb to its last particle, or the whole idiom — at most eight words. List a phrasal verb once, under one of its wordings — the app finds its other tenses itself — and again only for a wording an object splits ("turned the offer down").
 - "base": the dictionary form: the verb in its base form and generic pronouns — "pick up", "turn down", "keep your fingers crossed", "take something on board".
 - "kind": phrasal or idiom.
 - "meaning": for an idiom, what it means, in one plain sentence. For a phrasal verb, "".
 - "origin": for an idiom, why these words have come to mean this — the picture, the practice or the story behind them — in one or two plain sentences. For a phrasal verb, "".
 - "here": for an idiom, what the speaker is saying with it in this passage, in one sentence that refers to what they are talking about. For a phrasal verb, "".
-- "context": the transcript line it appears in, copied as written.
+- "context": for an idiom, the transcript line it appears in, copied as written. For a phrasal verb, "".
 
-At most ${MAX_PHRASAL} phrasal verbs and ${MAX_IDIOMS} idioms for this text, the least obvious first. Return an empty list when there are none.`;
+At most ${MAX_PHRASAL} phrasal verbs and ${MAX_IDIOMS} idioms for this text; when there are more, keep the idioms and the phrasal verbs said most often. Return an empty list when there are none.`;
 
 export const PHRASE_SCHEMA = {
     type: 'array',
@@ -121,9 +121,11 @@ const endsSentence = (text) => /[.!?…]["”’)\]]*\s*$/.test(String(text || '
  * An idiom is marked whole. A phrasal verb is marked on the verb, its
  * particles and a pronoun between them ("picked it up") — not on a longer
  * object ("picked the kids up"), whose words keep their own lookups. Each
- * phrase is looked for as it was heard and in its dictionary form, so
- * "pick up" said elsewhere in the hour is marked too. Idioms go first: "pick
- * up the pieces" is the idiom, not the phrasal verb inside it.
+ * phrase is looked for as it was heard and in its dictionary form, and a
+ * phrasal verb with its verb in any tense and a pronoun object in between,
+ * so "end up" also marks "ended up" and "ends up", and "pick up" "picked
+ * it up", anywhere in the hour. Idioms go first: "pick up the pieces" is the
+ * idiom, not the phrasal verb inside it.
  */
 export const buildPhraseMarks = (chunks, phrases) => {
     let total = 0;
@@ -139,6 +141,16 @@ export const buildPhraseMarks = (chunks, phrases) => {
             stops[w.globalIndex] = endsSentence(w.text) ? 1 : 0;
         }
     }
+
+    // Does a transcript word stand for this base verb in some tense?
+    const formMemo = new Map();
+    const isFormOf = (tok, verb) => {
+        if (tok === verb) return true;
+        let forms = formMemo.get(tok);
+        if (!forms) { forms = stemVariants(tok); formMemo.set(tok, forms); }
+        return forms.includes(verb);
+    };
+    const free = (i) => i < total && !marks[i];
 
     const ordered = [...phrases.filter(p => p.kind === 'idiom'), ...phrases.filter(p => p.kind !== 'idiom')];
     for (const p of ordered) {
@@ -165,6 +177,22 @@ export const buildPhraseMarks = (chunks, phrases) => {
                 }
                 i += L - 1;
             }
+        }
+        // Any tense of the verb, then its particles, with one pronoun
+        // object allowed straight after the verb ("picked it up").
+        if (p.kind !== 'phrasal' || baseToks.length < 2) continue;
+        const [verb, ...parts] = baseToks;
+        for (let i = 0; i < total; i++) {
+            if (!free(i) || stops[i] || !isFormOf(toks[i], verb)) continue;
+            let j = i + 1;
+            if (free(j) && toks[j] !== parts[0] && OBJECTS.has(toks[j]) && !stops[j]) j++;
+            let ok = true;
+            for (let k = 0; ok && k < parts.length; k++) {
+                if (!free(j + k) || toks[j + k] !== parts[k] || (k < parts.length - 1 && stops[j + k])) ok = false;
+            }
+            if (!ok) continue;
+            for (let m = i; m < j + parts.length; m++) marks[m] = mark;
+            i = j + parts.length - 1;
         }
     }
     return marks;
