@@ -30,6 +30,7 @@ import { requestJson } from '../api/openai';
 import { getEpisodeById, isRadioFeedUrl, recordApiSpend, replaceEpisodeAnalysis } from '../database/queries';
 import { getNameCorrectedTranscript, indexEpisodeNames } from './nameIndex';
 import { indexEpisodeBooks } from './bookIndex';
+import { repunctuateEpisode } from './repunctuate';
 import { countPhrase, fold, normalizePhrase } from './nameText';
 import { showNotesPlainText } from './showNotes';
 import { formatClock, sentencesWithTimes } from './sentenceBoundary';
@@ -422,7 +423,7 @@ export const chaptersAndSummary = async ({ ep, rows, notes = '', request, prepar
 };
 
 /** The assistant's own request path, for a pass that runs outside
- *  analyzeEpisode (services/repunctuate.js): the listener's key, the model
+ *  analyzeEpisode: the listener's key, the model
  *  they chose, the shape chaptersAndSummary and requestJson both speak. */
 export const assistantRequest = async () => {
     const apiKey = await getOpenAIKey();
@@ -459,16 +460,25 @@ export const analyzeEpisode = (episodeId, { force = false, scanBooks = true, alo
         if (isRadioFeedUrl(ep.podcast_feed_url)) throw tagged('notranscript', 'Radio sessions are not summarised.');
         if (ep.ai_indexed_at && !force) return null;
 
-        // The names pass first, so the text the model reads has them right.
+        const model = await getAIModel();
+        const request = (req) => requestJson({ apiKey, model, ...req });
+
+        // The punctuation first: the stretches the recogniser ran into one
+        // sentence are put back into sentences (services/repunctuate.js), so
+        // the chapters snap to real sentence starts and the listener reads
+        // what the summary read. It never changes a word, and a failure only
+        // leaves the recogniser's punctuation.
+        await repunctuateEpisode(episodeId, { request, model, price: (u) => dollars(model, u) })
+            .catch((e) => log('SYSTEM', 'Episode assistant: the punctuation pass failed', { id: episodeId, error: e?.message || String(e) }));
+
+        // The names pass next, so the text the model reads has them right.
         await indexEpisodeNames(episodeId).catch(() => null);
         const rows = await getNameCorrectedTranscript(episodeId);
         if (!rows.length) throw tagged('notranscript', 'This episode has no transcript yet.');
         const notes = episodeNotes(ep);
-        const model = await getAIModel();
         const wantFixes = await isFixTranscriptOn();
         const prepared = preparePass(ep, rows, notes);
         const { sentences, parts, texts } = prepared;
-        const request = (req) => requestJson({ apiKey, model, ...req });
         const usage = { input: 0, output: 0, cached: 0 };
         const add = (u) => { usage.input += u.input; usage.output += u.output; usage.cached += u.cached; };
 

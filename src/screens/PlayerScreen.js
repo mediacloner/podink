@@ -881,7 +881,6 @@ const PlayerScreen = ({ route, navigation }) => {
                     visible={chapterSheet}
                     onClose={() => setChapterSheet(false)}
                     episode={ep}
-                    segments={displaySegments}
                     onSeek={seekFromChapter}
                     onOpenSettings={openSettingsFromSheet}
                 />

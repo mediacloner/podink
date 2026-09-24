@@ -2,6 +2,12 @@
 
 ## [5.7.5] - 2026-09-24
 
+### Changed
+- **The punctuation repair runs by itself, as the first step of the summary.** It was a *Punctuation · N stretches to repair — tap* line inside the summary-and-chapters card, which had nothing to do with it: it only put back the full stops and capitals the recogniser loses when it runs a minute of speech into one sentence, and it ran only if someone opened that card and tapped it (user: “I don't undersand why we need in summary and chapters the rebuild puntuation button”). Now the assistant's run repairs those stretches before it reads the transcript — after every transcription when *Summarise after every transcription* is on, and whenever the summary is asked for in the Player — so the chapters start on real sentences and the reader shows what the summary read. The words are still never touched, a stretch whose answer changes one is left as it was, and a failure only leaves the recogniser's punctuation. Four stretches are asked at a time, so the summary does not wait on one request after another. The line in the card is gone (`services/repunctuate.js`, `aiService.analyzeEpisode`).
+
+### Added
+- **The Library's swipes work on every episode list.** A downloaded episode could be swiped only in the Library — right to remove its transcript, left to delete the download (user: “I want the slice action in my library that can do it in my podcast and feed”). The same two swipes now work in the Feed, in a podcast opened in My Podcasts and in its *More episodes* screen. There the row stays where it is and shows *Download* again, because the episode is still in the feed; imported audio, which goes with its file, slides out as it does in the Library. A row that is not on the device has nothing to remove and does not swipe (`components/EpisodeSwipeRow.js`, `episodeService.removeEpisodeTranscript`).
+
 ## [5.6.0] - 2026-09-23
 
 ### Added
