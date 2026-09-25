@@ -3,9 +3,10 @@ import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View 
 import { Feather as Icon } from '@expo/vector-icons';
 import { radii, withAlpha, useTheme, useStyles } from '../../theme';
 import { fetchTranslation, langLabel, translateErrorMessage } from './translate';
-import { askAssistantAboutText, copyText, shareText } from './share';
+import { copyText, questionAboutText, shareText } from './share';
 import { getOpenAIKey, translateParagraphs } from '../../services/aiService';
-import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
+import SheetModal, { SheetIconButton } from './SheetModal';
+import AssistantAnswer from './AssistantAnswer';
 import { showAlert } from '../AppAlert';
 import {
     getNotebookEntry, removeNotebookEntry, saveNotebookEntry, updateNotebookNote, updateNotebookTranslation,
@@ -44,13 +45,14 @@ const TappableParagraph = ({ text, style, onWordPress, paragraphOffset = 0, tran
 
 // `onWordPress({ token, index, tokens, paragraphOffset, translation })`,
 // optional, makes the English words tappable (see TappableParagraph).
-// `precedingText` (the transcript just before the paragraph) and
+// `precedingText` / `followingText` (the transcript just before and after
+// the paragraph) and
 // `episodeTitle` go along with the "ask an assistant" request as context.
 // `episodeId` + `startMs` (the chunk's first-word time) name the sentence in
 // the notebook (services/notebookService.js): the pencil in the header keeps
 // it there, and a note field opens under the English text.
 const TranslationModal = ({
-    visible, text, contextText, precedingText = '', startMs = 0,
+    visible, text, contextText, precedingText = '', followingText = '', startMs = 0,
     episodeId, episodeTitle = '', podcastTitle = '', lang = 'es', onClose, onWordPress,
 }) => {
     const { colors } = useTheme();
@@ -68,6 +70,9 @@ const TranslationModal = ({
     const [aiError, setAiError] = useState('');
     const [hasKey, setHasKey] = useState(false);
     const [copied, setCopied] = useState(false);
+    // Luna or Sol has answered: their answer carries its own translation, so
+    // the card's is folded away until "Show translation" brings it back.
+    const [hideTranslation, setHideTranslation] = useState(false);
 
     // Paragraphs fed into the request: up to two preceding chunks plus the
     // pressed one (see TranscriptHighlighter's onTranslate).
@@ -100,6 +105,7 @@ const TranslationModal = ({
         setExpanded(false);
         setEngine('g');
         setAiError('');
+        setHideTranslation(false);
 
         // Two engines give two different answers for the same paragraph, so
         // the engine is part of the key. A paragraph already re-read with
@@ -183,7 +189,7 @@ const TranslationModal = ({
         setAiError('');
         try {
             const out = await translateParagraphs({
-                paragraphs: englishParagraphs, lang, before: contextBefore,
+                paragraphs: englishParagraphs, lang, before: contextBefore, after: followingText,
             });
             if (!out.length) throw new Error('empty');
             _cache.set(`ai:${lang}:${contextText}`, out);
@@ -197,7 +203,7 @@ const TranslationModal = ({
         } finally {
             setAiBusy(false);
         }
-    }, [aiBusy, contextText, englishParagraphs, lang, contextBefore]);
+    }, [aiBusy, contextText, englishParagraphs, lang, contextBefore, followingText]);
 
     // Back to the free translation. Both readings are kept, so switching
     // between them costs nothing and asks no one — except the one case where
@@ -240,9 +246,9 @@ const TranslationModal = ({
 
     const onCopy = useCallback(async () => { if (await copyText(text)) setCopied(true); }, [text]);
     const onShare = useCallback(() => shareText(text, 'Share English text'), [text]);
-    const onAsk = useCallback(
-        () => askAssistantAboutText(text, lang, { before: precedingText, source: episodeTitle }),
-        [text, lang, precedingText, episodeTitle],
+    const question = useMemo(
+        () => questionAboutText(text, lang, { before: precedingText, after: followingText, source: episodeTitle }),
+        [text, lang, precedingText, followingText, episodeTitle],
     );
 
     const lastTranslation = translationParts[translationParts.length - 1] ?? '';
@@ -436,13 +442,11 @@ const TranslationModal = ({
             : error ? (
                 <View style={ms.errorBlock}>
                     <Text style={ms.errorText}>{error}</Text>
-                    <AskAssistantButton onPress={onAsk} />
-                    <Text style={ms.askHint}>
-                        Sends the English text with a translation request to any app you pick — ChatGPT, Gemini, Claude…
-                    </Text>
+                    <AssistantAnswer question={question} lang={lang} large />
                 </View>
             ) : (
                 <>
+                    {!hideTranslation && <>
                     <Text style={ms.translatedText}>{lastTranslation}</Text>
                     {/* Which engine wrote this, and whether it cost anything */}
                     <View style={ms.engineRow}>
@@ -456,7 +460,13 @@ const TranslationModal = ({
                         </Text>
                     </View>
                     {!!aiError && <Text style={ms.aiError}>{aiError}</Text>}
-                    <View style={ms.linkRow}>
+                    </>}
+                    <View style={ms.askBlock}>
+                        <AssistantAnswer
+                            question={question}
+                            lang={lang}
+                            onAnswered={() => setHideTranslation(true)}
+                            leading={<>
                         {hasContext && (
                             <TouchableOpacity onPress={() => setExpanded(e => !e)} style={ms.linkBtn}>
                                 <Text style={ms.linkText}>{expanded ? 'Hide context' : 'Show context'}</Text>
@@ -464,7 +474,11 @@ const TranslationModal = ({
                         )}
                         {/* The two readings, either way round — whichever is
                             not on screen is the one offered. */}
-                        {aiBusy ? (
+                        {hideTranslation ? (
+                            <TouchableOpacity onPress={() => setHideTranslation(false)} style={ms.linkBtn}>
+                                <Text style={ms.linkText}>Show translation</Text>
+                            </TouchableOpacity>
+                        ) : aiBusy ? (
                             <View style={ms.withCtx}>
                                 <ActivityIndicator size='small' color={colors.accent} />
                                 <Text style={ms.linkText}>Translating…</Text>
@@ -478,7 +492,7 @@ const TranslationModal = ({
                                 <Text style={ms.linkText}>Translate OpenAI</Text>
                             </TouchableOpacity>
                         )}
-                        <AskAssistantButton onPress={onAsk} compact />
+                        </>} />
                     </View>
                 </>
             )}
@@ -523,7 +537,7 @@ const makeStyles = (colors) => StyleSheet.create({
     },
     divider: { height: 0.5, backgroundColor: colors.hairline, marginBottom: 16 },
     translatedText: { color: colors.textPrimary, fontSize: 19, lineHeight: 28, fontWeight: '600', marginBottom: 12, letterSpacing: -0.2 },
-    linkRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 16, rowGap: 10, marginBottom: 20 },
+    askBlock: { marginBottom: 20 },
     linkBtn: { alignSelf: 'flex-start' },
     linkText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
     withCtx: { flexDirection: 'row', alignItems: 'center', gap: 5 },
@@ -533,7 +547,6 @@ const makeStyles = (colors) => StyleSheet.create({
     aiError: { color: colors.danger, fontSize: 13, lineHeight: 19, marginBottom: 10 },
     errorBlock: { gap: 14, marginBottom: 20 },
     errorText: { color: colors.danger, fontSize: 15 },
-    askHint: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
     closeBtn: {
         alignSelf: 'center',
         paddingVertical: 11,

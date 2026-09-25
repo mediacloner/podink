@@ -352,6 +352,7 @@ export const SERVICE_LABELS = {
     transcription: 'Cloud transcription',
     comparison:    'Transcript comparison',
     translation:   'Translation',
+    question:      'Questions (Luna / Sol)',
 };
 
 export const serviceLabel = (service) => SERVICE_LABELS[service] || service;
