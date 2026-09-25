@@ -39,11 +39,11 @@ import { log } from './logService';
 
 export { ENTITY_TYPES, PEOPLE_TYPES };
 export const TYPE_LABEL = {
-    person: 'Person', place: 'Place', book: 'Book', film: 'Film', tv: 'Television', podcast: 'Podcast', album: 'Record',
+    person: 'Person', place: 'Place', organisation: 'Organisation', book: 'Book', film: 'Film', tv: 'Television', podcast: 'Podcast', album: 'Record',
     guest: 'Guest', host: 'Presenter',
 };
 export const TYPE_ICON = {
-    person: 'user', place: 'map-pin', book: 'book', film: 'film', tv: 'tv', podcast: 'mic', album: 'disc',
+    person: 'user', place: 'map-pin', organisation: 'briefcase', book: 'book', film: 'film', tv: 'tv', podcast: 'mic', album: 'disc',
     guest: 'message-circle', host: 'user-check',
 };
 
@@ -54,12 +54,12 @@ const RESOLVE_AT_ONCE = 4;
 // (services/transcriptReading.js), so the text it reads can be cached.
 const INSTRUCTIONS = `Task: list what this episode names, and the phrases it uses. Fill "entities" and "phrases" only.
 
-Under "entities", list the people, places, books, films, television programmes, other podcasts and records its speakers talk about.
+Under "entities", list the people, places, organisations, books, films, television programmes, other podcasts and records its speakers talk about.
 
 For each one give:
 - "surface": the words exactly as the transcript has them, copied character for character, at most six words. Where the transcript spells it several ways, use the first.
 - "canonical": what the thing is really called, spelled properly.
-- "type": one of person, place, book, film, tv, podcast, album, guest, host. A podcast is a podcast, not television, even when it is only trailed. "host" is only the presenter or narrator of this series — the journalist whose programme it is; whoever presents another show that is trailed or advertised is a person. "guest" is someone the programme itself interviewed or recorded for this episode: an interviewee, a guest, a diplomat or relative speaking to the presenter. A public figure heard only in archive or news audio — a president's speech, a press conference — is a person, as is everyone the episode talks about. Each one once, under one type.
+- "type": one of person, place, organisation, book, film, tv, podcast, album, guest, host. An organisation is a newspaper, a magazine, a broadcaster or news network (CNN, the BBC, The New York Times), a university or school, a company, a government body, a charity, a party, a team — not a place, even when it is named after one. A podcast is a podcast, not television, even when it is only trailed. "host" is only the presenter or narrator of this series — the journalist whose programme it is; whoever presents another show that is trailed or advertised is a person. "guest" is someone the programme itself interviewed or recorded for this episode: an interviewee, a guest, a diplomat or relative speaking to the presenter. A public figure heard only in archive or news audio — a president's speech, a press conference — is a person, as is everyone the episode talks about. Each one once, under one type.
 - "hint": what this episode says about it, in a few words — an author, a year, a director, a country, a role. This is what tells one thing of the same name from another, so write what would let a librarian pick the right one: "the 1965 Herbert novel", "the Roman emperor", "Villeneuve's adaptation".
 - "context": the transcript line it appears in, copied as written.
 
@@ -153,6 +153,7 @@ const agrees = (page, hint) => {
 // ship's back and "Mango" the fruit fail these; Naissus the city passes.
 const KIND_MARKERS = {
     person: /\b(emperor|empress|king|queen|prince|princess|pharaoh|caliph|sultan|tsar|shah|chief|duke|duchess|earl|count|countess|baron|baroness|lord|lady|knight|noble|nobleman|noblewoman|saint|bishop|archbishop|cardinal|pope|monk|nun|priest|priestess|abbot|rabbi|imam|prophet|apostle|martyr|preacher|theologian|missionary|god|goddess|deity|deities|divinity|mythology|mythological|legendary|hero|heroine|titan|nymph|politician|president|minister|senator|governor|mayor|chancellor|ambassador|diplomat|statesman|leader|ruler|founder|figure|activist|revolutionary|rebel|general|admiral|commander|officer|soldier|consul|caesar|tribune|actor|actress|comedian|presenter|broadcaster|host|journalist|author|writer|novelist|poet|playwright|historian|philosopher|scholar|scientist|physicist|chemist|biologist|mathematician|astronomer|economist|engineer|architect|inventor|explorer|painter|sculptor|artist|composer|musician|singer|rapper|dancer|footballer|cricketer|athlete|boxer|player|manager|coach|businessman|businesswoman|entrepreneur|executive|banker|lawyer|judge|physician|surgeon|doctor|teacher|professor|criminal|hacker|spy|born|died|\d{3,4}\s*[\u2013-]\s*(?:c\.\s*)?\d{3,4})\b/i,
+    organisation: /\b(newspaper|magazine|journal|periodical|tabloid|publication|publisher|publishing|news|broadcaster|broadcasting|network|channel|station|radio|television|media|agency|university|college|school|institute|institution|academy|faculty|company|corporation|conglomerate|firm|business|brand|manufacturer|retailer|bank|multinational|subsidiary|startup|organi[sz]ation|organi[sz]ed|charity|foundation|nonprofit|non-profit|society|association|federation|union|council|committee|commission|parliament|congress|government|ministry|department|agency|bureau|office|service|authority|court|police|army|navy|force|party|movement|group|team|club|league|museum|gallery|library|hospital|laboratory|think tank|founded|headquartered)\b/i,
     place: /\b(city|town|village|capital|country|region|province|county|state|island|river|bridge|mountain|lake|sea|district|municipality|settlement|kingdom|empire|colony|site|ruins|castle|cathedral|church|palace|square|street)\b/i,
 };
 // A presenter or a guest is described as a person is.
@@ -369,6 +370,16 @@ export const resolveEntity = async (entity, { tmdbKey = '', said = '', signal } 
         if (entity.type === 'film') {
             return (tmdbKey ? await fromTmdb(entity, 'movie', tmdbKey, signal) : null)
                 || (await fromWikipedia(entity, signal));
+        }
+        if (entity.type === 'place') {
+            const found = await fromWikipedia(entity, signal);
+            if (found) return found;
+            // A university or a newspaper the model called a place: its page
+            // says "research university", never "city", and was refused as a
+            // place (MIT, Boston University). Asked for as what it is, the
+            // answer carries the corrected kind.
+            const org = await fromWikipedia({ ...entity, type: 'organisation' }, signal);
+            return org ? { ...org, type: 'organisation' } : null;
         }
         return await fromWikipedia(entity, signal);
     } catch (e) {

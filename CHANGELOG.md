@@ -2,6 +2,10 @@
 
 ## [5.8.0] - 2026-09-25
 
+### Added
+- **Organisations are something the episode names.** The tag pass had no kind for a newspaper, a broadcaster or a university, so CNN was never listed, and Boston University and MIT, filed as places, opened a card with nothing on it but a Wikipedia search: their pages say “research university”, never “city”, and the place check refused them (user: “CNN don't detect, Boston univerisity and MAsashuteps Instituted of Technology detect but the card dont show but the link work like The New York Times”). The list now has *Organisations* — newspapers and magazines, broadcasters and news networks, universities and schools, companies, government bodies, charities, parties and teams — looked up on Wikipedia with a check of their own. One the model still calls a place is asked for again as an organisation. An acronym of two or three letters is marked in the text where the transcript writes it in capitals, so *CNN*, *MIT* and *BBC* are bold and tappable while “Max” stays plain. Episodes tagged before this build get them from *Look again* (`transcriptReading.ENTITY_TYPES`, `entityIndex.KIND_MARKERS.organisation`, `bookText.matchAt`).
+- **A film's or a programme's card has its trailer.** A *Trailer* button under the card's facts opens it on YouTube (user: “when we have tv show of film add the trailer”). With a TMDB key (Settings → Films and television) it is the title's own trailer, official first, then any trailer, then a teaser; without one, or when TMDB lists none, it is YouTube's search for the title, its year and “trailer” (`tmdb.findTmdbTrailer`, `components/transcript/EntitySheet.js`).
+
 ## [5.7.5] - 2026-09-24
 
 ### Added

@@ -26,6 +26,7 @@ import { imageSourceFor } from '../../api/wikipedia';
 import { lookUpPodcast, subscribeToPodcast } from '../../services/podcastSubscribe';
 import { showAlert } from '../AppAlert';
 import ImageViewer, { imageForViewer } from './ImageViewer';
+import { findTmdbTrailer } from '../../api/tmdb';
 
 const FOLD_CHARS = 420;
 
@@ -47,6 +48,14 @@ const elsewhere = (entity) => {
     }
 };
 
+// A film's or a programme's trailer: YouTube's search for it, until TMDB (with
+// the listener's key) names the video itself.
+const trailerSearch = (entity) => {
+    const year = /\b(19|20)\d{2}\b/.exec(`${entity.facts || ''} ${entity.hint || ''}`);
+    const q = [entity.canonical, year ? year[0] : '', 'trailer'].filter(Boolean).join(' ');
+    return `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+};
+
 const EntitySheet = ({ data, onClose, onReplay }) => {
     const { colors } = useTheme();
     const st = useStyles(makeStyles);
@@ -58,6 +67,18 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
     const [show, setShow] = useState(null);
     const [subscribing, setSubscribing] = useState(false);
     const isPodcast = entity?.type === 'podcast';
+    const isScreen = entity?.type === 'film' || entity?.type === 'tv';
+    const [trailerUrl, setTrailerUrl] = useState(null);
+
+    useEffect(() => {
+        setTrailerUrl(null);
+        if (!isScreen) return undefined;
+        let live = true;
+        const year = /\b(19|20)\d{2}\b/.exec(`${entity.facts || ''} ${entity.hint || ''}`);
+        findTmdbTrailer(entity.type === 'film' ? 'movie' : 'tv', entity.canonical, { year: year ? Number(year[0]) : null })
+            .then((url) => { if (live && url) setTrailerUrl(url); }, () => {});
+        return () => { live = false; };
+    }, [entity, isScreen]);
 
     useEffect(() => {
         setShow(null);
@@ -229,6 +250,18 @@ const EntitySheet = ({ data, onClose, onReplay }) => {
                     <Text style={st.source}>
                         {entity.source ? `Found on ${SOURCE_LABEL[entity.source] || entity.source}` : 'Not found in any catalogue'}
                     </Text>
+                    {isScreen && (
+                        <TouchableOpacity
+                            style={st.trailerBtn}
+                            onPress={() => openUrl(trailerUrl || trailerSearch(entity))}
+                            activeOpacity={0.8}
+                            accessibilityRole='link'
+                            accessibilityLabel='Watch the trailer on YouTube'
+                        >
+                            <Icon name='play-circle' size={15} color={colors.accent} />
+                            <Text style={[st.actionText, { color: colors.accent }]}>Trailer</Text>
+                        </TouchableOpacity>
+                    )}
                 </View>
             </View>
 
@@ -285,6 +318,11 @@ const makeStyles = (colors) => StyleSheet.create({
     facts: { color: colors.textSecondary, fontSize: 14 },
     heard: { color: colors.textMuted, fontSize: 13, fontStyle: 'italic' },
     source: { color: colors.textFaint, fontSize: 12, marginTop: 2 },
+    trailerBtn: {
+        alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6,
+        paddingVertical: 7, paddingHorizontal: 14, borderRadius: radii.pill,
+        backgroundColor: colors.hairlineFaint, borderWidth: 0.5, borderColor: colors.hairline,
+    },
 
     divider: { height: 0.5, backgroundColor: colors.hairline, marginVertical: 14 },
     hintLabel: { color: colors.textMuted, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4 },
