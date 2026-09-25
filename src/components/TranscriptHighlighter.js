@@ -114,7 +114,7 @@ const nameRun = (tokens, at) => {
     return { word: nameWord(tokens[at]), prevWords, nextWords };
 };
 
-const CLOSED_TRANSLATE = { visible: false, text: '', contextText: '', precedingText: '', chunkIndex: null, startMs: 0 };
+const CLOSED_TRANSLATE = { visible: false, text: '', contextText: '', precedingText: '', followingText: '', chunkIndex: null, startMs: 0 };
 
 // The transcript just before a chunk, for the "ask an assistant" requests
 // (share.js): up to ASK_CONTEXT_CHUNKS chunks, the oldest dropped when the
@@ -131,6 +131,21 @@ const precedingText = (chunks, chunkIndex) => {
         if (t) parts.push(t);
     }
     while (parts.length > 1 && parts.join(' ').length > ASK_CONTEXT_MAX_CHARS) parts.shift();
+    return parts.join(' ');
+};
+// The lines just after, for a word's question and the translation card: what "it" or "that" turns
+// out to mean is often said in the next sentence. Fewer than before — the
+// listener has not heard them yet, and the question is about the word.
+const ASK_AFTER_CHUNKS = 2;
+const ASK_AFTER_MAX_CHARS = 400;
+const followingText = (chunks, chunkIndex) => {
+    if (chunkIndex == null || !chunks) return '';
+    const parts = [];
+    for (let i = chunkIndex + 1; i < Math.min(chunks.length, chunkIndex + 1 + ASK_AFTER_CHUNKS); i++) {
+        const t = chunkText(chunks[i]);
+        if (t) parts.push(t);
+    }
+    while (parts.length > 1 && parts.join(' ').length > ASK_AFTER_MAX_CHARS) parts.pop();
     return parts.join(' ');
 };
 import FollowPill from './transcript/FollowPill';
@@ -1120,7 +1135,10 @@ const TranscriptHighlighter = forwardRef(({
         const contextText = [...prevTexts, text].join('\n\n');
         // The chunk's first-word time names the sentence in the notebook.
         const startMs = Math.round(ch[chunkIndex]?.startMs ?? 0);
-        setTranslateModal({ visible: true, text, contextText, precedingText: precedingText(ch, chunkIndex), chunkIndex, startMs });
+        setTranslateModal({
+            visible: true, text, contextText, chunkIndex, startMs,
+            precedingText: precedingText(ch, chunkIndex), followingText: followingText(ch, chunkIndex),
+        });
         pauseForLookup();
     }, [pauseForLookup]);
     const closeModal = useCallback(() => {
@@ -1142,6 +1160,7 @@ const TranscriptHighlighter = forwardRef(({
             startMs: Math.round(word.startMs),
             contextText: chunkText(ch),
             precedingText: precedingText(chunksRef.current, chunkIndex),
+            followingText: followingText(chunksRef.current, chunkIndex),
         });
         pauseForLookup();
     }, [pauseForLookup]);
@@ -1172,6 +1191,7 @@ const TranscriptHighlighter = forwardRef(({
             contextText: tokens.join(' '),
             contextTranslation: translation || '',
             precedingText: chunkIndex != null ? precedingText(chunksRef.current, chunkIndex - paragraphOffset) : '',
+            followingText: chunkIndex != null ? followingText(chunksRef.current, chunkIndex - paragraphOffset) : '',
         });
         // Playback is already paused by the translation card underneath.
     }, []);
@@ -1205,6 +1225,7 @@ const TranscriptHighlighter = forwardRef(({
             startMs: Math.round(startMs || 0),
             contextText: ch ? chunkText(ch) : (p.context || ''),
             precedingText: ch ? precedingText(chunksRef.current, chunkIndex) : '',
+            followingText: ch ? followingText(chunksRef.current, chunkIndex) : '',
         };
     }, []);
     const onPhrasePress = useCallback((mark, startMs, chunkIndex) => {
@@ -1448,6 +1469,7 @@ const TranscriptHighlighter = forwardRef(({
                 text={translateModal.text}
                 contextText={translateModal.contextText}
                 precedingText={translateModal.precedingText}
+                followingText={translateModal.followingText}
                 startMs={translateModal.startMs}
                 episodeId={episodeId}
                 episodeTitle={episodeTitle}

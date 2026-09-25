@@ -18,9 +18,9 @@ import { imageSourceFor } from '../../api/wikipedia';
 // places at final"): what a listener goes on to find comes first, the
 // idioms (IDIOMS, not an entity type) after it, the people and places last.
 const IDIOMS = 'idiom';
-const LIST_ORDER = ['podcast', 'book', IDIOMS, 'film', 'tv', 'album', 'person', 'place', 'guest', 'host'];
+const LIST_ORDER = ['podcast', 'book', IDIOMS, 'film', 'tv', 'album', 'person', 'place', 'organisation', 'guest', 'host'];
 
-const PLURAL = { person: 'People', place: 'Places', book: 'Books', film: 'Films', tv: 'Television', podcast: 'Podcasts', album: 'Records', guest: 'Guests', host: 'Presenter' };
+const PLURAL = { person: 'People', place: 'Places', organisation: 'Organisations', book: 'Books', film: 'Films', tv: 'Television', podcast: 'Podcasts', album: 'Records', guest: 'Guests', host: 'Presenter' };
 
 const EntitiesSheet = ({ visible, onClose, episode, onOpenEntity, onOpenIdiom, onOpenSettings, showMarks = true, onToggleMarks }) => {
     const { colors } = useTheme();

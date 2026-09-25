@@ -22,8 +22,9 @@ import {
 } from '../../api/wikipedia';
 import { fetchTranslation, fetchWordInfo, langLabel, translateErrorMessage } from './translate';
 import { fetchDefinitions } from './dictionary';
-import { askAssistantAboutWord, copyText, shareText } from './share';
-import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
+import { copyText, questionAboutWord, shareText } from './share';
+import SheetModal, { SheetIconButton } from './SheetModal';
+import AssistantAnswer from './AssistantAnswer';
 import DictionaryEntry from './DictionaryEntry';
 import ImageViewer from './ImageViewer';
 
@@ -119,13 +120,14 @@ export const normalizeWord = (raw) =>
 // the entry from one of the offline MDict dictionaries (penReader set), with
 // a dictionary selector in the footer. `data` is null (hidden) or
 // { word, prevWords, nextWords, nameRun?, startMs, contextText, contextTranslation?,
-// precedingText?, phrase? } — `phrase` { base, surface, kind } when the tap
+// precedingText?, followingText?, phrase? } — `phrase` { base, surface, kind } when the tap
 // was on a phrasal verb the episode pass found (services/phraseIndex.js):
 // `word` is then its dictionary form and only that is looked up;
 // contextTranslation is the sentence's translation when
 // the caller already has it (a word tapped inside the translation card),
 // shown without a request; precedingText is the transcript just before the
-// sentence, sent along with the "ask an assistant" request as context.
+// sentence and followingText the transcript just after it, sent along with
+// the "ask" request as context.
 //
 // The dictionary lookup is local and never waits for the network: Google's
 // translation is supplementary and its failures stay inside its own block.
@@ -542,9 +544,10 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
         shareText(hasSentence ? `${word}\n\n“${sentence}”` : word, 'Share word');
     }, [word, sentence]);
     const precedingText = data?.precedingText ?? '';
-    const onAsk = useCallback(
-        () => askAssistantAboutWord(word, sentence, lang, { before: precedingText, source: episodeTitle || '' }),
-        [word, sentence, lang, precedingText, episodeTitle],
+    const followingText = data?.followingText ?? '';
+    const question = useMemo(
+        () => questionAboutWord(word, sentence, lang, { before: precedingText, after: followingText, source: episodeTitle || '' }),
+        [word, sentence, lang, precedingText, followingText, episodeTitle],
     );
 
     // ── Save / replay ────────────────────────────────────────────────────────
@@ -1048,7 +1051,7 @@ const WordPopover = ({ data, lang = 'es', episodeId, episodeTitle, onClose, onRe
                         )}
 
                         <View style={st.askRow}>
-                            <AskAssistantButton onPress={onAsk} compact />
+                            <AssistantAnswer question={question} lang={lang} />
                         </View>
                     </>
                 )}

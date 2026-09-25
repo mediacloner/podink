@@ -24,7 +24,8 @@ import { PHRASE_SCHEMA } from './phraseIndex';
 
 // 'guest' is someone who speaks in the episode, 'host' the show's own
 // presenter, each listed apart from the people the episode talks about.
-export const ENTITY_TYPES = ['person', 'place', 'book', 'film', 'tv', 'podcast', 'album', 'guest', 'host'];
+// 'organisation' is a newspaper, a broadcaster, a university, a company.
+export const ENTITY_TYPES = ['person', 'place', 'organisation', 'book', 'film', 'tv', 'podcast', 'album', 'guest', 'host'];
 /** The kinds that are people: looked up, pictured and marked as a person is. */
 export const PEOPLE_TYPES = new Set(['person', 'guest', 'host']);
 

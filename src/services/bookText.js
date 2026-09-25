@@ -308,9 +308,11 @@ export const bookVariants = (book) => {
  * A one-word title, or a title split into pieces, must be capitalised in the
  * transcript, so "carrying a flashlight" stays plain.
  */
-const matchAt = (toks, caps, i, variant, joined, requireCap = false) => {
+const matchAt = (toks, caps, i, variant, joined, requireCap = false, upper = null) => {
     const L = variant.length;
-    if (variant[0].length < 4 && L === 1) return -1;
+    // A short one-word name only where the transcript wrote it in capitals:
+    // "CNN" and "MIT" are marked, "Max" never is.
+    if (variant[0].length < 4 && L === 1 && !(variant[0].length >= 2 && upper && upper[i])) return -1;
     const anyCap = (a, b) => { for (let k = a; k < b; k++) if (caps[k]) return true; return false; };
     let same = i + L <= toks.length;
     for (let k = 0; same && k < L; k++) if (toks[i + k] !== variant[k]) same = false;
@@ -423,6 +425,7 @@ export const buildBookMarks = (chunks, books, soundKey = null) => {
     const caps = new Uint8Array(total);
     const ends = new Uint8Array(total);       // the word closes a sentence
     const breaks = new Uint8Array(total);     // punctuation after the word: "Foley," ends a name
+    const upper = new Uint8Array(total);      // an acronym: "CNN", "MIT"
     for (const ch of chunks) {
         for (const w of ch.words) {
             toks[w.globalIndex] = normTok(w.text);
@@ -430,6 +433,8 @@ export const buildBookMarks = (chunks, books, soundKey = null) => {
             caps[w.globalIndex] = /^\s*[^\p{L}\p{N}]*\p{Lu}/u.test(w.text) ? 1 : 0;
             ends[w.globalIndex] = /[.!?…]["”’)\]]*\s*$/.test(w.text) ? 1 : 0;
             breaks[w.globalIndex] = /[^\p{L}\p{N}'’]$/u.test(String(w.text).trim()) ? 1 : 0;
+            const letters = String(w.text).replace(/['’]s$/u, '').replace(/[^\p{L}]/gu, '');
+            upper[w.globalIndex] = letters.length >= 2 && letters === letters.toUpperCase() && letters !== letters.toLowerCase() ? 1 : 0;
         }
     }
 
@@ -440,7 +445,7 @@ export const buildBookMarks = (chunks, books, soundKey = null) => {
             const joined = variant.join('');
             for (let i = 0; i < total; i++) {
                 if (marks[i]) continue;
-                const end = matchAt(toks, caps, i, variant, joined);
+                const end = matchAt(toks, caps, i, variant, joined, false, upper);
                 if (end < 0) continue;
                 for (let k = i; k < end; k++) if (!marks[k]) marks[k] = id;
                 i = end - 1;

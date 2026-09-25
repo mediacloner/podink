@@ -65,3 +65,20 @@ export const searchTmdb = async (kind, title, { year = null, apiKey = null, sign
         imdbUrl: ids?.imdb_id ? `https://www.imdb.com/title/${ids.imdb_id}/` : null,
     };
 };
+
+/**
+ * The trailer of a film or a programme on YouTube, as a watch URL, or null.
+ * TMDB lists each title's videos; an official trailer is preferred, then any
+ * trailer, then a teaser. `kind` is 'movie' or 'tv'.
+ */
+export const findTmdbTrailer = async (kind, title, { year = null, apiKey = null, signal } = {}) => {
+    const key = apiKey || (await getTmdbKey());
+    if (!key) return null;
+    const hit = await searchTmdb(kind, title, { year, apiKey: key, signal });
+    if (!hit) return null;
+    const data = await getJson(`${BASE}/${kind}/${hit.id}/videos?api_key=${encodeURIComponent(key)}`, signal);
+    const videos = (Array.isArray(data?.results) ? data.results : []).filter(v => v.site === 'YouTube' && v.key);
+    const rank = (v) => (v.type === 'Trailer' ? (v.official ? 0 : 1) : v.type === 'Teaser' ? 2 : 9);
+    const best = videos.filter(v => rank(v) < 9).sort((a, b) => rank(a) - rank(b))[0];
+    return best ? `https://www.youtube.com/watch?v=${best.key}` : null;
+};

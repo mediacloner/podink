@@ -122,6 +122,71 @@ export const estimateEpisodeDollars = (model, durationSec, { fixes = true, cache
 /** The same figure as a phrase. */
 export const estimateEpisodeCost = (model, durationSec, opts) => formatDollars(estimateEpisodeDollars(model, durationSec, opts));
 
+// ─── A question about a passage or a word ────────────────────────────────────
+// The "Ask" link in the translation and word cards: the question the share
+// sheet would carry (components/transcript/share.js) asked here instead, and
+// the answer shown in the card. Luna first, for a cent's hundredth; when the
+// listener finds that unclear, Sol reads the same question with Luna's answer
+// beside it, so it knows what did not land.
+
+export const ASK_FIRST_MODEL = 'gpt-6-luna';
+export const ASK_BETTER_MODEL = 'gpt-6-sol';
+
+// Two texts, the English one first: the listener reads the explanation in
+// English, then the same one in their language to check it against.
+// Laid out in lines — the translation, then one "• " line per expression —
+// because a single "brief, plain text" paragraph read worse than the same
+// model's answer in a chat app (user, 2026-09-25); the medium effort below
+// is the other half of that difference: at low it did no reasoning at all.
+const askInstructions = (target) => `You help someone who is learning English by listening to podcasts and reading the transcript along with the audio. Answer the way a good teacher would in a chat: clear, concrete, about this passage — what it means here, not every sense a word can have.
+
+Lay the answer out in lines, not one paragraph. First the translation (or, for English, the passage said more simply) on its own. Then one line per word or expression worth explaining, each starting with "• ", the expression in quotes, a dash, and what it means here — add a word on tone when it matters (informal, an idiom, political slang), and the literal image when it helps remember it. Plain text: no asterisks, no headings, no preamble, no closing offer.
+
+${target === 'English'
+        ? '"english": the answer. "translated": an empty string.'
+        : `Write the answer twice, laid out the same way. "english": the answer in simple, clear English. "translated": the same answer in ${target}, line for line, so the listener can compare the two; keep the English expressions being explained in English, in quotes.`}`;
+
+const ASK_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['english', 'translated'],
+    properties: { english: { type: 'string' }, translated: { type: 'string' } },
+};
+
+/**
+ * Asks `question` of `model` and resolves { english, translated, model,
+ * cost } — `translated` is the same answer in `lang`, empty for English.
+ * With `unclear` (an earlier answer the listener did not find clear) the
+ * model is asked to explain it better. Rejects with `kind` 'nokey' without
+ * a key.
+ */
+export const askAssistant = async ({ question, lang = 'en', model = ASK_FIRST_MODEL, unclear = '', signal }) => {
+    const apiKey = await getOpenAIKey();
+    if (!apiKey) throw tagged('nokey', 'Add your OpenAI API key in Settings \u2192 Episode assistant first.');
+    const target = langEnglishName(lang);
+    const input = unclear
+        ? `${question}\n\nAn earlier answer the listener did not find clear enough:\n"${unclear}"\n\nExplain it better — more plainly, with what that answer left out.`
+        : question;
+    const t0 = Date.now();
+    const { json, usage } = await requestJson({
+        apiKey, model, instructions: askInstructions(target), schemaName: 'answer', schema: ASK_SCHEMA,
+        input, maxOutputTokens: 4000, effort: 'medium', signal,
+    });
+    const english = String(json?.english || '').trim();
+    const translated = target === 'English' ? '' : String(json?.translated || '').trim();
+    const cost = dollars(model, usage);
+    await recordApiSpend({
+        provider: 'openai', service: 'question', model,
+        tokensIn: usage.input, tokensCached: usage.cached, tokensOut: usage.output, cost,
+    });
+    log('SERVICE', 'Assistant question', {
+        model, lang, again: !!unclear, tokensIn: usage.input, tokensOut: usage.output,
+        cost: `$${cost.toFixed(5)}`, ms: Date.now() - t0,
+    });
+    if (!english && !translated) throw tagged('malformed', 'The assistant returned an empty answer.');
+    return { english, translated, model, cost };
+};
+
 // ─── Prompts ─────────────────────────────────────────────────────────────────
 
 // Each is the last message of a request that starts with the episode
@@ -157,7 +222,7 @@ const SUMMARY_SCHEMA = {
 
 const translateInstructions = (target) => `You translate an English podcast transcript into ${target} for someone who is learning English by reading along with the audio.
 
-You are given the lines spoken just before, for context only, and then the numbered paragraphs to translate. Return one translation per numbered paragraph, in the same order, the same number of them — never merge, split, reorder or drop one, and never translate the context lines.
+You are given the lines spoken just before, for context only, then the numbered paragraphs to translate, and sometimes the lines spoken just after, also for context only. Return one translation per numbered paragraph, in the same order, the same number of them — never merge, split, reorder or drop one, and never translate the context lines.
 
 Translate what was said, in natural ${target}: the meaning a listener takes, not a word-for-word mapping. Use the context to settle what a pronoun, an ellipsis, a short reply or a joke refers to. Speech is not prose — keep false starts, repetitions and interruptions rather than tidying them into a clean sentence. Leave people's names, programme, book and film titles as they are unless that language has its own established name for them. Return only the translations, with no notes or explanations.`;
 
@@ -172,21 +237,24 @@ const CONTEXT_MAX_CHARS = 1200;
 
 /**
  * Translates `paragraphs` (the pressed sentence, and the ones shown above it)
- * into `lang`, with `before` as context the model may read but not translate.
+ * into `lang`, with `before` and `after` as context the model may read but
+ * not translate.
  * Resolves to an array of the same length, or rejects — the caller falls back
  * to the free engine. Never sends anything when the assistant has no key.
  */
-export const translateParagraphs = async ({ paragraphs, lang, before = '', signal }) => {
+export const translateParagraphs = async ({ paragraphs, lang, before = '', after = '', signal }) => {
     const parts = (paragraphs || []).map(p => String(p || '').trim()).filter(Boolean);
     if (!parts.length) return [];
     const apiKey = await getOpenAIKey();
     if (!apiKey) throw tagged('nokey', 'No OpenAI API key.');
     const model = await getAIModel();
     const ctx = String(before || '').trim().slice(-CONTEXT_MAX_CHARS);
+    const next = String(after || '').trim().slice(0, CONTEXT_MAX_CHARS / 2);
     const numbered = parts.map((p, i) => `${i + 1}. ${p}`).join('\n');
     const input = [
         ctx ? `Spoken just before, for context only — do not translate:\n"${ctx}"` : null,
         `Translate these ${parts.length} paragraph${parts.length === 1 ? '' : 's'}:\n${numbered}`,
+        next ? `Spoken just after, for context only — do not translate:\n"${next}"` : null,
     ].filter(Boolean).join('\n\n');
     const t0 = Date.now();
     const { json, usage } = await requestJson({
@@ -204,7 +272,7 @@ export const translateParagraphs = async ({ paragraphs, lang, before = '', signa
     });
     log('SERVICE', 'Context translation', {
         lang, model, paragraphs: parts.length, returned: out.length,
-        contextChars: ctx.length, tokensIn: usage.input, tokensOut: usage.output,
+        contextChars: ctx.length, afterChars: next.length, tokensIn: usage.input, tokensOut: usage.output,
         cost: `$${dollars(model, usage).toFixed(5)}`, ms: Date.now() - t0,
     });
     // A count that does not line up would pair every paragraph with the wrong

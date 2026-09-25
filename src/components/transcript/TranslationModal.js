@@ -3,9 +3,10 @@ import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View 
 import { Feather as Icon } from '@expo/vector-icons';
 import { radii, withAlpha, useTheme, useStyles } from '../../theme';
 import { fetchTranslation, langLabel, translateErrorMessage } from './translate';
-import { askAssistantAboutText, copyText, shareText } from './share';
+import { copyText, questionAboutText, shareText } from './share';
 import { getOpenAIKey, translateParagraphs } from '../../services/aiService';
-import SheetModal, { AskAssistantButton, SheetIconButton } from './SheetModal';
+import SheetModal, { SheetIconButton } from './SheetModal';
+import AssistantAnswer from './AssistantAnswer';
 import { showAlert } from '../AppAlert';
 import {
     getNotebookEntry, removeNotebookEntry, saveNotebookEntry, updateNotebookNote, updateNotebookTranslation,
@@ -19,14 +20,21 @@ const _cache = new Map();
 // close of the card flushes whatever is still pending.
 const NOTE_SAVE_DELAY_MS = 500;
 
+// The longest rest-of-sentence borrowed from the next chunk for Google.
+const SENTENCE_TAIL_MAX_WORDS = 40;
+const ABBREVIATION = /(?:^|\s)(?:Mr|Mrs|Ms|Dr|St|Prof|Sr|Jr|vs|etc|e\.g|i\.e|U\.S|U\.K)$/i;
+
 // An English paragraph where every word opens the word card. Split on
 // whitespace — the same cut the transcript makes — so the tapped token's
 // index maps straight onto the chunk's words. The tap lands on a plain
 // nested Text (RN routes presses only to real Text spans); the token's
 // leading space is inside the span so the gap before a word counts too.
-const TappableParagraph = ({ text, style, onWordPress, paragraphOffset = 0, translation = '' }) => {
+// `tail`, when given, follows in `tailStyle` and is not tappable: the rest of
+// a sentence the chunk cut, shown so the translation's end has its English.
+const TappableParagraph = ({ text, style, onWordPress, paragraphOffset = 0, translation = '', tail = '', tailStyle }) => {
     const tokens = useMemo(() => (text || '').split(/\s+/).filter(Boolean), [text]);
-    if (!onWordPress) return <Text style={style}>{text}</Text>;
+    const tailText = tail ? <Text style={tailStyle}> {tail}</Text> : null;
+    if (!onWordPress) return <Text style={style}>{text}{tailText}</Text>;
     return (
         <Text style={style}>
             {tokens.map((token, index) => (
@@ -38,19 +46,21 @@ const TappableParagraph = ({ text, style, onWordPress, paragraphOffset = 0, tran
                     {index > 0 ? ' ' : ''}{token}
                 </Text>
             ))}
+            {tailText}
         </Text>
     );
 };
 
 // `onWordPress({ token, index, tokens, paragraphOffset, translation })`,
 // optional, makes the English words tappable (see TappableParagraph).
-// `precedingText` (the transcript just before the paragraph) and
+// `precedingText` / `followingText` (the transcript just before and after
+// the paragraph) and
 // `episodeTitle` go along with the "ask an assistant" request as context.
 // `episodeId` + `startMs` (the chunk's first-word time) name the sentence in
 // the notebook (services/notebookService.js): the pencil in the header keeps
 // it there, and a note field opens under the English text.
 const TranslationModal = ({
-    visible, text, contextText, precedingText = '', startMs = 0,
+    visible, text, contextText, precedingText = '', followingText = '', startMs = 0,
     episodeId, episodeTitle = '', podcastTitle = '', lang = 'es', onClose, onWordPress,
 }) => {
     const { colors } = useTheme();
@@ -68,6 +78,9 @@ const TranslationModal = ({
     const [aiError, setAiError] = useState('');
     const [hasKey, setHasKey] = useState(false);
     const [copied, setCopied] = useState(false);
+    // Luna or Sol has answered: their answer carries its own translation, so
+    // the card's is folded away until "Show translation" brings it back.
+    const [hideTranslation, setHideTranslation] = useState(false);
 
     // Paragraphs fed into the request: up to two preceding chunks plus the
     // pressed one (see TranscriptHighlighter's onTranslate).
@@ -81,6 +94,29 @@ const TranslationModal = ({
     // back, and the card already shows (and sends for translation) the two
     // just before the pressed one — so the tail they occupy is trimmed off
     // rather than handing the model the same sentences twice.
+    // A chunk that stops mid-sentence ("…the government is going to") is
+    // sent to Google with the English up to the next full stop: Google reads
+    // each paragraph on its own, so neither the lines before nor the lines
+    // after change its translation (tested 2026-09-25), but the whole
+    // sentence in one piece does. The model gets `followingText` as context
+    // instead and needs no tail.
+    const sentenceTail = useMemo(() => {
+        const t = (text || '').trim();
+        const next = (followingText || '').trim();
+        if (!t || !next || /[.?!…]["'”’)\]]*$/.test(t)) return '';
+        // The first sentence end that is not a title's stop ("Mr. Smith").
+        const end = /[.?!…]["'”’)\]]*(?=\s|$)/g;
+        let m;
+        while ((m = end.exec(next))) {
+            if (m[0][0] === '.' && ABBREVIATION.test(next.slice(0, m.index))) continue;
+            const tail = next.slice(0, m.index + m[0].length).trim();
+            return tail.split(/\s+/).length > SENTENCE_TAIL_MAX_WORDS ? '' : tail;
+        }
+        return '';
+    }, [text, followingText]);
+    const googleText = sentenceTail ? `${contextText} ${sentenceTail}` : contextText;
+    const googleSolo = sentenceTail ? `${text} ${sentenceTail}` : text;
+
     const contextBefore = useMemo(() => {
         const before = (precedingText || '').trim();
         const shown = englishParagraphs.slice(0, -1).join(' ').trim();
@@ -100,6 +136,7 @@ const TranslationModal = ({
         setExpanded(false);
         setEngine('g');
         setAiError('');
+        setHideTranslation(false);
 
         // Two engines give two different answers for the same paragraph, so
         // the engine is part of the key. A paragraph already re-read with
@@ -113,7 +150,7 @@ const TranslationModal = ({
             setError('');
             return;
         }
-        const key = `g:${lang}:${contextText}`;
+        const key = `g:${lang}:${googleText}`;
         const cached = _cache.get(key);
         if (cached) {
             setTranslationParts(cached);
@@ -146,7 +183,7 @@ const TranslationModal = ({
         // The free engine always answers first: it is instant and costs
         // nothing, and most paragraphs need nothing more. The button under
         // the translation is what pays for a second, context-aware reading.
-        fetchTranslation(contextText, lang, ctrl.signal)
+        fetchTranslation(googleText, lang, ctrl.signal)
             .then(full => {
                 if (stale) return;
                 const parts = full.split(/\n+/).map(p => p.trim()).filter(Boolean);
@@ -156,7 +193,7 @@ const TranslationModal = ({
                 // context pair would be off by one — so rather than show
                 // mismatched pairs, re-ask for the pressed paragraph alone.
                 if (parts.length === englishParagraphs.length) return finish(parts);
-                return fetchTranslation(text, lang, ctrl.signal).then(solo => {
+                return fetchTranslation(googleSolo, lang, ctrl.signal).then(solo => {
                     if (stale) return;
                     const one = (solo || '').trim();
                     finish(one ? [one] : []);
@@ -172,7 +209,7 @@ const TranslationModal = ({
             stale = true;
             ctrl.abort();
         };
-    }, [visible, contextText, englishParagraphs, text, lang]);
+    }, [visible, contextText, englishParagraphs, googleText, googleSolo, lang]);
 
     // "Read it again with the lines before" — the one place the card spends
     // anything. The free translation stays on screen while the model works
@@ -183,7 +220,7 @@ const TranslationModal = ({
         setAiError('');
         try {
             const out = await translateParagraphs({
-                paragraphs: englishParagraphs, lang, before: contextBefore,
+                paragraphs: englishParagraphs, lang, before: contextBefore, after: followingText,
             });
             if (!out.length) throw new Error('empty');
             _cache.set(`ai:${lang}:${contextText}`, out);
@@ -197,7 +234,7 @@ const TranslationModal = ({
         } finally {
             setAiBusy(false);
         }
-    }, [aiBusy, contextText, englishParagraphs, lang, contextBefore]);
+    }, [aiBusy, contextText, englishParagraphs, lang, contextBefore, followingText]);
 
     // Back to the free translation. Both readings are kept, so switching
     // between them costs nothing and asks no one — except the one case where
@@ -206,7 +243,7 @@ const TranslationModal = ({
     const backToGoogle = useCallback(async () => {
         if (aiBusy || !contextText) return;
         setAiError('');
-        const cached = _cache.get(`g:${lang}:${contextText}`);
+        const cached = _cache.get(`g:${lang}:${googleText}`);
         if (cached) {
             setTranslationParts(cached);
             setEngine('g');
@@ -214,13 +251,13 @@ const TranslationModal = ({
         }
         setAiBusy(true);
         try {
-            const full = await fetchTranslation(contextText, lang);
+            const full = await fetchTranslation(googleText, lang);
             const parts = (full || '').split(/\n+/).map(p => p.trim()).filter(Boolean);
             const out = parts.length === englishParagraphs.length
                 ? parts
-                : [((await fetchTranslation(text, lang)) || '').trim()].filter(Boolean);
+                : [((await fetchTranslation(googleSolo, lang)) || '').trim()].filter(Boolean);
             if (!out.length) throw new Error('empty');
-            _cache.set(`g:${lang}:${contextText}`, out);
+            _cache.set(`g:${lang}:${googleText}`, out);
             setTranslationParts(out);
             setEngine('g');
         } catch (e) {
@@ -228,7 +265,7 @@ const TranslationModal = ({
         } finally {
             setAiBusy(false);
         }
-    }, [aiBusy, contextText, englishParagraphs, lang, text]);
+    }, [aiBusy, contextText, englishParagraphs, lang, googleText, googleSolo]);
 
     // "Copied" flashes on the copy button, then reverts.
     useEffect(() => {
@@ -240,9 +277,9 @@ const TranslationModal = ({
 
     const onCopy = useCallback(async () => { if (await copyText(text)) setCopied(true); }, [text]);
     const onShare = useCallback(() => shareText(text, 'Share English text'), [text]);
-    const onAsk = useCallback(
-        () => askAssistantAboutText(text, lang, { before: precedingText, source: episodeTitle }),
-        [text, lang, precedingText, episodeTitle],
+    const question = useMemo(
+        () => questionAboutText(text, lang, { before: precedingText, after: followingText, source: episodeTitle }),
+        [text, lang, precedingText, followingText, episodeTitle],
     );
 
     const lastTranslation = translationParts[translationParts.length - 1] ?? '';
@@ -406,6 +443,8 @@ const TranslationModal = ({
                 style={ms.originalText}
                 onWordPress={onWordPress}
                 translation={lastTranslation}
+                tail={engine === 'g' && !hideTranslation && !loading ? sentenceTail : ''}
+                tailStyle={ms.originalTail}
             />
 
             {/* The sentence is in the notebook: its note, saved as it is typed */}
@@ -436,13 +475,11 @@ const TranslationModal = ({
             : error ? (
                 <View style={ms.errorBlock}>
                     <Text style={ms.errorText}>{error}</Text>
-                    <AskAssistantButton onPress={onAsk} />
-                    <Text style={ms.askHint}>
-                        Sends the English text with a translation request to any app you pick — ChatGPT, Gemini, Claude…
-                    </Text>
+                    <AssistantAnswer question={question} lang={lang} large />
                 </View>
             ) : (
                 <>
+                    {!hideTranslation && <>
                     <Text style={ms.translatedText}>{lastTranslation}</Text>
                     {/* Which engine wrote this, and whether it cost anything */}
                     <View style={ms.engineRow}>
@@ -456,7 +493,13 @@ const TranslationModal = ({
                         </Text>
                     </View>
                     {!!aiError && <Text style={ms.aiError}>{aiError}</Text>}
-                    <View style={ms.linkRow}>
+                    </>}
+                    <View style={ms.askBlock}>
+                        <AssistantAnswer
+                            question={question}
+                            lang={lang}
+                            onAnswered={() => setHideTranslation(true)}
+                            leading={<>
                         {hasContext && (
                             <TouchableOpacity onPress={() => setExpanded(e => !e)} style={ms.linkBtn}>
                                 <Text style={ms.linkText}>{expanded ? 'Hide context' : 'Show context'}</Text>
@@ -464,7 +507,11 @@ const TranslationModal = ({
                         )}
                         {/* The two readings, either way round — whichever is
                             not on screen is the one offered. */}
-                        {aiBusy ? (
+                        {hideTranslation ? (
+                            <TouchableOpacity onPress={() => setHideTranslation(false)} style={ms.linkBtn}>
+                                <Text style={ms.linkText}>Show translation</Text>
+                            </TouchableOpacity>
+                        ) : aiBusy ? (
                             <View style={ms.withCtx}>
                                 <ActivityIndicator size='small' color={colors.accent} />
                                 <Text style={ms.linkText}>Translating…</Text>
@@ -478,7 +525,7 @@ const TranslationModal = ({
                                 <Text style={ms.linkText}>Translate OpenAI</Text>
                             </TouchableOpacity>
                         )}
-                        <AskAssistantButton onPress={onAsk} compact />
+                        </>} />
                     </View>
                 </>
             )}
@@ -499,6 +546,8 @@ const makeStyles = (colors) => StyleSheet.create({
     // Current paragraph
     // Larger than before and a step up from muted: this is the text to tap.
     originalText: { color: colors.textSecondary, fontSize: 18, lineHeight: 27, marginBottom: 16 },
+    // The rest of a cut sentence, borrowed from the next chunk for Google.
+    originalTail: { color: colors.textFaint },
     // Notebook: a ruled card under the sentence, accent-tinted like the
     // "ask" button so it reads as the listener's own layer on the text.
     noteBox: {
@@ -523,7 +572,7 @@ const makeStyles = (colors) => StyleSheet.create({
     },
     divider: { height: 0.5, backgroundColor: colors.hairline, marginBottom: 16 },
     translatedText: { color: colors.textPrimary, fontSize: 19, lineHeight: 28, fontWeight: '600', marginBottom: 12, letterSpacing: -0.2 },
-    linkRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 16, rowGap: 10, marginBottom: 20 },
+    askBlock: { marginBottom: 20 },
     linkBtn: { alignSelf: 'flex-start' },
     linkText: { color: colors.accent, fontSize: 13, fontWeight: '600' },
     withCtx: { flexDirection: 'row', alignItems: 'center', gap: 5 },
@@ -533,7 +582,6 @@ const makeStyles = (colors) => StyleSheet.create({
     aiError: { color: colors.danger, fontSize: 13, lineHeight: 19, marginBottom: 10 },
     errorBlock: { gap: 14, marginBottom: 20 },
     errorText: { color: colors.danger, fontSize: 15 },
-    askHint: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
     closeBtn: {
         alignSelf: 'center',
         paddingVertical: 11,
