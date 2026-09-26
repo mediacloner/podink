@@ -1,178 +1,157 @@
 # Podink
 
-A React Native podcast app with on-device AI transcription, word-by-word transcript highlighting, and offline playback.
+A podcast and audiobook player for learning English by listening. Every episode gets an on-device transcript that follows the audio word by word; any sentence can be translated, any word looked up in offline dictionaries, and an optional OpenAI assistant writes summaries, chapters and cards for the people, books, films and idioms an episode mentions.
+
+Android · React Native 0.83 · Expo 55 · current version **5.8.0** (versionCode 33). See [CHANGELOG.md](CHANGELOG.md) for the full history.
+
+---
 
 ## Features
 
-### Core Podcast
-- Subscribe via RSS URL or Apple Podcasts link
-- Browse episodes from all subscribed feeds
-- Stream episodes or download for offline listening
-- Resume playback from where you left off (position saved every 5s)
-- Listening tab — every episode by state: New · In progress · Finished; swipe right to mark Done (or Unplayed on a finished row), swipe left to delete a download
-- Refreshing feeds shows a thin loading line under the Feed title and never blocks the tabs
-- When a downloaded episode plays to the end, a prompt offers to delete the download (audio + transcript) to free up space — switchable off in Settings → Storage
-- Finished episodes that go a week without a replay have their download and transcript removed automatically (the episode stays, marked as played; re-download it from Listening → Finished) — switchable off in Settings → Storage
-- Settings live behind a gear in the header, not a tab
-- Background audio with lock screen / notification controls
+### Podcasts
+- **Subscribe** by RSS URL, Apple Podcasts link or search (Spotify has no RSS feed, so its links can't be used).
+- **Feed** tab: new episodes from every subscription. Refreshing shows a thin loading line under the title and never blocks the tabs. New episodes have a red dot and a **Check** pill that clears it; the header's double check clears them all.
+- **My Podcasts** tab: subscriptions with unseen-episode badges, with podcasts that have new episodes listed first. A podcast unfolds to its latest five episodes, and **More episodes** opens its whole back catalogue, newest first, loaded a hundred items at a time.
+- **Show notes** are shown as formatted text (paragraphs, lists, links) rather than raw feed HTML. An unfolded row shows the episode's full title.
+- **Episode rows** show the length, a "23 min left" tag and progress bar for started episodes, and a *Played* check for finished ones.
+- **Swipe actions on every list:** remove the transcript, delete the download, mark Done / Unplayed.
+- **Stream or download.** A download queues its transcription as soon as the file arrives. Downloads that come back as an error page, aren't audio, or are under 16 KB are refused.
+- Notifications for new episodes, plus a red dot on the tab.
+
+### Library and Listening
+- **Library** tab: downloads grouped into one folder per podcast, each with a count badge. Episodes you've finished leave the Library.
+- **Listening** tab: *Downloaded* (not started yet), *In progress* (most recently heard first) and *Finished*.
+- **Storage housekeeping:** when a downloaded episode ends, the app offers to delete its audio and transcript. Finished downloads that go a week without a replay are removed automatically; the episode itself stays. Both can be switched off in Settings → Storage.
 
 ### Playback
-- Full-screen player with artwork, episode info, and transcript
-- Mini player floating above tab bar — quick controls without leaving the current screen
-- Skip ±10 seconds, seek slider, time display
-- Player header tinted from the podcast artwork — softened (capped saturation, theme-banded lightness) so loud covers stay calm
+- A full-screen Player with the transcript, and a mini player above the tab bar.
+- Skip ±10 s, a seek slider, and the saved speed. Playback resumes where you left off, and background audio works with lock-screen and notification controls.
+- The Player header is tinted from the artwork, toned down so bright covers don't overwhelm the screen.
+- Seeking is frame-accurate: a vendored KotlinAudio with index seeking for local files keeps the transcript in step after a seek.
+- **Skip ad:** the assistant finds sponsor reads, inserted commercials and trailers for other shows. A *Skip ad* button appears while one plays, and ads are marked in the transcript.
 
-### On-Device Transcription (sherpa-onnx)
-- Fully offline — no audio ever leaves the device
-- Model options: NVIDIA Parakeet 110M (default — most accurate, punctuation, CC BY 4.0), Whisper Tiny (attention export, smaller), SenseVoice Small (multilingual, experimental)
-- FIFO queue — transcribe multiple episodes sequentially
-- Real-time progress per episode
+### On-device transcription
+- Transcription runs fully offline with sherpa-onnx and NVIDIA Parakeet: **Parakeet 110M** (default, fast, 99 MB) or **Parakeet TDT 0.6B v2** (more accurate, 460 MB download / ~630 MB installed). Both add punctuation and capitals.
+- Episodes are transcribed one at a time in a queue in a foreground service, with progress per episode. Jobs can be cancelled, and a watchdog stops hung jobs. The model is unloaded from memory when nothing is transcribing.
+- Free space is checked before a model download.
+- **Enriching…:** after the transcript, the episode shows *Enriching…* while punctuation repair, the summary, names, books and tags finish.
 
-### Transcript Features
-- Word-by-word highlight synchronized to playback position
-- Auto-scroll keeps active text centered (pauses on manual scroll)
-- Tap any sentence to jump playback to that timestamp
-- 10-minute navigation markers
-- Translation modal (long-press a sentence → English + Spanish via Google Translate)
+### Reading along
+- Each word is highlighted as it's spoken, and the view auto-scrolls (pausing while you scroll by hand).
+- Long sentences are split into paragraphs of up to about 50 words when the transcript is displayed, so no re-transcription is needed.
+- Transcript gestures:
+  - **Tap** a sentence to seek to it.
+  - **Double-tap**, or **slide left**, to seek and play.
+  - **Slide right** to translate.
+- Dividers in the text are the episode's chapters when it has them, or a marker every 10 minutes when it doesn't.
+- **Share the transcript** as timestamped text (`[12:34] …`).
+- **Themes:** *Dark* or *Paper* (cream stock, ink text, fountain-pen accent), set in Settings → Appearance.
+
+### Translation and dictionaries
+- **Translation card:** translates a sentence into your language with Google Translate, sending the two paragraphs before it as context. The card names the engine that produced the translation. Pull the card up to show the preceding lines and their translations. When a long sentence was cut into paragraphs, Google receives the whole sentence.
+- **Word card:** every word in the translation card can be tapped to open the word card on top of it.
+- **Offline MDict dictionaries:** 19 dictionaries from the penReader set, including Oxford EN–ES/ES–EN, Oxford Advanced, New Oxford American, Collins COBUILD, Longman, MW Collegiate, Vocabulary.com, Oxford Idioms and Oxford Word Origins. They download from a private GitHub repo using a personal access token (Settings → Dictionaries).
+- **Pen-style lookup:** exact match first, then inflections and redirects. A selector picks which installed dictionary to read, and entries use a themed native renderer.
+- **Phrasal verbs** are detected around the tapped word ("gave it up", "look forward to") and underlined in the text whenever the dictionary defines them.
+- **Wikipedia summaries** for names and places that no dictionary carries.
+- **Idiom card:** what the idiom means, why the words mean that, and what the speaker means by it here. The whole card can be translated.
+- **Pause while looking up** (optional): playback pauses while a card is open.
+- Copy or share any text. **Ask Luna** answers a question about a sentence in the card, and passes it to **Sol** when Luna isn't sure. Without an OpenAI key, the question goes to the share sheet for another app.
+- **Vocabulary** saves words. **Notebook** saves sentences with your notes (use the pencil in the translation card). Both are under Settings → Learning.
+
+### Episode assistant (OpenAI, with your own key)
+- **Summary and chapters:** a summary of three or four sentences, plus titled chapters you can jump to.
+- **Transcript corrections:** fixes for misheard names, titles and homophones. A correction is kept only if its original text is found verbatim in the transcript.
+- **Punctuation repair** runs first, restoring full stops and capitals where the recogniser ran sentences together.
+- **What this episode names:** a tag in the Player header lists the episode's podcasts, books, idioms, phrasal verbs, films, TV programmes, records, organisations, guests, the presenter, people and places. They're bold in the text (a **B** switch turns the bold off), and each one opens a card with its picture, facts and links. Details come from Goodreads/Open Library, TMDB, iTunes and Wikipedia:
+  - Podcast cards show the show's description and a *Subscribe* button.
+  - Film and TV cards have a *Trailer* button.
+  - Acronyms such as *CNN*, *MIT* and *BBC* are marked when the transcript writes them in capitals.
+  - Tap a picture to see it uncropped.
+- **Auto-tag:** a switch that tags every episode as soon as its transcript is done. *Look again* reruns the tagging.
+- **Models:** GPT-6 **Luna** (cheap) and **Sol** (flagship). All passes share one cached transcript prefix, so the hour is paid for once rather than once per pass.
+
+### Names and books without the cloud
+- **Names pass:** spells people's names the way the episode's title and notes do, using phonetic matching. Corrections are applied when the transcript is read; the stored text is not changed.
+- **Books in the transcript:** book titles are found by their shape and cue phrases ("your new book, …"), plus the author's other works, and checked against Open Library and Goodreads. Titles appear in bold and open a book card.
+
+### Cloud transcription (optional)
+- Sends an episode to **MAI-Transcribe-2** through OpenRouter when the phone's transcript isn't good enough, such as a noisy recording or unfamiliar names.
+- Compare the two transcripts with their chapters and summaries written the same way, then choose **Use this text** to make the cloud version the episode's transcript.
+
+### Live Radio
+- **19 English-language talk stations:**
+  - BBC Radio 4, 4 Extra, World Service, Scotland, Ulster, 5 Live, Wales and London
+  - Vaughan Radio, RTÉ Radio 1, LBC, CBC Radio One
+  - NPR, WNYC, KQED
+  - ABC Radio National, ABC NewsRadio, ABC Radio Sydney, RNZ National
+- Each station shows its logo, its local clock ("23:32 in Sydney · already Tuesday") and the programme on air from its guide, with *Coming up* under it. Stations are sorted by how close their time zone is to yours.
+- Tap to play the stream at once. **Transcription** switches to a recorded buffer with a live transcript, and the stream keeps playing while it switches.
+- A session paused for 30 minutes stops by itself. The stop button is a red disc.
+
+### Imports
+- **Local audio and audiobooks** can be imported from files or a folder as collections. The app reads tags, duration and the embedded cover, plus `.nfo` sidecars. A single `.m4b` is split into its chapters without re-encoding.
+- **Audiobook + EPUB:** the book's own text is shown instead of a transcript, timed to the narrator's pauses. **Match the text to the voice** aligns it to recognised speech. A chapter whose text can't match its audio says so.
+- **YouTube:** paste or share a link (videos, Shorts, live replays) to import it as an episode with a transcript. Uses NewPipe Extractor.
+- **Share target:** Podink appears in Android's share sheet for links.
+
+### Statistics
+- A **listening meter** counts time actually listened: a skip adds nothing and a replay counts again, and radio is counted per station. Days before measurement began are estimated and labelled as estimates.
+- An **API spend ledger** records every OpenAI and OpenRouter call, priced at the model's own rate, including models that have since been retired.
+
+### Settings
+Sections: Appearance · Learning · Dictionaries · Episode assistant · Storage · Transcription model · Cloud transcription test · Films and television (TMDB key) · Troubleshooting (reset the transcription queue) · Debug log.
 
 ---
 
-## Tech Stack
+## Tech stack
 
-| Category | Library | Version |
-|---|---|---|
-| Framework | React Native | 0.83.4 |
-| Build system | Expo | ~55.0.9 |
-| Navigation | React Navigation (bottom-tabs + native-stack) | 6.x |
-| Audio playback | react-native-track-player | 4.1.2 |
-| Transcription | @siteed/sherpa-onnx.rn | 1.1.2 |
-| Animations | react-native-reanimated | 4.2.1 |
-| Database | expo-sqlite | ~55.0.11 |
-| File system | expo-file-system | ~55.0.12 |
-| Preferences | @react-native-async-storage | 2.2.0 |
-| Network info | @react-native-community/netinfo | ^11.3.0 |
-| RSS parsing | react-native-rss-parser | ^1.5.1 |
-| Image colors | react-native-image-colors | ^2.6.0 |
+| Area | Library |
+|---|---|
+| Framework | React Native 0.83.4, Expo ~55 |
+| Navigation | React Navigation 6 (bottom tabs + native stack) |
+| Audio | react-native-track-player 4.1.2 with vendored KotlinAudio (`android/kotlinaudio`) |
+| Speech recognition | @siteed/sherpa-onnx.rn 1.1.2 (patched, see `patches/`) |
+| Database | expo-sqlite (schema v17) |
+| Gestures / animation | react-native-gesture-handler, reanimated 4 |
+| Storage / files | AsyncStorage, expo-file-system |
+| Native modules (Kotlin) | `AudioImportModule`, `LiveRadioModule`, `YouTubeModule`, `ShareIntentModule`, `TranscriptionService` |
 
----
-
-## Project Structure
+## Project layout
 
 ```
 src/
-├── api/
-│   ├── rssParser.js              # RSS feed parsing & episode normalization
-│   └── podcastResolver.js        # Resolves Apple Podcasts URLs → RSS feed URLs
-├── components/
-│   ├── EpisodeItem.js            # Episode list row with download/transcribe actions
-│   ├── FinishedEpisodePrompt.js  # "Delete the download?" alert when a downloaded episode ends
-│   ├── SettingsGearButton.js     # Header gear that opens Settings
-│   ├── SegmentedControl.js       # Filter switch used by the Listening tab
-│   ├── LoadingBar.js             # Thin indeterminate line under a header while feeds load
-│   ├── MiniPlayer.js             # Floating compact player above tab bar
-│   ├── PlayerControls.js         # Full-screen playback controls (slider, skip, play/pause)
-│   └── TranscriptHighlighter.js  # Word-synced transcript with auto-scroll & translation
-├── database/
-│   ├── db.js                     # SQLite schema initialization
-│   └── queries.js                # All DB read/write operations
-├── screens/
-│   ├── SubscribedTimeline.js     # "Discover" tab — browse & add podcast feeds
-│   ├── DownloadedTimeline.js     # "Library" tab — manage downloads & transcription queue
-│   ├── ListeningScreen.js        # "Listening" tab — episodes by state (New / In progress / Finished)
-│   ├── PodcastsScreen.js         # "My Podcasts" tab — subscriptions list
-│   ├── PlayerScreen.js           # Full-screen player modal
-│   └── SettingsScreen.js         # Settings (stack screen behind the header gear)
-└── services/
-    ├── trackPlayer.js            # react-native-track-player wrapper
-    ├── playbackService.js        # Background playback event handler
-    ├── episodeService.js         # Episode actions shared by every tab: download ⇒ transcribe, remove download, Done / Unplayed, weekly cleanup of finished downloads
-    ├── whisperService.js         # Transcription queue & model management
-    ├── downloadService.js        # Audio & model downloads with progress
-    └── colorExtractor.js         # Dominant color extraction from artwork
+├── api/          RSS, Apple/iTunes search, OpenAI, Open Library, Goodreads, TMDB, Wikipedia
+├── components/   lists, mini player, controls, swipe rows
+│   └── transcript/  transcript cards: translation, word, book, entity, idiom, chapters, cloud transcript
+├── database/     db.js (schema + migrations), queries.js
+├── hooks/        transcription queue, screen-awake, book sync, clock
+├── screens/      Feed, My Podcasts, Library, Live Radio, Listening, Player, Settings,
+│                 Vocabulary, Notebook, Stats, Collections, YouTube import, Debug log
+└── services/     playback, downloads, transcription (whisperService), AI passes, names/books/entities,
+                  dictionaries (mdx.js), radio, imports, EPUB alignment, statistics
+android/app/src/main/java/…   native Kotlin modules
+assets/brand, scripts/        icon sources + generate-icons.sh
 ```
-
----
-
-## Database Schema
-
-**Episodes**
-| Column | Type | Notes |
-|---|---|---|
-| id | TEXT | Primary key |
-| title | TEXT | |
-| description | TEXT | |
-| podcast_title | TEXT | |
-| podcast_feed_url | TEXT | |
-| release_date | TEXT | |
-| audio_url | TEXT | Remote URL |
-| local_audio_path | TEXT | Set when downloaded |
-| is_downloaded | INTEGER | 0 or 1 |
-| has_transcript | INTEGER | 0 or 1 |
-| play_position | INTEGER | Seconds |
-| is_played | INTEGER | 0 or 1 — set when playback reaches the end |
-| last_played_at | INTEGER | Epoch ms of the last saved position or manual Done (orders the Listening tab; start of a finished download's cleanup week) |
-| downloaded_at | INTEGER | Epoch ms the audio landed on the device; NULL when not downloaded (a re-download gets a fresh cleanup week) |
-
-**Podcasts**
-| Column | Type | Notes |
-|---|---|---|
-| id | INTEGER | Auto-increment |
-| title | TEXT | |
-| description | TEXT | |
-| feed_url | TEXT | Unique |
-| image_url | TEXT | |
-| subscribed_at | TIMESTAMP | |
-
-**Transcripts**
-| Column | Type | Notes |
-|---|---|---|
-| id | INTEGER | Auto-increment |
-| episode_id | TEXT | FK → Episodes.id |
-| start_time | INTEGER | Milliseconds |
-| end_time | INTEGER | Milliseconds |
-| text | TEXT | Segment text |
-
----
 
 ## Building
 
-### Prerequisites
-- Node.js 18+
-- Android Studio with NDK `27.1.12297006`
-- Java 17+
+Prerequisites: Node 18+, Yarn, Android Studio with NDK `27.1.12297006`, Java 17+.
 
-### Install dependencies
 ```bash
-npm install
+yarn install          # also applies patch-package patches
+yarn android          # dev build + Metro
+yarn build:apk        # release APK → android/app/build/outputs/apk/release/app-release.apk
 ```
 
-### Run in development
-```bash
-npm run android
-```
+Use Yarn, not npm (the project has a `yarn.lock`).
 
-### Build release APK
-```bash
-cd android && ./gradlew assembleRelease
-```
-
-Output: `android/app/build/outputs/apk/release/app-release.apk`
-
----
-
-## Versions
-
-| Version | versionCode | Notes |
-|---|---|---|
-| 1.0.0 | 1 | Initial release |
-| 1.1.0 | 2 | Current |
-
----
+### Optional keys (entered in Settings, stored only on the device)
+- **OpenAI**: episode assistant, tags, Ask Luna/Sol
+- **OpenRouter**: cloud transcription
+- **GitHub PAT** with read access to the dictionary repo: offline dictionaries
+- **TMDB**: film and TV cards and trailers
 
 ## Notes
-
-- **Transcription models** — two NVIDIA Parakeet models (110M default / fast, TDT 0.6B v2 high accuracy) are downloaded on-demand from Settings as tar.bz2 release assets from the sherpa-onnx model zoo and extracted natively.
-- **MiniPlayer** is only mounted after the first play event to avoid Android elevation/visibility bugs.
-- **Transcript auto-scroll** detects manual user scrolling and pauses; it resumes after a short idle timeout.
-- **Spotify links** are not supported — Spotify does not expose RSS feeds.
-- The release signing config currently uses the debug keystore. For production distribution, replace with a proper release keystore.
+- Releases are cut as `release/X.Y.Z` branches from `main`, with the version bumped in `build.gradle`, `app.json`, `package.json` and the changelog.
+- Release signing still uses the debug keystore. Replace it before public distribution.
