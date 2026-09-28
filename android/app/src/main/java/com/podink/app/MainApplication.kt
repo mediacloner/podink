@@ -26,6 +26,7 @@ class MainApplication : Application(), ReactApplication {
           add(LiveRadioPackage())
           add(YouTubePackage())
           add(ShareIntentPackage())
+          add(ScreenAwakePackage())
         }
     )
   }
