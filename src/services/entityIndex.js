@@ -47,12 +47,23 @@ export const TYPE_ICON = {
     guest: 'message-circle', host: 'user-check',
 };
 
-const MAX_PER_PART = 40;
+// How many mentions one request may return: 40 for every half hour the part
+// covers, up to 120. A flat 40 was the cap for a whole episode (a part holds
+// up to three hours), and an hour of celebrity talk names more than that —
+// "someone like Sebastian Croft" was left off the list.
+const PER_HALF_HOUR = 40;
+const MAX_PER_PART = 120;
 const RESOLVE_AT_ONCE = 4;
 
+const capFor = (prepared) => {
+    const minutes = (prepared.durationMs || 0) / 60000 / Math.max(1, prepared.texts.length);
+    return Math.min(MAX_PER_PART, Math.max(PER_HALF_HOUR, Math.round(minutes / 30 * PER_HALF_HOUR)));
+};
+
 // The last message of a request that starts with the episode
-// (services/transcriptReading.js), so the text it reads can be cached.
-const INSTRUCTIONS = `Task: list what this episode names, and the phrases it uses. Fill "entities" and "phrases" only.
+// (services/transcriptReading.js), so the text it reads can be cached — the
+// cap sits here, after the transcript, and leaves the cached prefix alone.
+const instructionsFor = (cap) => `Task: list what this episode names, and the phrases it uses. Fill "entities" and "phrases" only.
 
 Under "entities", list the people, places, organisations, books, films, television programmes, other podcasts and records its speakers talk about.
 
@@ -65,7 +76,7 @@ For each one give:
 
 Include what the speakers name and actually talk about — every person named with a first and last name, the relatives and ordinary people in the story as well as the famous. List the presenter as host and the people heard speaking as guest. Leave out the programme itself; a place named only to locate another place; a figure of speech; anything you cannot point to in the text. A recogniser misspelling belongs in "surface" with the true spelling in "canonical" — that pairing is the point of the list.
 
-At most ${MAX_PER_PART} for this text, the ones a listener might want to look up. Cover every kind that appears — a programme or a record named once still belongs on the list — rather than listing more of one kind. Return an empty list when there is nothing worth listing.
+At most ${cap} for this text, the ones a listener might want to look up. Cover every kind that appears — a programme or a record named once still belongs on the list — rather than listing more of one kind. Return an empty list when there is nothing worth listing.
 
 ${PHRASE_INSTRUCTIONS}`;
 
@@ -426,9 +437,14 @@ export const askEntities = async (prepared, request, { onPart = () => {} } = {})
     const usage = { input: 0, output: 0, cached: 0 };
     const raw = [];
     const rawPhrases = [];
+    const cap = capFor(prepared);
+    const task = instructionsFor(cap);
+    // 12k was sized for 40 mentions and the phrases; a mention is about 80
+    // tokens more of answer.
+    const maxOutputTokens = 12000 + (cap - PER_HALF_HOUR) * 80;
     for (let i = 0; i < texts.length; i++) {
         const r = await request(readingRequest({
-            text: texts[i], task: INSTRUCTIONS, episodeId, maxOutputTokens: 12000,
+            text: texts[i], task, episodeId, maxOutputTokens,
         }));
         usage.input += r.usage?.input || 0;
         usage.output += r.usage?.output || 0;
