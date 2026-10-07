@@ -5,7 +5,7 @@ import { radii, withAlpha, useTheme, useStyles } from '../../theme';
 import {
     ASK_BETTER_MODEL, ASK_FIRST_MODEL, askAssistant, formatDollars, getOpenAIKey, modelInfo,
 } from '../../services/aiService';
-import { shareQuestion } from './share';
+import { copyText, shareQuestion } from './share';
 import { AskAssistantButton } from './SheetModal';
 
 // The "ask" link of the translation and word cards. With an OpenAI key the
@@ -26,6 +26,7 @@ const AssistantAnswer = ({ question, lang = 'en', large = false, leading = null,
     const [answers, setAnswers] = useState([]);   // [{ model, answer, cost }]
     const [busy, setBusy] = useState(null);       // model id being asked
     const [error, setError] = useState('');
+    const [copied, setCopied] = useState(-1);     // index of the answer just copied
     const abortRef = useRef(null);
 
     useEffect(() => {
@@ -39,6 +40,7 @@ const AssistantAnswer = ({ question, lang = 'en', large = false, leading = null,
         setAnswers([]);
         setBusy(null);
         setError('');
+        setCopied(-1);
     }, [question]);
     useEffect(() => () => abortRef.current?.abort(), []);
     // Tells the card each time an answer lands (the translation card folds
@@ -62,6 +64,19 @@ const AssistantAnswer = ({ question, lang = 'en', large = false, leading = null,
     }, [busy, question, lang]);
 
     const onShare = useCallback(() => shareQuestion(question), [question]);
+
+    // The answer text is not selectable: inside the sheet a slow drag or
+    // scroll turned into a text selection. Copying goes through the icon on
+    // the answer's head instead, with a check that flashes, then reverts.
+    const onCopy = useCallback(async (a, i) => {
+        const text = [a.english, a.translated].filter(Boolean).join('\n\n');
+        if (await copyText(text)) setCopied(i);
+    }, []);
+    useEffect(() => {
+        if (copied < 0) return;
+        const t = setTimeout(() => setCopied(-1), 1400);
+        return () => clearTimeout(t);
+    }, [copied]);
 
     if (hasKey !== true) {
         return (
@@ -118,10 +133,23 @@ const AssistantAnswer = ({ question, lang = 'en', large = false, leading = null,
                         <Icon name='message-circle' size={12} color={colors.accent} />
                         <Text style={st.answerLabel}>{label(a.model).toUpperCase()}</Text>
                         <Text style={st.answerCost}>{formatDollars(a.cost)}</Text>
+                        <TouchableOpacity
+                            onPress={() => onCopy(a, i)}
+                            hitSlop={10}
+                            activeOpacity={0.6}
+                            accessibilityRole='button'
+                            accessibilityLabel={`Copy ${label(a.model)}'s answer`}
+                        >
+                            <Icon
+                                name={copied === i ? 'check' : 'copy'}
+                                size={13}
+                                color={copied === i ? colors.accent : colors.textMuted}
+                            />
+                        </TouchableOpacity>
                     </View>
-                    {!!a.english && <Text style={st.answerText} selectable>{a.english}</Text>}
+                    {!!a.english && <Text style={st.answerText}>{a.english}</Text>}
                     {!!a.english && !!a.translated && <View style={st.answerRule} />}
-                    {!!a.translated && <Text style={st.translatedText} selectable>{a.translated}</Text>}
+                    {!!a.translated && <Text style={st.translatedText}>{a.translated}</Text>}
                 </View>
             ))}
 
@@ -151,7 +179,7 @@ const makeStyles = (colors) => StyleSheet.create({
     },
     answerHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     answerLabel: { color: colors.accent, fontSize: 11, fontWeight: '700', letterSpacing: 0.7 },
-    answerCost: { color: colors.textMuted, fontSize: 11, marginLeft: 'auto' },
+    answerCost: { color: colors.textMuted, fontSize: 11, marginLeft: 'auto', marginRight: 6 },
     answerText: { color: colors.textPrimary, fontSize: 15, lineHeight: 22 },
     answerRule: { height: 0.5, backgroundColor: withAlpha(colors.accent, 0.3), marginVertical: 4 },
     translatedText: { color: colors.textSecondary, fontSize: 15, lineHeight: 22 },
