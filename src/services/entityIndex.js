@@ -75,7 +75,7 @@ For each one give:
 - "hint": what this episode says about it, in a few words — an author, a year, a director, a country, a role. This is what tells one thing of the same name from another, so write what would let a librarian pick the right one: "the 1965 Herbert novel", "the Roman emperor", "Villeneuve's adaptation".
 - "context": the transcript line it appears in, copied as written.
 
-Include what the speakers name and actually talk about — every person named with a first and last name, the relatives and ordinary people in the story as well as the famous. List the presenter as host and the people heard speaking as guest. Leave out the programme itself; a place named only to locate another place; a figure of speech; anything you cannot point to in the text. A recogniser misspelling belongs in "surface" with the true spelling in "canonical" — that pairing is the point of the list.
+Include what the speakers name and actually talk about — every person named with a first and last name, the relatives and ordinary people in the story as well as the famous. List the presenter as host and the people heard speaking as guest. Leave out the programme itself and its own staff thanked in the credits — the producers, the editors; a place named only to locate another place; a figure of speech; anything you cannot point to in the text. A recogniser misspelling belongs in "surface" with the true spelling in "canonical" — that pairing is the point of the list.
 
 At most ${cap} for this text, the ones a listener might want to look up. Cover every kind that appears — a programme or a record named once still belongs on the list — rather than listing more of one kind. People and works come first: every person named with a first and last name, and every film, programme, book, podcast and record, before any organisation; when the list would run past ${cap}, leave out the companies, channels and services named in passing, never a person or a title. A name said in pieces ("Dane, I forget his last name, Glasgow") is listed under the last piece of it the transcript has, with the whole name in "canonical". Return an empty list when there is nothing worth listing.
 
@@ -177,6 +177,11 @@ const GENERIC = new Set([
     'credited', 'involved', 'reportedly', 'potential', 'possible', 'expected', 'title', 'named',
     'company', 'person', 'people', 'role', 'playing', 'played', 'plays', 'portrayed', 'character',
     'film', 'films', 'movie', 'movies', 'working', 'works', 'worked', 'head',
+    // Fillers the model writes when it knows little ("Actor associated with
+    // a G.I. Joe movie", "NFL figure quoted at a Bloomberg event"): Bradley
+    // Cooper's article does not say "associated".
+    'associated', 'linked', 'connected', 'related', 'figure', 'quoted', 'cited', 'passing', 'event',
+    'thanked', 'credits', 'credit',
 ]);
 const specificWords = (hint) => {
     const words = hintWords(hint);
@@ -200,12 +205,14 @@ const agrees = (page, hint) => {
 // Brunswick merchant of 1802. A whole article is long, so the words are
 // matched whole, a plural aside — not cut short as on a summary: "Universal"
 // cut to "univers" found Purdue University in the engineer Mike Moses's
-// article, and "town" must not be "hometown". With nothing specific in the
-// hint there is nothing to contradict the page — except for a guest or the
-// presenter, who is more often somebody's namesake than the famous one.
+// article, and "town" must not be "hometown". When the hint is only a role
+// the page has to share it — "Steve Allman, episode editor" is not the
+// Norwegian ice hockey player — and with no hint at all there is nothing to
+// contradict the page. A guest or the presenter always needs something
+// specific: they are more often somebody's namesake than the famous one.
 const mentionsHint = async (page, hint, { speaker = false, signal } = {}) => {
     const words = hintWords(hint).filter(w => !GENERIC.has(w));
-    if (!words.length) return !speaker;
+    if (!words.length) return !speaker && agrees(page, hint);
     const text = (await fetchWikipediaText(page.title, 'en', signal).catch(() => '')).toLowerCase();
     return words.some(w => new RegExp(`\\b${w.replace(/s$/, '')}s?\\b`).test(text));
 };
@@ -234,6 +241,9 @@ const looksLike = (page, type) => {
 // model's "Constantine (2005 film)" are the same name, and the comparison
 // below must see that they are.
 const bareTitle = (t) => String(t || '').toLowerCase().replace(/\s*\([^)]*\)\s*$/, '').trim();
+// Whether title [a] holds the words of [b], whole and in order.
+const spaced = (s) => ` ${String(s).replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
+const hasWords = (a, b) => spaced(b).trim() !== '' && spaced(a).includes(spaced(b));
 
 // Two spellings of one person's name: the first name and the surname sound
 // the same, middle names aside — "James Franklin Jeffrey" is James Jeffrey,
@@ -283,7 +293,8 @@ const fromWikipedia = async (entity, signal) => {
             if (tried.has(String(title).toLowerCase())) continue;
             tried.add(String(title).toLowerCase());
             const t = bareTitle(title);
-            if (!(t.includes(wanted) || wanted.includes(t) || (person && sameName(t, wanted)))) continue;
+            // Whole words: "Luca" is not in "Frank Lucas".
+            if (!(hasWords(t, wanted) || hasWords(wanted, t) || (person && sameName(t, wanted)))) continue;
             // A namesake's page says who it is in its title: "Josh Baker
             // (musician)" is not the journalist the episode's hint describes.
             const qualifier = /\(([^)]+)\)\s*$/.exec(String(title));
