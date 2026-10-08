@@ -57,6 +57,21 @@ const isMidStop = (word, next) => {
     if (/^(?:\p{L}\.)+\p{L}?$/u.test(core) || /\d$/.test(core)) return false;   // e.g., U.S., 3.
     return core.length >= 2 && !ABBREVIATIONS.has(core.toLowerCase().replace(/\.$/, ''));
 };
+// A sentence the recogniser ended too soon and then started again with a
+// capital — "they're capable of. Making progress", "it kind of. Really
+// intriguing" — shows no lowercase after its stop, and both halves are
+// short, so nothing above catches it (user: "some sentences that is split
+// but a point in correction dont remove the point"). It ends on a word no
+// sentence ends on; sent with the sentence after it, the model can join the
+// two, or leave a speaker's restart ("some of the. Some of them") as it is.
+// 397 such stops in 87 episodes on the phone, 2026-10-08.
+const DANGLING = new Set([
+    'the', 'a', 'an', 'of', 'because', 'and', 'or', 'my', 'your', 'their', 'our', 'its', 'very', 'if', 'to',
+]);
+const endsCutShort = (word) => {
+    const m = /^["'“‘(]*(\p{L}+)[.!?]["'”’)]*$/u.exec(word || '');
+    return !!m && DANGLING.has(m[1].toLowerCase());
+};
 const INSTRUCTIONS = `You restore the punctuation of an automatic transcript of an English podcast. The recogniser sometimes runs a minute of speech into a single sentence, loses the capital letters with it, or ends a sentence in the middle of one.
 
 Return the same words, in the same order, punctuated and capitalised as a careful editor would: full stops and question marks where the sentences end, commas where the speaker breaks, a capital at the start of each sentence and on names. Split a long run into the sentences it is really made of, and join what was cut in the middle of a thought.
@@ -84,6 +99,7 @@ const sentencesFromRows = (rows) => {
         text: ws.map(w => w.text).join(' '),
         ms: (rows[ws[ws.length - 1].row]?.end_time || 0) - (rows[ws[0].row]?.start_time || 0),
         midStops: ws.reduce((n, w, i) => n + (i + 1 < ws.length && isMidStop(w.text, ws[i + 1].text) ? 1 : 0), 0),
+        cutShort: endsCutShort(ws[ws.length - 1].text),
     }));
 };
 
@@ -91,7 +107,8 @@ const sentencesFromRows = (rows) => {
 const isLoose = (s) => s.words > LONG_WORDS
     || (s.words > 12 && s.ms > LONG_MS)
     || (s.words > UNBROKEN_WORDS && !/[,;:—–]/.test(s.text.slice(0, -1)))
-    || s.midStops > 0;
+    || s.midStops > 0
+    || s.cutShort;
 
 /**
  * Row ranges worth sending, each with the sentence either side of it for

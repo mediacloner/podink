@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import {
     View, Text, TouchableOpacity, TextInput,
-    StyleSheet, ScrollView, Switch, ActivityIndicator,
+    StyleSheet, ScrollView, Switch, ActivityIndicator, NativeModules,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Feather as Icon } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
-import { openDatabaseContext } from '../database/db';
+import { openDatabaseContext, snapshotDatabase } from '../database/db';
 import { SHERPA_MODELS, ensureSherpaModel, isSherpaModelDownloaded, deleteSherpaModel } from '../services/downloadService';
-import { resetService } from '../services/whisperService';
+import { fileUriToPath, resetService } from '../services/whisperService';
 import { ASK_DELETE_ON_FINISH_KEY } from '../services/playbackService';
 import { AUTO_DELETE_FINISHED_KEY } from '../services/episodeService';
 import {
@@ -146,6 +146,36 @@ const SettingsScreen = () => {
             showAlert('Export failed', error?.message || String(error));
         } finally {
             setExportingUsage(false);
+        }
+    };
+
+    const [exportingDb, setExportingDb] = useState(false);
+
+    // The whole database in Downloads, to send with a bug report: a snapshot
+    // in the cache first (db.snapshotDatabase), then the native side files it
+    // where Files can share it and adb can pull it.
+    const exportDatabase = async () => {
+        if (exportingDb) return;
+        const native = NativeModules.AudioImport;
+        if (!native?.saveToDownloads) {
+            showAlert('Export failed', 'This build cannot save to Downloads.');
+            return;
+        }
+        setExportingDb(true);
+        const temp = `${FileSystem.cacheDirectory}podink-export.db`;
+        try {
+            await FileSystem.deleteAsync(temp, { idempotent: true });
+            await snapshotDatabase(fileUriToPath(temp));
+            const d = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+            const saved = await native.saveToDownloads(temp, `podink-${stamp}.db`, 'application/octet-stream');
+            showAlert('Database exported', `${saved.name} (${(saved.size / 1048576).toFixed(1)} MB) is in Downloads.`);
+        } catch (error) {
+            showAlert('Export failed', error?.message || String(error));
+        } finally {
+            FileSystem.deleteAsync(temp, { idempotent: true }).catch(() => {});
+            setExportingDb(false);
         }
     };
 
@@ -1226,6 +1256,21 @@ const SettingsScreen = () => {
             </TouchableOpacity>
             <Text style={styles.resetHint}>
                 Record UI interactions and service events to diagnose transcription issues.
+            </Text>
+
+            <TouchableOpacity
+                style={[styles.logBtn, exportingDb && styles.dictActionBtnDisabled]}
+                onPress={exportDatabase}
+                disabled={exportingDb}
+                accessibilityRole="button"
+                accessibilityLabel="Export database"
+            >
+                <Icon name="database" size={15} color={colors.purple} />
+                <Text style={styles.logBtnText}>{exportingDb ? 'Exporting…' : 'Export database'}</Text>
+                {exportingDb && <ActivityIndicator size="small" color={colors.purple} style={{ marginLeft: 'auto' }} />}
+            </TouchableOpacity>
+            <Text style={styles.resetHint}>
+                Saves a copy of your library, transcripts, tags and notes to Downloads, to send with a bug report. Your API keys are not in it.
             </Text>
 
         </ScrollView>

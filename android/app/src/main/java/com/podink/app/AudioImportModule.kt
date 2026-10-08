@@ -2,6 +2,7 @@ package com.podink.app
 
 import android.app.Activity
 import android.content.ContentResolver
+import android.content.ContentValues
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -11,7 +12,10 @@ import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import com.facebook.react.bridge.ActivityEventListener
 import com.facebook.react.bridge.Arguments
@@ -1057,6 +1061,61 @@ class AudioImportModule(reactContext: ReactApplicationContext) :
                 promise.resolve(decodeText(bytes))
             } catch (e: Exception) {
                 promise.reject("READ_FAILED", e.message ?: "Could not read the file", e)
+            }
+        }
+    }
+
+    // ─── Export ─────────────────────────────────────────────────────────────
+
+    /**
+     * Copies an app file into the phone's Downloads folder as [displayName] — the
+     * database snapshot for a bug report (5.8.1), which Files can share from there
+     * and `adb pull /sdcard/Download/<name>` reaches. Android 10+ writes through
+     * MediaStore and needs no permission. Resolves `{name, size}`, the name being
+     * the one Downloads gave it (it appends " (1)" on a clash).
+     */
+    @ReactMethod
+    fun saveToDownloads(srcPath: String, displayName: String, mimeType: String, promise: Promise) {
+        executor.execute {
+            try {
+                val src = File(stripFileScheme(srcPath))
+                if (!src.isFile) {
+                    promise.reject("EXPORT_FAILED", "There is no file to export")
+                    return@execute
+                }
+                var savedName = displayName
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                        put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+                    val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                        ?: throw IllegalStateException("Downloads refused the file")
+                    try {
+                        val out = resolver.openOutputStream(uri) ?: throw IllegalStateException("Downloads gave no stream")
+                        out.use { o -> src.inputStream().use { it.copyTo(o, 256 * 1024) } }
+                        resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+                    } catch (e: Exception) {
+                        try { resolver.delete(uri, null, null) } catch (_: Exception) {}
+                        throw e
+                    }
+                    resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                        if (c.moveToFirst()) savedName = c.getString(0) ?: displayName
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                    dir.mkdirs()
+                    src.copyTo(File(dir, displayName), overwrite = true)
+                }
+                val map = Arguments.createMap()
+                map.putString("name", savedName)
+                map.putDouble("size", src.length().toDouble())
+                promise.resolve(map)
+            } catch (e: Exception) {
+                promise.reject("EXPORT_FAILED", e.message ?: "Could not save the file", e)
             }
         }
     }

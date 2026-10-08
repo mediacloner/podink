@@ -87,6 +87,16 @@ export const searchWikipediaTitles = async (query, { lang = 'en', limit = 5, sig
     return (d?.query?.search || []).map(r => r.title).filter(Boolean);
 };
 
+/** An article's whole text, plain, or '' — for asking whether it mentions
+ *  something the summary leaves out: a person's employer, a film they are
+ *  in (services/entityIndex.js). Follows redirects. */
+export const fetchWikipediaText = async (title, lang = 'en', signal) => {
+    const url = `https://${lang}.wikipedia.org/w/api.php?action=query&prop=extracts&explaintext=1`
+        + `&redirects=1&format=json&formatversion=2&titles=${slugOf(String(title || ''))}`;
+    const d = await getJson(url, signal);
+    return String(d?.query?.pages?.[0]?.extract || '');
+};
+
 const titleCase = (s) => s.split(' ').map(w => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ');
 
 // Wikimedia thumbnails are sized by the URL: `…/thumb/a/ab/Name.jpg/320px-Name.jpg`

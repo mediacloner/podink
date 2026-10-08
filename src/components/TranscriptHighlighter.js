@@ -153,22 +153,19 @@ import FollowPill from './transcript/FollowPill';
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const CHUNK_MARGIN = 10;                 // matches sentenceWrap.marginBottom
-// Swipe-to-translate (user, 2026-09-10: the long-press it replaced "is slow
-// to take a complete translation of sentence"): a thumb slid left to right
-// across a sentence opens the translation card. The mirror gesture, right to
-// left, plays on from the sentence (user, 2026-09-22: "when slide from the
-// right to the left in sentences start in this position") — the same as the
-// double tap, for a thumb already sliding. Finger travel in dp, either way.
+// The sentence gestures since 5.8.1 (user, 2026-10-08: "one single touch is
+// for translate the sentence and slice to start the audio in this
+// sentence"): a tap translates the sentence, a slide either way plays on
+// from it, and a long press on a word opens that word's card — the
+// dictionary, or the name, book or idiom it belongs to. Before, the slide
+// right translated, the slide left and a double tap played, and a tap
+// sought or defined. Finger travel in dp, either way.
 const SWIPE_START = 10;   // sideways travel before the sentence claims the touch
 const SWIPE_TRIGGER = 34; // TOTAL finger travel that fires the action
 const SWIPE_FLICK = 22;   // …or this much with a quick flick (|vx| > SWIPE_FLICK_VX dp/ms)
 const SWIPE_FLICK_VX = 0.35;
 const SWIPE_MAX = 44;     // how far the sentence itself slides, rubber-banded
 const SWIPE_SPRING = { damping: 18, stiffness: 240, mass: 0.6 };
-// Double-tap a sentence to play on from it (user, 2026-09-12: "I want to use
-// double tap in sentence to continue the reproduction in this point"). One tap
-// still only seeks there.
-const DOUBLE_TAP_MS = 300;
 const DEFAULT_FONT_SIZE = 22;
 const LOOKAHEAD_MS = 550;                // scaled by playback rate on the UI thread
 const WORD_LEVEL_RADIUS = 1;             // prev + current + next chunk → word-by-word
@@ -1037,9 +1034,8 @@ const TranscriptHighlighter = forwardRef(({
         TrackPlayer.seekTo(Math.max(0, ms) / 1000);
     }, [followSV]);
 
-    const onChunkPress = useCallback((startMs) => doSeek(startMs), [doSeek]);
-    // Double tap: go there and carry on playing from it.
-    const onChunkDoublePress = useCallback((startMs) => {
+    // A slide across a sentence: go there and carry on playing from it.
+    const onPlayFrom = useCallback((startMs) => {
         doSeek(startMs);
         TrackPlayer.play().catch(() => {});
     }, [doSeek]);
@@ -1122,7 +1118,7 @@ const TranscriptHighlighter = forwardRef(({
         if (resumeOnCloseRef.current) TrackPlayer.play().catch(() => {});
     }, []);
 
-    // ── Translation modal (slide a sentence right) ───────────────────────────
+    // ── Translation modal (tap a sentence) ───────────────────────────────────
     const [translateModal, setTranslateModal] = useState(CLOSED_TRANSLATE);
     // Read inside the word-card handlers without making it a dependency.
     const translateModalRef = useRef(translateModal);
@@ -1146,7 +1142,7 @@ const TranscriptHighlighter = forwardRef(({
         resumeAfterLookup();
     }, [resumeAfterLookup]);
 
-    // ── Word popover (word tap in word-level chunks) ─────────────────────────
+    // ── Word popover (word held in word-level chunks) ────────────────────────
     const [wordPopover, setWordPopover] = useState(null);
     const onWordPress = useCallback((word, chunkIndex) => {
         const ch = chunksRef.current[chunkIndex];
@@ -1336,8 +1332,7 @@ const TranscriptHighlighter = forwardRef(({
                 activeChunkSV={activeChunkSV}
                 activeIndexSV={activeIndexSV}
                 isPlayingSV={isPlayingSV}
-                onPress={onChunkPress}
-                onDoublePress={onChunkDoublePress}
+                onPlayFrom={onPlayFrom}
                 onTranslate={onTranslate}
                 onWordPress={onWordPress}
                 onBookPress={onBookPress}
@@ -1350,7 +1345,7 @@ const TranscriptHighlighter = forwardRef(({
         );
     }, [
         fontSize, lineHeight, activeChunkSV, activeIndexSV, isPlayingSV,
-        onChunkPress, onChunkDoublePress, onTranslate, onWordPress, onBookPress, wordBook,
+        onPlayFrom, onTranslate, onWordPress, onBookPress, wordBook,
         onPhrasePress, wordPhrase, boldMarks,
         onCellLayout, onKeypointPress,
     ]);
@@ -1687,8 +1682,7 @@ const ChapterRow = React.memo(({ item, onPress }) => {
 const chunkEqual = (p, n) =>
     p.item === n.item && p.index === n.index &&
     p.fontSize === n.fontSize && p.lineHeight === n.lineHeight &&
-    p.onPress === n.onPress && p.onDoublePress === n.onDoublePress &&
-    p.onTranslate === n.onTranslate &&
+    p.onPlayFrom === n.onPlayFrom && p.onTranslate === n.onTranslate &&
     p.onWordPress === n.onWordPress && p.onCellLayout === n.onCellLayout &&
     p.onBookPress === n.onBookPress && p.wordBook === n.wordBook &&
     p.onPhrasePress === n.onPhrasePress && p.wordPhrase === n.wordPhrase &&
@@ -1712,7 +1706,7 @@ const bookRuns = (words, wordBook, wordPhrase) => {
 const Chunk = React.memo(({
     item, index, fontSize, lineHeight,
     activeChunkSV, activeIndexSV, isPlayingSV,
-    onPress, onDoublePress, onTranslate, onWordPress, onBookPress, wordBook, onCellLayout,
+    onPlayFrom, onTranslate, onWordPress, onBookPress, wordBook, onCellLayout,
     onPhrasePress, wordPhrase = NO_MARKS, boldMarks = true,
 }) => {
     const { colors } = useTheme();
@@ -1746,50 +1740,28 @@ const Chunk = React.memo(({
         onCellLayout(index, item.id, e.nativeEvent.layout.height);
     }, [onCellLayout, index, item.id]);
 
-    // One tap seeks here; a second within DOUBLE_TAP_MS plays on from here.
-    // The first tap makes this the active sentence, which turns it word-level
-    // (tap = define) a moment later, so the words count the second tap too —
-    // otherwise a quick double tap ends in the word card by accident.
-    const lastTapRef = useRef(0);
-    const takeDoubleTap = useCallback(() => {
-        const now = Date.now();
-        const second = now - lastTapRef.current < DOUBLE_TAP_MS;
-        lastTapRef.current = second ? 0 : now;
-        if (second) onDoublePress(item.startMs);
-        return second;
-    }, [onDoublePress, item.startMs]);
-    const handlePress = useCallback(() => {
-        if (!takeDoubleTap()) onPress(item.startMs);
-    }, [takeDoubleTap, onPress, item.startMs]);
-    const handleWordPress = useCallback((word, ci) => {
-        if (!takeDoubleTap()) onWordPress(word, ci);
-    }, [takeDoubleTap, onWordPress]);
+    // A tap anywhere on the sentence translates it — on its words too, where
+    // a tap used to define the word; holding a word opens its card instead
+    // (Word's onLongPress). No double tap any more, so the tap answers at
+    // once instead of waiting to see whether a second one follows.
     const handleTranslate = useCallback(() => onTranslate(text, chunkIndex), [onTranslate, text, chunkIndex]);
 
-    // ── Swipe right → translate · swipe left → play on from here ─────────────
+    // ── Slide either way → play on from here ─────────────────────────────────
     // A PanResponder, like the Library's SwipeableRow: the wrapper claims the
     // touch once the finger has travelled SWIPE_START sideways and more
     // across than down (a vertical drag stays a scroll — Android's ScrollView
     // takes real vertical movement natively in any case). The Pressable
     // underneath gives the touch up, which cancels its tap.
-    // The sentence follows the thumb a little, rubber-banded, with a glyph
-    // fading in on the side it slides away from — a globe at the left for the
-    // translation, a play mark at the right for playback; the action fires
-    // the moment the travel passes SWIPE_TRIGGER — under the thumb, without
+    // The sentence follows the thumb a little, rubber-banded, with a play
+    // mark fading in on the side it slides away from; the action fires the
+    // moment the travel passes SWIPE_TRIGGER — under the thumb, without
     // waiting for the finger to lift (user, 2026-09-12: "I need to move too
     // much the thumb to run translation") — or on release after a short quick
-    // flick. The slide is the only way into the translation card: the
-    // long-press it replaced is gone, so a finger resting on a sentence no
-    // longer competes with the tap and the double tap (user, 2026-09-12: "tap
-    // and double tap some is confuse at the moment, you can eliminate long
-    // press to sentences"). Sliding left does what the double tap does — seek
-    // here and play — so a paused reader can start from any sentence with
-    // one sure gesture instead of two taps timed right.
+    // flick. Either direction seeks here and plays, so a paused reader can
+    // start from any sentence with one sure gesture.
     const swipeX = useSharedValue(0);
-    const translateRef = useRef(handleTranslate);
-    translateRef.current = handleTranslate;
     const playFromRef = useRef(() => {});
-    playFromRef.current = () => onDoublePress(item.startMs);
+    playFromRef.current = () => onPlayFrom(item.startMs);
     const firedRef = useRef(false);
     // PanResponder zeroes dx when it grants the responder, so the travel
     // already made by then — everything up to SWIPE_START, and however much
@@ -1797,15 +1769,14 @@ const Chunk = React.memo(({
     // added back. Without it the thresholds below are thresholds on top of an
     // unknown head start, which is what made the swipe feel so long.
     const grantAtRef = useRef(0);
-    // The travel keeps its sign: positive is a slide to the right (translate),
-    // negative a slide to the left (play from here). A thumb that sets off
-    // one way and comes back simply follows, and fires whichever side it
-    // reaches first.
+    // The travel keeps its sign so the sentence moves with the thumb either
+    // way; a thumb that sets off one way and comes back simply follows, and
+    // fires on whichever side it reaches first — both play from here.
     const swipePan = useMemo(() => {
-        const fire = (travel) => {
+        const fire = () => {
             firedRef.current = true;
             swipeX.value = withSpring(0, SWIPE_SPRING);
-            if (travel > 0) translateRef.current(); else playFromRef.current();
+            playFromRef.current();
         };
         return PanResponder.create({
             onStartShouldSetPanResponder: () => false,
@@ -1818,7 +1789,7 @@ const Chunk = React.memo(({
             onPanResponderMove: (_, g) => {
                 if (firedRef.current) return;   // already fired under the thumb
                 const travel = grantAtRef.current + g.dx;
-                if (Math.abs(travel) >= SWIPE_TRIGGER) { fire(travel); return; }
+                if (Math.abs(travel) >= SWIPE_TRIGGER) { fire(); return; }
                 const eased = SWIPE_MAX * (1 - Math.exp(-Math.abs(travel) / SWIPE_MAX));
                 swipeX.value = travel < 0 ? -eased : eased;
             },
@@ -1827,15 +1798,16 @@ const Chunk = React.memo(({
                 swipeX.value = withSpring(0, SWIPE_SPRING);
                 const travel = grantAtRef.current + g.dx;
                 if (Math.abs(travel) >= SWIPE_FLICK && Math.abs(g.vx) > SWIPE_FLICK_VX && Math.sign(g.vx) === Math.sign(travel)) {
-                    fire(travel);
+                    fire();
                 }
             },
             onPanResponderTerminate: () => { swipeX.value = withSpring(0, SWIPE_SPRING); },
         });
     }, [swipeX]);
     const swipeStyle = useAnimatedStyle(() => ({ transform: [{ translateX: swipeX.value }] }));
-    // Each glyph answers to its own direction of slide: the globe to the
-    // right-going (positive) travel, the play mark to the left-going.
+    // A play mark on each side, each answering to its own direction of
+    // slide: the left one to right-going (positive) travel, the right one to
+    // left-going.
     const swipeIconStyle = useAnimatedStyle(() => ({
         opacity: interpolate(swipeX.value, [3, SWIPE_MAX * 0.35], [0, 1], 'clamp'),
         transform: [{ scale: interpolate(swipeX.value, [3, SWIPE_MAX * 0.42], [0.7, 1], 'clamp') }],
@@ -1849,7 +1821,7 @@ const Chunk = React.memo(({
     const withSwipe = (sentence) => (
         <View {...swipePan.panHandlers}>
             <Animated.View style={[styles.swipeIcon, swipeIconStyle]} pointerEvents="none">
-                <Icon name="globe" size={18} color={colors.accent} />
+                <Icon name="play" size={18} color={colors.accent} />
             </Animated.View>
             <Animated.View style={[styles.swipeIconRight, playIconStyle]} pointerEvents="none">
                 <Icon name="play" size={18} color={colors.accent} />
@@ -1866,16 +1838,20 @@ const Chunk = React.memo(({
     };
 
     if (isWordLevel) {
-        // Word-by-word reading region (active ± 1): tapping a word must open the
-        // dictionary popover. The parent Text has NO press handlers at all — a
-        // parent Text that owns a press claims the touch responder for the
-        // whole block, starving the per-word handlers (word taps did nothing /
-        // the parent seeked). So the tap lives on the words: tap = define.
-        // Seeking stays on the other (non-word-level) sentences and the
-        // transport controls; translating is the slide. The wrapper is a plain
-        // View now that it carries no press of its own, only the layout.
+        // Word-by-word reading region (active ± 1): holding a word opens its
+        // card, a tap on it translates the sentence. The parent Text has NO
+        // press handlers at all — a parent Text that owns a press claims the
+        // touch responder for the whole block, starving the per-word handlers.
+        // So the presses live on the words, and the Pressable around the Text
+        // takes what falls between them — a gap, a line end — so a tap
+        // anywhere on the sentence translates it, as on the other sentences.
         return withSwipe(
-            <View style={styles.sentenceWrap} onLayout={handleLayout}>
+            <Pressable
+                onLayout={handleLayout}
+                onPress={handleTranslate}
+                android_ripple={CHUNK_RIPPLE}
+                style={({ pressed }) => [styles.sentenceWrap, pressed && styles.pressedChunk]}
+            >
                 <Text
                     style={baseStyle}
                     suppressHighlighting
@@ -1889,7 +1865,8 @@ const Chunk = React.memo(({
                             lineHeight={lineHeight}
                             activeIndexSV={activeIndexSV}
                             isPlayingSV={isPlayingSV}
-                            onWordPress={handleWordPress}
+                            onPress={handleTranslate}
+                            onWordPress={onWordPress}
                             bookId={w.globalIndex < wordBook.length ? wordBook[w.globalIndex] : 0}
                             bookJoinsNext={w.globalIndex + 1 < wordBook.length && wordBook[w.globalIndex] !== 0 && wordBook[w.globalIndex + 1] === wordBook[w.globalIndex]}
                             onBookPress={onBookPress}
@@ -1900,21 +1877,22 @@ const Chunk = React.memo(({
                         />
                     ))}
                 </Text>
-            </View>,
+            </Pressable>,
         );
     }
 
     return withSwipe(
         <Pressable
             onLayout={handleLayout}
-            onPress={handlePress}
+            onPress={handleTranslate}
             android_ripple={CHUNK_RIPPLE}
             style={({ pressed }) => [styles.sentenceWrap, pressed && styles.pressedChunk]}
         >
             {runs ? (
-                // A title is its own span: bold, and its tap opens the book
-                // card instead of seeking (a nested Text with onPress takes
-                // the touch).
+                // A title is its own span: bold, and holding it opens the
+                // book, name or idiom card. A nested Text with a press takes
+                // the touch, so the span translates on a tap as well — as the
+                // Pressable around it does everywhere else.
                 <Text style={baseStyle}>
                     {runs.map((run, i) => {
                         const text = i === 0 ? run.text.replace(/^\s+/, '') : run.text;
@@ -1928,7 +1906,8 @@ const Chunk = React.memo(({
                                     <Text
                                         style={isIdiomMark(run.phrase) ? (boldMarks ? [styles.idiomRun, !isPast && styles.markFuture] : null) : styles.phrasalRun}
                                         suppressHighlighting
-                                        onPress={() => onPhrasePress(run.phrase, run.startMs, chunkIndex)}
+                                        onPress={handleTranslate}
+                                        onLongPress={() => onPhrasePress(run.phrase, run.startMs, chunkIndex)}
                                     >
                                         {m ? m[1] : text}
                                     </Text>
@@ -1941,7 +1920,8 @@ const Chunk = React.memo(({
                                 <Text
                                     style={boldMarks ? [isNameMark(run.bookId) ? styles.nameTitle : styles.bookTitle, !isPast && styles.markFuture] : null}
                                     suppressHighlighting
-                                    onPress={() => onBookPress(run.bookId, run.startMs)}
+                                    onPress={handleTranslate}
+                                    onLongPress={() => onBookPress(run.bookId, run.startMs)}
                                 >
                                     {m ? m[1] : text}
                                 </Text>
@@ -1963,7 +1943,7 @@ const Chunk = React.memo(({
 
 const Word = React.memo(({
     word, chunkIndex, fontSize, lineHeight,
-    activeIndexSV, isPlayingSV, onWordPress,
+    activeIndexSV, isPlayingSV, onPress, onWordPress,
     bookId = 0, bookJoinsNext = false, onBookPress,
     phrase = 0, phraseJoinsNext = false, onPhrasePress, boldMarks = true,
 }) => {
@@ -2027,10 +2007,11 @@ const Word = React.memo(({
         return m ? [m[1], m[2], m[3]] : ['', word.text, ''];
     }, [word.text]);
 
+    // Held, a word opens its card (a tap translates the sentence — onPress).
     // A word of a book title opens the book card, not the dictionary.
     // A word of a phrase opens the phrase — the dictionary form of a phrasal
-    // verb, or the idiom's card — whichever of its words was tapped.
-    const handlePress = useCallback(() => {
+    // verb, or the idiom's card — whichever of its words was held.
+    const handleLongPress = useCallback(() => {
         if (bookId && onBookPress) onBookPress(bookId, word.startMs);
         else if (phraseMark && onPhrasePress) onPhrasePress(phraseMark, word.startMs, chunkIndex);
         else onWordPress(word, chunkIndex);
@@ -2041,12 +2022,13 @@ const Word = React.memo(({
     // Press lives on a PLAIN Text — onPress on a nested Animated.Text does not
     // fire inside a parent Text (RN press hit-testing only routes to real Text
     // spans), so the animated colour goes on an inner Animated.Text while the
-    // outer Text owns the tap-to-define handler.
+    // outer Text owns the presses.
     return (
         <Text
             selectable={false}
             suppressHighlighting
-            onPress={handlePress}
+            onPress={onPress}
+            onLongPress={handleLongPress}
         >
             {lead}
             {/* The band runs on under the space when the next word belongs to
@@ -2074,9 +2056,9 @@ const makeStyles = (colors) => StyleSheet.create({
 
     sentenceWrap: { marginBottom: CHUNK_MARGIN },
     pressedChunk: { opacity: 0.65 },
-    // Swipe glyphs, in the 24 px gutters either side of the words: the globe
-    // (slide right, translate) on the left, the play mark (slide left, play
-    // on from here) on the right.
+    // Swipe glyphs, in the 24 px gutters either side of the words: a play
+    // mark on the side the sentence slides away from (either slide plays on
+    // from here).
     swipeIcon: { position: 'absolute', left: -22, top: 0, bottom: CHUNK_MARGIN, justifyContent: 'center' },
     swipeIconRight: { position: 'absolute', right: -22, top: 0, bottom: CHUNK_MARGIN, justifyContent: 'center' },
     // A book title inside a sentence: a highlighter band in the palette's
