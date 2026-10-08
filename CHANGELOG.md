@@ -5,6 +5,16 @@
 ### Added
 - **Export the database from Settings.** A release build cannot be read over adb, so what the tag pass stored for an episode — or anything else in the library — could only be guessed at from the screen (user: “We are goint to create a release that can export db, with exportation you can check this”). *Settings → Debug → Export database* writes a consistent copy (SQLite `VACUUM INTO`, on a connection of its own, the WAL folded in) and files it in Downloads as `podink-<date>-<time>.db`, where Files can share it and `adb pull /sdcard/Download/…` reaches it. It holds the library, transcripts, tags, notes and statistics; the API keys live elsewhere and stay out of it (`db.snapshotDatabase`, `AudioImportModule.saveToDownloads`).
 
+### Fixed
+- **What an episode names is identified as what it is.** In an episode of *The Town* about Skydance a third of the tag list pointed at the wrong thing (user: “why there are a lot of names that dont identify this podcast”). Hulu, Disney+, Comedy Central, CNN+ and seven other channels and streaming services were filed as television and handed to TMDB, which answered with whatever programme it ranked first — Hulu became a 2026 series, CNN+ one from 1980. Hugh Johnston, Disney's finance chief, became a New Brunswick merchant of 1802, and Michael Moses of Universal Pictures the Virgin Galactic engineer, because a page of exactly the right name was taken on trust and the word “executive” counted as agreement. Matt Belloni, the presenter, was “not in any catalogue” although Wikipedia has him. Now:
+  - a channel, a network or a streaming service is an organisation — the model is told so, and one it still files as television is moved by its own description (“streaming service”, “cable network”);
+  - TMDB and Apple answer only with a title of the name asked for (“CNN+” is “CNN Plus”, “MTV” is not “MTV Cribs”), otherwise the lookup moves on;
+  - a person's page must mention what the episode says about them — the company, the film — in its summary or, failing that, anywhere in the article; roles and nationalities (“executive”, “actor”, “American”) no longer count on their own. Someone Wikipedia does not have now says so instead of showing a namesake;
+  - the presenter and the guests are found when their article names the show;
+  - a film or a programme looked up on Wikipedia has to be one, and a page of exactly its name is tried first (“Steve Jobs”, Danny Boyle's film, not the man nor *Jobs*);
+  - the list puts people and titles before companies: when it is full, the channels and firms named in passing are left out, not Bradley Cooper or *G.I. Joe*, and a name said in pieces (“Dane, I forget his last name, Glasgow”) is listed whole.
+  Episodes tagged before this build get the new list from *Look again* (`entityIndex.kindFromHint`, `entityIndex.mentionsHint`, `api/titleKey.js`).
+
 ## [5.8.0] - 2026-09-25
 
 ### Added

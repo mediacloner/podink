@@ -33,7 +33,8 @@ import { searchGoodreads } from '../api/goodreads';
 import { searchOpenLibraryByTitle } from '../api/openLibrary';
 import { searchITunes } from '../api/itunes';
 import { getTmdbKey, searchTmdb } from '../api/tmdb';
-import { fetchWikipediaSummary, isListPage, searchWikipediaTitles } from '../api/wikipedia';
+import { fetchWikipediaSummary, fetchWikipediaText, isListPage, searchWikipediaTitles } from '../api/wikipedia';
+import { titleKey } from '../api/titleKey';
 import { notifyLibraryChange } from './libraryEvents';
 import { log } from './logService';
 
@@ -70,13 +71,13 @@ Under "entities", list the people, places, organisations, books, films, televisi
 For each one give:
 - "surface": the words exactly as the transcript has them, copied character for character, at most six words. Where the transcript spells it several ways, use the first.
 - "canonical": what the thing is really called, spelled properly.
-- "type": one of person, place, organisation, book, film, tv, podcast, album, guest, host. An organisation is a newspaper, a magazine, a broadcaster or news network (CNN, the BBC, The New York Times), a university or school, a company, a government body, a charity, a party, a team — not a place, even when it is named after one. A podcast is a podcast, not television, even when it is only trailed. "host" is only the presenter or narrator of this series — the journalist whose programme it is; whoever presents another show that is trailed or advertised is a person. "guest" is someone the programme itself interviewed or recorded for this episode: an interviewee, a guest, a diplomat or relative speaking to the presenter. A public figure heard only in archive or news audio — a president's speech, a press conference — is a person, as is everyone the episode talks about. Each one once, under one type.
+- "type": one of person, place, organisation, book, film, tv, podcast, album, guest, host. An organisation is a newspaper, a magazine, a broadcaster, a television channel or network, a streaming service (CNN, the BBC, HBO, Comedy Central, Netflix, Hulu, Disney+, The New York Times), a university or school, a company, a government body, a charity, a party, a team — not a place, even when it is named after one. "tv" is one programme — a series, a show — never a channel, a network or a streaming service. A podcast is a podcast, not television, even when it is only trailed. "host" is only the presenter or narrator of this series — the journalist whose programme it is; whoever presents another show that is trailed or advertised is a person. "guest" is someone the programme itself interviewed or recorded for this episode: an interviewee, a guest, a diplomat or relative speaking to the presenter. A public figure heard only in archive or news audio — a president's speech, a press conference — is a person, as is everyone the episode talks about. Each one once, under one type.
 - "hint": what this episode says about it, in a few words — an author, a year, a director, a country, a role. This is what tells one thing of the same name from another, so write what would let a librarian pick the right one: "the 1965 Herbert novel", "the Roman emperor", "Villeneuve's adaptation".
 - "context": the transcript line it appears in, copied as written.
 
 Include what the speakers name and actually talk about — every person named with a first and last name, the relatives and ordinary people in the story as well as the famous. List the presenter as host and the people heard speaking as guest. Leave out the programme itself; a place named only to locate another place; a figure of speech; anything you cannot point to in the text. A recogniser misspelling belongs in "surface" with the true spelling in "canonical" — that pairing is the point of the list.
 
-At most ${cap} for this text, the ones a listener might want to look up. Cover every kind that appears — a programme or a record named once still belongs on the list — rather than listing more of one kind. Return an empty list when there is nothing worth listing.
+At most ${cap} for this text, the ones a listener might want to look up. Cover every kind that appears — a programme or a record named once still belongs on the list — rather than listing more of one kind. People and works come first: every person named with a first and last name, and every film, programme, book, podcast and record, before any organisation; when the list would run past ${cap}, leave out the companies, channels and services named in passing, never a person or a title. A name said in pieces ("Dane, I forget his last name, Glasgow") is listed under the last piece of it the transcript has, with the whole name in "canonical". Return an empty list when there is nothing worth listing.
 
 ${PHRASE_INSTRUCTIONS}`;
 
@@ -110,6 +111,23 @@ const locate = (rows, surface, canonical, context) => {
     return { heard, count: hit.count, firstMs: hit.firstMs };
 };
 
+// The words around a mention outrank the model's guess at its kind. A show
+// introduced as "the podcast Gone Medieval" is a podcast, however much it is
+// trailed like television (user: "gone medieval is a podcast a continues
+// match like a television"). A channel, a network or a streaming service is
+// an organisation: filed as television, "Hulu", "Comedy Central" and "CNN+"
+// went to the film catalogue as programmes and came back as some show of
+// that name (user: "why there are a lot of names that dont identify this
+// podcast") — the model's own hint said "streaming service" for every one.
+const PODCAST_WORD = /\bpodcasts?\b/i;
+const SERVICE_WORD = /\b(?:streaming (?:service|platform)|channel|network|broadcaster)\b/i;
+const PROGRAMME_WORD = /\b(?:series|show|programme|program|sitcom|drama|documentary|season|episode|miniseries|anthology)\b/i;
+export const kindFromHint = (type, hint = '', context = '') => {
+    if ((type === 'tv' || type === 'album') && PODCAST_WORD.test(`${hint} ${context}`)) return 'podcast';
+    if (type === 'tv' && SERVICE_WORD.test(hint) && !PROGRAMME_WORD.test(hint)) return 'organisation';
+    return type;
+};
+
 /** The mentions the transcript can vouch for, deduplicated. */
 const accept = (raw, rows) => {
     const kept = [];
@@ -123,12 +141,7 @@ const accept = (raw, rows) => {
         const where = locate(rows, surface, canonical, e.context);
         if (!where) continue;                       // not in the text: dropped
         seen.add(key);
-        // The words around a mention outrank the model's guess at its kind: a
-        // show introduced as "the podcast Gone Medieval" is a podcast, however
-        // much it is trailed like television (user: "gone medieval is a
-        // podcast a continues match like a television").
-        let type = e.type;
-        if ((type === 'tv' || type === 'album') && /\bpodcasts?\b/i.test(`${e.hint} ${e.context}`)) type = 'podcast';
+        const type = kindFromHint(e.type, e.hint, e.context);
         kept.push({
             type, surface: where.heard, canonical,
             hint: trim(e.hint, 200), context: trim(e.context, 400),
@@ -152,24 +165,66 @@ const HINT_STOP = new Set([
 const hintWords = (hint) => [...new Set(String(hint || '').toLowerCase().match(/[a-z]{4,}/g) || [])]
     .filter(w => !HINT_STOP.has(w));
 
+// Words a hint shares with half the people on Wikipedia: a role, a
+// nationality, a filler. "Universal Pictures executive" agreed with the
+// Virgin Galactic engineer Mike Moses on "executive" alone; what tells the
+// two apart is Universal. They count only when the hint has nothing else.
+const GENERIC = new Set([
+    'executive', 'executives', 'chief', 'officer', 'president', 'director', 'manager', 'founder',
+    'cofounder', 'chairman', 'partner', 'analyst', 'producer', 'actor', 'actress', 'actors', 'writer',
+    'author', 'journalist', 'reporter', 'editor', 'politician', 'businessman', 'businesswoman', 'star',
+    'starring', 'member', 'former', 'current', 'american', 'british', 'famous', 'other', 'another',
+    'credited', 'involved', 'reportedly', 'potential', 'possible', 'expected', 'title', 'named',
+    'company', 'person', 'people', 'role', 'playing', 'played', 'plays', 'portrayed', 'character',
+    'film', 'films', 'movie', 'movies', 'working', 'works', 'worked', 'head',
+]);
+const specificWords = (hint) => {
+    const words = hintWords(hint);
+    const specific = words.filter(w => !GENERIC.has(w));
+    return specific.length ? specific : words;
+};
+const stem = (w) => w.slice(0, Math.max(4, w.length - 2));
+
 /** True when the page looks like the thing the episode was talking about. */
 const agrees = (page, hint) => {
-    const words = hintWords(hint);
+    const words = specificWords(hint);
     if (!words.length) return true;                 // nothing to check it against
     const hay = `${page.description || ''} ${page.extract || ''}`.toLowerCase();
-    return words.some(w => hay.includes(w.slice(0, Math.max(4, w.length - 2))));
+    return words.some(w => hay.includes(stem(w)));
+};
+
+// Whether a person's whole article mentions what the hint says, when its
+// summary did not: Mikey Madison's summary predates The Social Reckoning,
+// her article does not. A page of exactly the right name is otherwise taken
+// on trust, and that is how "Hugh Johnston, Disney executive" became a New
+// Brunswick merchant of 1802. A whole article is long, so the words are
+// matched whole, a plural aside — not cut short as on a summary: "Universal"
+// cut to "univers" found Purdue University in the engineer Mike Moses's
+// article, and "town" must not be "hometown". With nothing specific in the
+// hint there is nothing to contradict the page — except for a guest or the
+// presenter, who is more often somebody's namesake than the famous one.
+const mentionsHint = async (page, hint, { speaker = false, signal } = {}) => {
+    const words = hintWords(hint).filter(w => !GENERIC.has(w));
+    if (!words.length) return !speaker;
+    const text = (await fetchWikipediaText(page.title, 'en', signal).catch(() => '')).toLowerCase();
+    return words.some(w => new RegExp(`\\b${w.replace(/s$/, '')}s?\\b`).test(text));
 };
 
 // What a page about a person, or a place, says about itself. "Stern" the
 // ship's back and "Mango" the fruit fail these; Naissus the city passes.
 const KIND_MARKERS = {
     person: /\b(emperor|empress|king|queen|prince|princess|pharaoh|caliph|sultan|tsar|shah|chief|duke|duchess|earl|count|countess|baron|baroness|lord|lady|knight|noble|nobleman|noblewoman|saint|bishop|archbishop|cardinal|pope|monk|nun|priest|priestess|abbot|rabbi|imam|prophet|apostle|martyr|preacher|theologian|missionary|god|goddess|deity|deities|divinity|mythology|mythological|legendary|hero|heroine|titan|nymph|politician|president|minister|senator|governor|mayor|chancellor|ambassador|diplomat|statesman|leader|ruler|founder|figure|activist|revolutionary|rebel|general|admiral|commander|officer|soldier|consul|caesar|tribune|actor|actress|comedian|presenter|broadcaster|host|journalist|author|writer|novelist|poet|playwright|historian|philosopher|scholar|scientist|physicist|chemist|biologist|mathematician|astronomer|economist|engineer|architect|inventor|explorer|painter|sculptor|artist|composer|musician|singer|rapper|dancer|footballer|cricketer|athlete|boxer|player|manager|coach|businessman|businesswoman|entrepreneur|executive|banker|lawyer|judge|physician|surgeon|doctor|teacher|professor|criminal|hacker|spy|born|died|\d{3,4}\s*[\u2013-]\s*(?:c\.\s*)?\d{3,4})\b/i,
-    organisation: /\b(newspaper|magazine|journal|periodical|tabloid|publication|publisher|publishing|news|broadcaster|broadcasting|network|channel|station|radio|television|media|agency|university|college|school|institute|institution|academy|faculty|company|corporation|conglomerate|firm|business|brand|manufacturer|retailer|bank|multinational|subsidiary|startup|organi[sz]ation|organi[sz]ed|charity|foundation|nonprofit|non-profit|society|association|federation|union|council|committee|commission|parliament|congress|government|ministry|department|agency|bureau|office|service|authority|court|police|army|navy|force|party|movement|group|team|club|league|museum|gallery|library|hospital|laboratory|think tank|founded|headquartered)\b/i,
+    organisation: /\b(newspaper|magazine|journal|periodical|tabloid|publication|publisher|publishing|news|broadcaster|broadcasting|network|channel|station|radio|television|streaming|platform|media|agency|university|college|school|institute|institution|academy|faculty|company|corporation|conglomerate|firm|business|brand|manufacturer|retailer|bank|multinational|subsidiary|startup|organi[sz]ation|organi[sz]ed|charity|foundation|nonprofit|non-profit|society|association|federation|union|council|committee|commission|parliament|congress|government|ministry|department|agency|bureau|office|service|authority|court|police|army|navy|force|party|movement|group|team|club|league|museum|gallery|library|hospital|laboratory|think tank|founded|headquartered)\b/i,
     place: /\b(city|town|village|capital|country|region|province|county|state|island|river|bridge|mountain|lake|sea|district|municipality|settlement|kingdom|empire|colony|site|ruins|castle|cathedral|church|palace|square|street)\b/i,
 };
 // A presenter or a guest is described as a person is.
 KIND_MARKERS.host = KIND_MARKERS.person;
 KIND_MARKERS.guest = KIND_MARKERS.person;
+// A film or a programme asked of Wikipedia (no TMDB key, or TMDB had no
+// title of that name) has to be one: "Steve Jobs", Danny Boyle's film,
+// otherwise came back as the man.
+KIND_MARKERS.film = /\b(film|films|movie|documentary|animated|motion picture)\b/i;
+KIND_MARKERS.tv = /\b(television|tv|series|sitcom|programme|program|show|serial|soap opera|miniseries|documentary)\b/i;
 const looksLike = (page, type) => {
     const re = KIND_MARKERS[type];
     return !re || re.test(`${page.description || ''} ${String(page.extract || '').slice(0, 400)}`);
@@ -219,7 +274,11 @@ const fromWikipedia = async (entity, signal) => {
     const tried = new Set([entity.canonical.toLowerCase()]);
     for (const query of queries) {
         if (page) break;
-        const titles = await searchWikipediaTitles(query, { limit: 5, signal }).catch(() => []);
+        const found = await searchWikipediaTitles(query, { limit: 5, signal }).catch(() => []);
+        // A hit of exactly the name is tried before one that only shares
+        // part of it: "Steve Jobs (film)" before "Jobs (film)", which the
+        // containment test below would take for the 2015 film.
+        const titles = [...found.filter(t => bareTitle(t) === wanted), ...found.filter(t => bareTitle(t) !== wanted)];
         for (const title of titles) {
             if (tried.has(String(title).toLowerCase())) continue;
             tried.add(String(title).toLowerCase());
@@ -235,14 +294,17 @@ const fromWikipedia = async (entity, signal) => {
     }
 
     // Failing both, the exact article stands on its own when it is plainly
-    // the right kind of thing — a city is a city whatever the hint said, and
-    // a person talked about is usually the famous one. Not a guest or the
-    // presenter: they are more often somebody's namesake, and "Josh Baker,
-    // presenter of the series" is not the American football player.
+    // the right kind of thing — a city is a city whatever the hint said. A
+    // person's has to mention, somewhere in the article, what the hint says
+    // about them (mentionsHint): a page of the right name is otherwise
+    // somebody's namesake as often as not. A guest or the presenter needs
+    // that mention even when the hint is only a role — "Josh Baker, presenter
+    // of the series" is not the American football player — and Matt Belloni,
+    // "host of The Town", is found by the article saying so.
     // Nor a first name alone: "Sarah" in the episode is not the Biblical one.
     const speaker = entity.type === 'guest' || entity.type === 'host';
     const oneName = person && !/\s/.test(entity.canonical.trim());
-    if (!page && exact && !oneName && !(speaker && hintWords(entity.hint).length)) page = exact;
+    if (!page && exact && !oneName && (!person || await mentionsHint(exact, entity.hint, { speaker, signal }))) page = exact;
     if (!page) return null;
     return {
         source: 'wikipedia',
@@ -308,10 +370,20 @@ const fromITunes = async (entity, kind, signal) => {
         ? `${entity.canonical} ${entity.hint.split(/[,;(]/)[0]}`.trim()
         : entity.canonical;
     const apple = APPLE_ENTITY[kind];
+    // Only a hit with the name asked for, its season or edition aside — not
+    // Apple's first hit whatever it is: "MTV" is not "MTV Cribs". A podcast's
+    // title may carry its network after the name ("Gone Medieval | History Hit").
+    const wanted = titleKey(entity.canonical);
+    const named = (h) => {
+        const got = titleKey(String(h.title)
+            .replace(/,\s*(?:season|series|vol\.?|volume)\s*\d+.*$/i, '')
+            .replace(/\s+-\s+(?:single|ep)$/i, ''));
+        return got === wanted || (kind === 'podcast' && got.startsWith(`${wanted} `));
+    };
     let best = null;
     for (const country of ['GB', 'US']) {           // the podcasts are mostly British
         const hits = await searchITunes(term, apple, { country, signal }).catch(() => []);
-        best = hits.find(h => h.title.toLowerCase().startsWith(entity.canonical.toLowerCase().slice(0, 12))) || hits[0];
+        best = hits.find(named) || null;
         if (best) break;
     }
     if (!best) return null;

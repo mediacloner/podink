@@ -10,6 +10,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { USER_AGENT } from './userAgent';
+import { sameTitle } from './titleKey';
 
 export const TMDB_KEY_KEY = '@tmdb_api_key';
 const BASE = 'https://api.themoviedb.org/3';
@@ -48,7 +49,11 @@ export const searchTmdb = async (kind, title, { year = null, apiKey = null, sign
         + `&query=${encodeURIComponent(q)}&include_adult=false`
         + (year ? `&${dated}=${year}` : '');
     const data = await getJson(url, signal);
-    const hit = Array.isArray(data?.results) ? data.results[0] : null;
+    // The first result whose title is the one asked for — never just the
+    // first: a channel the episode named came back as some programme sharing
+    // its name ("Hulu" · 2026, "CNN+" · 1980).
+    const hit = (Array.isArray(data?.results) ? data.results : []).find(r =>
+        sameTitle(r.title || r.name, q) || sameTitle(r.original_title || r.original_name, q));
     if (!hit) return null;
     const ids = await getJson(`${BASE}/${kind}/${hit.id}/external_ids?api_key=${encodeURIComponent(key)}`, signal);
     const released = String(hit.release_date || hit.first_air_date || '');
