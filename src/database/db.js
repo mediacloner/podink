@@ -601,3 +601,18 @@ export const initDB = async () => {
 
     return db;
 };
+
+/**
+ * A copy of the whole database at [path], for a bug report (5.8.1). VACUUM
+ * INTO writes one consistent file with the WAL folded in, on a connection of
+ * its own, so a transaction the app has open does not refuse it and the app
+ * keeps writing to the live file meanwhile. The file must not exist yet.
+ */
+export const snapshotDatabase = async (path) => {
+    const db = await SQLite.openDatabaseAsync('Podink.db', { useNewConnection: true });
+    try {
+        await db.execAsync(`VACUUM INTO '${String(path).replace(/'/g, "''")}';`);
+    } finally {
+        await db.closeAsync().catch(() => {});
+    }
+};

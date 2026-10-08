@@ -2,6 +2,9 @@
 
 ## [5.8.1] - 2026-10-08
 
+### Added
+- **Export the database from Settings.** A release build cannot be read over adb, so what the tag pass stored for an episode — or anything else in the library — could only be guessed at from the screen (user: “We are goint to create a release that can export db, with exportation you can check this”). *Settings → Debug → Export database* writes a consistent copy (SQLite `VACUUM INTO`, on a connection of its own, the WAL folded in) and files it in Downloads as `podink-<date>-<time>.db`, where Files can share it and `adb pull /sdcard/Download/…` reaches it. It holds the library, transcripts, tags, notes and statistics; the API keys live elsewhere and stay out of it (`db.snapshotDatabase`, `AudioImportModule.saveToDownloads`).
+
 ## [5.8.0] - 2026-09-25
 
 ### Added
