@@ -41,6 +41,7 @@ Android · React Native 0.83 · Expo 55 · current version **5.8.0** (versionCod
 - Long sentences are split into paragraphs of up to about 50 words when the transcript is displayed, so no re-transcription is needed.
 - Transcript gestures:
   - **Tap** a sentence to translate it.
+  - **Tap** a bold name, book or idiom to open its card.
   - **Slide** a sentence either way to play from it.
   - **Hold** a word near the playing sentence to open its card: the dictionary, or the name, book or idiom it belongs to.
 - Dividers in the text are the episode's chapters when it has them, or a marker every 10 minutes when it doesn't.
