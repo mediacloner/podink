@@ -36,6 +36,7 @@ import NotebookScreen from './screens/NotebookScreen';
 import StatsScreen from './screens/StatsScreen';
 import MiniPlayer from './components/MiniPlayer';
 import FinishedEpisodePrompt from './components/FinishedEpisodePrompt';
+import EpisodeActionsSheet from './components/EpisodeActionsSheet';
 import SettingsGearButton from './components/SettingsGearButton';
 import CollectionScreen from './screens/CollectionScreen';
 import CollectionEditorScreen from './screens/CollectionEditorScreen';
@@ -292,6 +293,7 @@ const AppRoot = () => {
             {statusBar}
             <AppAlert />
             <FinishedEpisodePrompt />
+            <EpisodeActionsSheet />
             <NavigationContainer theme={navTheme} ref={navRef} onReady={flushPendingShare}>
                 <Stack.Navigator screenOptions={{ headerShown: false }}>
                     <Stack.Screen

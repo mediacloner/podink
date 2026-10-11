@@ -6,6 +6,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import Pill from './Pill';
 import ShowNotes from './ShowNotes';
+import { showEpisodeActions } from './EpisodeActionsSheet';
 import { type, useStyles, useTheme } from '../theme';
 import { onTranscriptProgress, getLastProgress } from '../services/whisperService';
 import { isEnriching, onEnrichmentChange } from '../services/enrichment';
@@ -136,15 +137,25 @@ const EpisodeItem = ({
         : durationSec > 0 ? `${formatDuration(Math.max(0, durationSec - episode.play_position))} left`
         : 'In progress';
 
+    // Held, the row opens everything it can do (EpisodeActionsSheet) — with
+    // this row's own handlers, so an action there acts as it does here.
+    const openActions = () => showEpisodeActions(episode, {
+        onOpen: onPress, onDownload, onTranscribe, onCancel, onDelete, onMarkSeen, onSync, onRematch,
+        isDownloading, downloadProgress, isSyncing, durationLabel, progressLabel,
+    });
+
     return (
         <View style={[styles.card, cardStyle]}>
             {/* Main row: tap = open player, or expand the description when
-                expandOnPress (Feed) — playback then goes through the Play pill */}
+                expandOnPress (Feed) — playback then goes through the Play
+                pill; hold = the actions sheet */}
             <TouchableOpacity
                 onPress={expandOnPress ? toggleExpand : () => onPress(episode)}
+                onLongPress={openActions}
                 activeOpacity={0.7}
                 style={styles.row}
                 accessibilityRole="button"
+                accessibilityHint="Hold for everything you can do with it"
                 accessibilityLabel={(expandOnPress
                     ? `${expanded ? 'Hide' : 'Show'} details for ${episode.title}`
                     : `Open ${episode.title}`)
