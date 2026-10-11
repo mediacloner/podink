@@ -1742,8 +1742,11 @@ const Chunk = React.memo(({
 
     // A tap anywhere on the sentence translates it — on its words too, where
     // a tap used to define the word; holding a word opens its card instead
-    // (Word's onLongPress). No double tap any more, so the tap answers at
-    // once instead of waiting to see whether a second one follows.
+    // (Word's onLongPress). A bold mark — a name, a book, an idiom — opens
+    // its card on a tap as well (user, 2026-10-11: "when click on bold letter
+    // in transcription have to show the specific info of this text"). No
+    // double tap any more, so the tap answers at once instead of waiting to
+    // see whether a second one follows.
     const handleTranslate = useCallback(() => onTranslate(text, chunkIndex), [onTranslate, text, chunkIndex]);
 
     // ── Slide either way → play on from here ─────────────────────────────────
@@ -1839,9 +1842,10 @@ const Chunk = React.memo(({
 
     if (isWordLevel) {
         // Word-by-word reading region (active ± 1): holding a word opens its
-        // card, a tap on it translates the sentence. The parent Text has NO
-        // press handlers at all — a parent Text that owns a press claims the
-        // touch responder for the whole block, starving the per-word handlers.
+        // card, a tap on it translates the sentence — or, on a bold mark,
+        // opens the mark's card. The parent Text has NO press handlers at
+        // all — a parent Text that owns a press claims the touch responder
+        // for the whole block, starving the per-word handlers.
         // So the presses live on the words, and the Pressable around the Text
         // takes what falls between them — a gap, a line end — so a tap
         // anywhere on the sentence translates it, as on the other sentences.
@@ -1889,10 +1893,11 @@ const Chunk = React.memo(({
             style={({ pressed }) => [styles.sentenceWrap, pressed && styles.pressedChunk]}
         >
             {runs ? (
-                // A title is its own span: bold, and holding it opens the
-                // book, name or idiom card. A nested Text with a press takes
-                // the touch, so the span translates on a tap as well — as the
-                // Pressable around it does everywhere else.
+                // A title is its own span: bold, and a tap or a hold opens
+                // the book, name or idiom card. A nested Text with a press
+                // takes the touch, so a span that is not bold — a phrasal
+                // verb, or any mark with bold marks off — translates on a tap,
+                // as the Pressable around it does everywhere else.
                 <Text style={baseStyle}>
                     {runs.map((run, i) => {
                         const text = i === 0 ? run.text.replace(/^\s+/, '') : run.text;
@@ -1901,13 +1906,15 @@ const Chunk = React.memo(({
                         // span, so the underline ends with the last letter.
                         const m = /^([\s\S]*?)(\s*)$/.exec(text);
                         if (!run.bookId) {
+                            const openPhrase = () => onPhrasePress(run.phrase, run.startMs, chunkIndex);
+                            const boldIdiom = boldMarks && isIdiomMark(run.phrase);
                             return (
                                 <Text key={run.key}>
                                     <Text
                                         style={isIdiomMark(run.phrase) ? (boldMarks ? [styles.idiomRun, !isPast && styles.markFuture] : null) : styles.phrasalRun}
                                         suppressHighlighting
-                                        onPress={handleTranslate}
-                                        onLongPress={() => onPhrasePress(run.phrase, run.startMs, chunkIndex)}
+                                        onPress={boldIdiom ? openPhrase : handleTranslate}
+                                        onLongPress={openPhrase}
                                     >
                                         {m ? m[1] : text}
                                     </Text>
@@ -1915,13 +1922,14 @@ const Chunk = React.memo(({
                                 </Text>
                             );
                         }
+                        const openBook = () => onBookPress(run.bookId, run.startMs);
                         return (
                             <Text key={run.key}>
                                 <Text
                                     style={boldMarks ? [isNameMark(run.bookId) ? styles.nameTitle : styles.bookTitle, !isPast && styles.markFuture] : null}
                                     suppressHighlighting
-                                    onPress={handleTranslate}
-                                    onLongPress={() => onBookPress(run.bookId, run.startMs)}
+                                    onPress={boldMarks ? openBook : handleTranslate}
+                                    onLongPress={openBook}
                                 >
                                     {m ? m[1] : text}
                                 </Text>
@@ -2007,7 +2015,8 @@ const Word = React.memo(({
         return m ? [m[1], m[2], m[3]] : ['', word.text, ''];
     }, [word.text]);
 
-    // Held, a word opens its card (a tap translates the sentence — onPress).
+    // Held, a word opens its card; a tap translates the sentence (onPress),
+    // except on a bold word, where the tap opens the card too.
     // A word of a book title opens the book card, not the dictionary.
     // A word of a phrase opens the phrase — the dictionary form of a phrasal
     // verb, or the idiom's card — whichever of its words was held.
@@ -2027,7 +2036,7 @@ const Word = React.memo(({
         <Text
             selectable={false}
             suppressHighlighting
-            onPress={onPress}
+            onPress={bold ? handleLongPress : onPress}
             onLongPress={handleLongPress}
         >
             {lead}

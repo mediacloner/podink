@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **A tap on bold text opens its card again.** Since 5.8.1 a tap anywhere on a sentence translated it, bold words included, so a name, a book or an idiom only showed its card if you held it (user: “when click on bold letter in transcription have to show the specific info of this text”). A tap on a bold mark now opens its card — the name's, the book's or the idiom's — in every sentence, not only the ones around the playing sentence. A tap anywhere else still translates the sentence, a phrasal verb (underlined, not bold) still translates on a tap and opens on a hold, and with bold marks turned off a tap translates as before, since there is nothing to see (`TranscriptHighlighter.Chunk`, `Word`).
+
 ## [5.8.1] - 2026-10-08
 
 ### Added
