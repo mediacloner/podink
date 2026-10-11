@@ -15,6 +15,7 @@ Android · React Native 0.83 · Expo 55 · current version **5.8.0** (versionCod
 - **Show notes** are shown as formatted text (paragraphs, lists, links) rather than raw feed HTML. An unfolded row shows the episode's full title.
 - **Episode rows** show the length, a "23 min left" tag and progress bar for started episodes, and a *Played* check for finished ones.
 - **Swipe actions on every list:** remove the transcript, delete the download, mark Done / Unplayed.
+- **Hold an episode** for all of its actions in one sheet — including *Back to Downloaded* for an episode in progress.
 - **Stream or download.** A download queues its transcription as soon as the file arrives. Downloads that come back as an error page, aren't audio, or are under 16 KB are refused.
 - Notifications for new episodes, plus a red dot on the tab.
 

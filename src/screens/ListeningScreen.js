@@ -28,6 +28,9 @@ import { useStyles, useTheme } from '../theme';
 // the row leaves the Downloaded segment, stays in the other two) or Download
 // on the others — which also queues the transcript, so a Finished episode
 // whose download was deleted can be read along again from right here.
+// Holding a row opens all of it at once (EpisodeActionsSheet), and one thing
+// no swipe does: an In progress episode goes Back to Downloaded, as if never
+// played.
 const FILTERS = [
     { id: 'downloaded',  label: 'Downloaded' },
     { id: 'in-progress', label: 'In progress' },
@@ -102,9 +105,13 @@ const ListeningRow = React.memo(({
     }
     return (
         <SwipeableRow leftAction={leftAction} rightAction={rightAction}>
+            {/* No pills here (hideActions), but the hold sheet uses these:
+                a download from it shows its percent on this row. */}
             <EpisodeItem
                 episode={episode}
                 onPress={onOpen}
+                onDownload={onDownload}
+                onDelete={onDelete}
                 showArtwork
                 hideActions
                 isDownloading={isDownloading}
