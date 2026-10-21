@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [5.9.0] - 2026-10-21
 
 ### Added
 - **Hold an episode for everything it can do.** Holding an episode row — in the Feed, My Podcasts, the Library, Listening, a podcast's episode list or a collection — brings up a sheet with what applies to it as it stands (user: “when you click in a podcast for a long time open a section, with all options that can do, delete transcription, remove etc”): Play or Resume, Download, Transcribe or stop it, Match voice for a book chapter, Mark as played or unplayed, Clear the new mark, Remove transcript, Delete download. Each line says what it takes with it, and the actions behave as they do from the row — a download started there shows its percent on the row. And one thing no swipe did: an episode **In progress** goes **Back to Downloaded**, as if never played — position back to the start, the player stopped if it was playing it (user: “that can return to downloaded section and reset when i'm in progress”). A streamed episode or an audiobook chapter, which Downloaded does not list, gets *Start over* instead. Tapping and swiping a row work as before (`EpisodeActionsSheet`, `EpisodeItem`).

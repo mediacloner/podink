@@ -2,7 +2,7 @@
 
 A podcast and audiobook player for learning English by listening. Every episode gets an on-device transcript that follows the audio word by word; any sentence can be translated, any word looked up in offline dictionaries, and an optional OpenAI assistant writes summaries, chapters and cards for the people, books, films and idioms an episode mentions.
 
-Android · React Native 0.83 · Expo 55 · current version **5.8.0** (versionCode 33). See [CHANGELOG.md](CHANGELOG.md) for the full history.
+Android · React Native 0.83 · Expo 55 · current version **5.9.0** (versionCode 35). See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ---
 
