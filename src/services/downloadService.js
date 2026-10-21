@@ -5,53 +5,25 @@ import { USER_AGENT } from '../api/userAgent';
 
 // ─── Sherpa-ONNX model registry ──────────────────────────────────────────────
 
-// Two-tier lineup, both NVIDIA Parakeet (CC BY 4.0), both distributed only as
-// GitHub release tarballs from the sherpa-onnx model zoo (hence `archive`; the
-// csukuangfj HF int8 repos are empty placeholders).
-//   parakeet_110m_en         default / fast — hybrid TDT-CTC 110M, CTC head
-//   parakeet_tdt_0_6b_v2_en  high accuracy  — TDT 0.6B v2 transducer
-// Whisper Tiny and SenseVoice were retired in 2.1.0 (see cleanupOldWhisperModels).
+// One model, NVIDIA Parakeet TDT 0.6B v2 (CC BY 4.0), distributed only as a
+// GitHub release tarball from the sherpa-onnx model zoo (hence `archive`; the
+// csukuangfj HF int8 repos are empty placeholders). The fast Parakeet 110M
+// (CTC head), the default until 5.8.1, is retired: it made more mistakes and
+// broke sentences worse. Whisper Tiny and SenseVoice were retired in 2.1.0
+// (see cleanupOldWhisperModels, which also reclaims the 110M's folder).
 export const SHERPA_MODELS = {
-    parakeet_110m_en: {
-        // NVIDIA FastConformer hybrid TDT-CTC 110M (CTC head), official int8
-        // export. ~7.5% mean WER on the HF Open ASR leaderboard, native
-        // punctuation and capitalization. CTC frame alignments provide the
-        // per-token timestamps for word-level sync. CTC decoding is
-        // non-autoregressive, so Whisper-style repetition loops on
-        // music/silence/ad reads structurally cannot happen.
-        label: 'Parakeet 110M',
-        desc: 'English · fast · NVIDIA Parakeet (CC BY 4.0)',
-        folder: 'sherpa-nemo-parakeet-tdt-ctc-110m-en-int8',
-        modelType: 'nemo_ctc',
-        modelFiles: {
-            model: 'model.int8.onnx',
-        },
-        files: [
-            'model.int8.onnx',
-            'tokens.txt',
-        ],
-        archive: {
-            url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2',
-            // Tar entries are prefixed with this folder; the needed files are
-            // moved up into `folder` after extraction and the rest is dropped.
-            rootDir: 'sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8',
-        },
-        downloadSizeMB: 99,
-        totalSizeMB: 126,
-        recommended: true,
-    },
     parakeet_tdt_0_6b_v2_en: {
         // NVIDIA Parakeet TDT 0.6B v2 (FastConformer encoder + TDT transducer),
-        // official int8 export. 6.05% mean WER vs ~7.5% for the 110M: the
-        // transducer's prediction net conditions on the text emitted so far
+        // official int8 export. 6.05% mean WER vs ~7.5% for the retired 110M:
+        // the transducer's prediction net conditions on the text emitted so far
         // (better spelling / casing / punctuation) and TDT duration prediction
         // skips silence, so it is loop-free too. Per-token timestamps come from
-        // the TDT greedy decoder (80 ms frames, same as the CTC model).
+        // the TDT greedy decoder (80 ms frames).
         // Cost: ~5x the 110M's encoder compute on CPU, ~630 MB on disk,
         // ~1.1 GB peak during install (tarball + extracted tree coexist).
         // Requires modelType 'nemo_transducer' — see the ASRHandler.kt patch.
         label: 'Parakeet 0.6B v2',
-        desc: 'English · high accuracy · slower · NVIDIA Parakeet (CC BY 4.0)',
+        desc: 'English · high accuracy · NVIDIA Parakeet (CC BY 4.0)',
         folder: 'sherpa-nemo-parakeet-tdt-0.6b-v2-int8',
         modelType: 'nemo_transducer',
         modelFiles: {
@@ -71,6 +43,7 @@ export const SHERPA_MODELS = {
         },
         downloadSizeMB: 460,
         totalSizeMB: 630,
+        recommended: true,
     },
 };
 
@@ -364,5 +337,7 @@ export const cleanupOldWhisperModels = async () => {
         // favour of the two-tier Parakeet lineup — reclaim their 100-230 MB.
         await FileSystem.deleteAsync(`${docDir}sherpa-whisper-tiny-attention-int8`, { idempotent: true });
         await FileSystem.deleteAsync(`${docDir}sherpa-sensevoice-small-int8`, { idempotent: true });
+        // The fast Parakeet 110M (CTC head) is retired after 5.8.1 — reclaim its 126 MB.
+        await FileSystem.deleteAsync(`${docDir}sherpa-nemo-parakeet-tdt-ctc-110m-en-int8`, { idempotent: true });
     } catch (_) {}
 };

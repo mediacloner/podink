@@ -28,11 +28,10 @@ import { useTheme, useStyles, withAlpha, type, THEMES, THEME_OPTIONS } from '../
 
 // Learning-focused copy overrides for the model picker.
 const MODEL_COPY = {
-    parakeet_110m_en: 'Default · fast · punctuation · word-by-word highlighting · NVIDIA Parakeet 110M (CC BY 4.0)',
-    parakeet_tdt_0_6b_v2_en: 'High accuracy · ~5× slower · 460 MB download, ~630 MB installed · NVIDIA Parakeet TDT 0.6B v2 (CC BY 4.0)',
+    parakeet_tdt_0_6b_v2_en: 'High accuracy · punctuation · word-by-word highlighting · 460 MB download, ~630 MB installed · NVIDIA Parakeet TDT 0.6B v2 (CC BY 4.0)',
 };
 
-const DEFAULT_MODEL_KEY = SHERPA_MODELS.parakeet_110m_en ? 'parakeet_110m_en' : Object.keys(SHERPA_MODELS)[0];
+const DEFAULT_MODEL_KEY = SHERPA_MODELS.parakeet_tdt_0_6b_v2_en ? 'parakeet_tdt_0_6b_v2_en' : Object.keys(SHERPA_MODELS)[0];
 
 const MODELS = Object.entries(SHERPA_MODELS).map(([id, m]) => ({
     id,

@@ -32,7 +32,7 @@ Android · React Native 0.83 · Expo 55 · current version **5.9.0** (versionCod
 - **Skip ad:** the assistant finds sponsor reads, inserted commercials and trailers for other shows. A *Skip ad* button appears while one plays, and ads are marked in the transcript.
 
 ### On-device transcription
-- Transcription runs fully offline with sherpa-onnx and NVIDIA Parakeet: **Parakeet 110M** (default, fast, 99 MB) or **Parakeet TDT 0.6B v2** (more accurate, 460 MB download / ~630 MB installed). Both add punctuation and capitals.
+- Transcription runs fully offline with sherpa-onnx and NVIDIA **Parakeet TDT 0.6B v2** (460 MB download / ~630 MB installed), which adds punctuation and capitals. The faster Parakeet 110M was dropped after 5.8.1: it made more mistakes and broke sentences worse.
 - Episodes are transcribed one at a time in a queue in a foreground service, with progress per episode. Jobs can be cancelled, and a watchdog stops hung jobs. The model is unloaded from memory when nothing is transcribing.
 - Free space is checked before a model download.
 - **Enriching…:** after the transcript, the episode shows *Enriching…* while punctuation repair, the summary, names, books and tags finish.

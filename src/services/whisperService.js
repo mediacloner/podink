@@ -3,7 +3,7 @@
  *
  * Architecture:
  *   - Single worker processes one item at a time from the queue
- *   - STT engine via @siteed/sherpa-onnx.rn (NVIDIA Parakeet 110M CTC / 0.6B TDT)
+ *   - STT engine via @siteed/sherpa-onnx.rn (NVIDIA Parakeet TDT 0.6B v2)
  *   - Streaming: native emits one 'SherpaAsrWindowResult' event per ~29s
  *     window; each window is deduped, saved incrementally, and broadcast as
  *     progress (onProgress / onTranscriptProgress / libraryEvents)
@@ -50,11 +50,10 @@ const DEFAULT_TIMEOUT_MS    = 10 * 60 * 1000; // 10 minutes for short/unknown ep
 const MIN_AUDIO_SIZE        = 4096;             // 4 KB minimum
 const LARGE_FILE_BYTES      = 50 * 1024 * 1024; // 50 MB — assume long episode when duration unknown
 const MIN_FREE_DISK_BYTES   = 200 * 1024 * 1024; // 200 MB free required before transcription
-// Parakeet TDT-CTC 110M (CTC head) is the fast default; the 0.6B v2 TDT
-// transducer is the opt-in "high accuracy" tier (Settings). Both are loop-free,
-// punctuated, and emit per-token timestamps for word-level sync.
-// Users with an explicit '@whisper_model' choice keep it (checked below).
-const DEFAULT_MODEL_KEY     = 'parakeet_110m_en';
+// Parakeet TDT 0.6B v2 is the only model after 5.8.1 (the fast 110M was
+// retired): loop-free, punctuated, per-token timestamps for word-level sync.
+// A saved '@whisper_model' naming a retired model is moved onto it (below).
+const DEFAULT_MODEL_KEY     = 'parakeet_tdt_0_6b_v2_en';
 
 /** Compute per-job timeout from episode duration (or file size as fallback). */
 const _computeTimeoutMs = (durationSec, fileSizeBytes = 0) => {
@@ -385,7 +384,7 @@ const dropSeamDuplicate = (segs, tail, ev) => {
 };
 
 // ─── No hallucination filter ─────────────────────────────────────────────────
-// Both Parakeet decoders (CTC 110M, TDT 0.6B) advance monotonically through the
+// Parakeet's TDT decoder (and the retired 110M's CTC) advances monotonically through the
 // audio frames and structurally cannot fall into the repetition loops Whisper's
 // autoregressive decoder produced on music/silence. The Whisper-era n-gram
 // scrubber (dedupeHallucinations / dedupeWordLevel) was removed with Whisper
