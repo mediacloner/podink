@@ -3,7 +3,7 @@
  *
  * Architecture:
  *   - Single worker processes one item at a time from the queue
- *   - STT engine via @siteed/sherpa-onnx.rn (NVIDIA Parakeet 110M CTC / 0.6B TDT)
+ *   - STT engine via @siteed/sherpa-onnx.rn (NVIDIA Parakeet TDT 0.6B v2)
  *   - Streaming: native emits one 'SherpaAsrWindowResult' event per ~29s
  *     window; each window is deduped, saved incrementally, and broadcast as
  *     progress (onProgress / onTranscriptProgress / libraryEvents)
@@ -39,7 +39,7 @@ import {
 import { notifyLibraryChange } from './libraryEvents';
 import { indexEpisodeBooks } from './bookIndex';
 import { indexEpisodeNames } from './nameIndex';
-import { analyzeIfAuto } from './aiService';
+import { analyzeAfterTranscription } from './aiService';
 import { askEntities, tagIfAuto, willTagAuto } from './entityIndex';
 import { whileEnriching } from './enrichment';
 import { log } from './logService';
@@ -50,11 +50,10 @@ const DEFAULT_TIMEOUT_MS    = 10 * 60 * 1000; // 10 minutes for short/unknown ep
 const MIN_AUDIO_SIZE        = 4096;             // 4 KB minimum
 const LARGE_FILE_BYTES      = 50 * 1024 * 1024; // 50 MB — assume long episode when duration unknown
 const MIN_FREE_DISK_BYTES   = 200 * 1024 * 1024; // 200 MB free required before transcription
-// Parakeet TDT-CTC 110M (CTC head) is the fast default; the 0.6B v2 TDT
-// transducer is the opt-in "high accuracy" tier (Settings). Both are loop-free,
-// punctuated, and emit per-token timestamps for word-level sync.
-// Users with an explicit '@whisper_model' choice keep it (checked below).
-const DEFAULT_MODEL_KEY     = 'parakeet_110m_en';
+// Parakeet TDT 0.6B v2 is the only model after 5.8.1 (the fast 110M was
+// retired): loop-free, punctuated, per-token timestamps for word-level sync.
+// A saved '@whisper_model' naming a retired model is moved onto it (below).
+const DEFAULT_MODEL_KEY     = 'parakeet_tdt_0_6b_v2_en';
 
 /** Compute per-job timeout from episode duration (or file size as fallback). */
 const _computeTimeoutMs = (durationSec, fileSizeBytes = 0) => {
@@ -385,7 +384,7 @@ const dropSeamDuplicate = (segs, tail, ev) => {
 };
 
 // ─── No hallucination filter ─────────────────────────────────────────────────
-// Both Parakeet decoders (CTC 110M, TDT 0.6B) advance monotonically through the
+// Parakeet's TDT decoder (and the retired 110M's CTC) advances monotonically through the
 // audio frames and structurally cannot fall into the repetition loops Whisper's
 // autoregressive decoder produced on music/silence. The Whisper-era n-gram
 // scrubber (dedupeHallucinations / dedupeWordLevel) was removed with Whisper
@@ -572,6 +571,7 @@ const _process = async (entry) => {
         // Saves are serialized through a promise chain so windows commit in
         // order; stale events (other jobs, post-abort) are dropped by jobId.
         let windowsReceived = 0;
+        let secondLookWords = 0;   // words the native second look put back (SECOND_LOOK_* in ASRHandler.kt)
         let hasWordTiming = true;
         let lastNotifAt = Date.now();
         let saveChain = Promise.resolve();
@@ -581,6 +581,7 @@ const _process = async (entry) => {
         windowSub = DeviceEventEmitter.addListener(WINDOW_EVENT, (ev) => {
             if (!ev || ev.jobId !== jobId || myAbort.current) return;
             windowsReceived += 1;
+            secondLookWords += ev.secondLookWords || 0;
             if (ev.text?.trim() && !ev.segments?.length) hasWordTiming = false;
             _lastProgressAt = Date.now();
             const segs = dropSeamDuplicate(_windowToSegments(ev), seamTail, ev);
@@ -635,8 +636,11 @@ const _process = async (entry) => {
             myAbort.resolve = resolve;
         });
 
+        // secondLook: speech-level pauses inside a window are decoded again, which
+        // brings back the stretches Parakeet's decoder now and then jumps over.
+        // Not for a book's own text being timed (alignMode): only times count there.
         const recognize = hasOptionsApi
-            ? SherpaNative.recognizeFromFileWithOptions(nativePath, { startMs: resumeMs, jobId, emitWindowEvents: true })
+            ? SherpaNative.recognizeFromFileWithOptions(nativePath, { startMs: resumeMs, jobId, emitWindowEvents: true, secondLook: !alignMode })
             : ASR.recognizeFromFile(nativePath);
 
         // Attach a no-op rejection handler to the losing recognize promise: when
@@ -723,12 +727,12 @@ const _process = async (entry) => {
         _startFg('Transcribing podcasts', 'Complete!', 0);
         // Books the episode talks about: scanned from the finished text
         // (force — a continued transcript has more text than its last scan).
-        // The episode assistant first, when the listener switched it on
-        // (aiService): its corrections change the names the book-and-people
-        // scan has to match, so that scan waits and aiService starts it once
-        // the corrections are written. analyzeIfAuto resolves null when the
-        // switch is off, there is no key, or the request failed — then the
-        // scan runs here instead, on the transcript as recognised.
+        // The episode assistant first, whenever there is a key (aiService):
+        // its corrections change the names the book-and-people scan has to
+        // match, so that scan waits and aiService starts it once the
+        // corrections are written. analyzeAfterTranscription resolves null
+        // when there is no key or the request failed — then the scan runs
+        // here instead, on the transcript as recognised.
         // Where the tag pass follows (the switch on, a key saved), it brings the
         // books itself, author and all — the title scan stands aside, and only
         // the names pass, which the scan would have run first, still goes
@@ -750,11 +754,11 @@ const _process = async (entry) => {
             // Book text needs no assistant pass (nothing was misheard); the books
             // it mentions are still worth finding.
             if (alignMode) return scanBooks().then(() => tag(null));
-            return analyzeIfAuto(entry.id, { alongside: willTag ? askEntities : null })
+            return analyzeAfterTranscription(entry.id, { alongside: willTag ? askEntities : null })
                 .then(async (done) => { if (!done) await scanBooks(); return tag(done); }, () => scanBooks().then(() => tag(null)));
         }).catch(() => {});
 
-        log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length });
+        log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length, secondLookWords });
         entry.resolve(segments);
 
     } catch (e) {

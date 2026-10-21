@@ -18,7 +18,7 @@ import SheetModal, { SheetIconButton } from './SheetModal';
 import { shareText } from './share';
 import { getEpisodeChapters, getEpisodeFixes } from '../../database/queries';
 import {
-    analyzeEpisode, estimateEpisodeCost, getAIModel, getOpenAIKey, isAnalyzing, isFixTranscriptOn, modelInfo,
+    analyzeEpisode, estimateEpisodeCost, getAIModel, getOpenAIKey, isAnalyzing, modelInfo,
 } from '../../services/aiService';
 import { formatClock } from '../../services/sentenceBoundary';
 import { onLibraryChange } from '../../services/libraryEvents';
@@ -36,7 +36,6 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
     const [fixes, setFixes] = useState([]);
     const [hasKey, setHasKey] = useState(null);      // null = not read yet
     const [model, setModel] = useState(null);
-    const [withFixes, setWithFixes] = useState(true);
     const [running, setRunning] = useState(false);
     const [error, setError] = useState(null);        // { message, kind }
     const [showFixes, setShowFixes] = useState(false);
@@ -58,12 +57,11 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
         load();
         getOpenAIKey().then(k => setHasKey(!!k)).catch(() => setHasKey(false));
         getAIModel().then(setModel).catch(() => {});
-        isFixTranscriptOn().then(setWithFixes).catch(() => {});
         setRunning(isAnalyzing(epId));
     }, [visible, epId, load]);
 
-    // A pass that lands while the sheet is open (this button, or the
-    // after-transcription switch) fills the sheet in.
+    // A pass that lands while the sheet is open (this button, or the run
+    // after the transcription) fills the sheet in.
     useEffect(() => {
         if (!visible) return undefined;
         return onLibraryChange((p) => {
@@ -107,7 +105,7 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
     }, [epId, running, load]);
 
     const info = modelInfo(model);
-    const costHint = estimateEpisodeCost(info.id, episode?.duration || 0, { fixes: withFixes, cached: true });
+    const costHint = estimateEpisodeCost(info.id, episode?.duration || 0, { fixes: true, cached: true });
     const summary = (episode?.summary || '').trim();
     const analysed = !!episode?.ai_indexed_at || chapters.length > 0;
     const appliedCount = fixes.filter(f => f.applied !== 0).length;
@@ -170,7 +168,7 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
             {!analysed && !running ? (
                 <View style={{ gap: 14 }}>
                     <Text style={st.body}>
-                        A short summary of the episode, its chapters to jump between, and{withFixes ? ' corrections to misheard names and words in the transcript,' : ''} written by {info.id} at OpenAI from this transcript. The run should cost {costHint} in your OpenAI account.
+                        A short summary of the episode, its chapters to jump between, and corrections to misheard names and words in the transcript, written by {info.id} at OpenAI from this transcript. The run should cost {costHint} in your OpenAI account.
                     </Text>
                     {hasKey === false ? (
                         <TouchableOpacity style={st.primaryBtn} onPress={onOpenSettings} activeOpacity={0.8} accessibilityRole='button'>
@@ -217,42 +215,40 @@ const ChapterSheet = ({ visible, onClose, episode, onSeek, onOpenSettings }) => 
                         <Text style={st.muted}>No chapters were found in this transcript.</Text>
                     )}
 
-                    {withFixes || fixes.length ? (
-                        <View>
-                            <TouchableOpacity style={st.fixHead} onPress={() => setShowFixes(v => !v)} activeOpacity={0.7} accessibilityRole='button'>
-                                <Icon name='edit-3' size={13} color={colors.textMuted} />
-                                <Text style={st.fixHeadText}>
-                                    {fixes.length
-                                        ? `Transcript corrections · ${appliedCount} applied${fixes.length > appliedCount ? `, ${fixes.length - appliedCount} held back` : ''}`
-                                        : 'Transcript corrections · none'}
-                                </Text>
-                                <View style={{ flex: 1 }} />
-                                {fixes.length ? <Icon name={showFixes ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textMuted} /> : null}
+                    <View>
+                        <TouchableOpacity style={st.fixHead} onPress={() => setShowFixes(v => !v)} activeOpacity={0.7} accessibilityRole='button'>
+                            <Icon name='edit-3' size={13} color={colors.textMuted} />
+                            <Text style={st.fixHeadText}>
+                                {fixes.length
+                                    ? `Transcript corrections · ${appliedCount} applied${fixes.length > appliedCount ? `, ${fixes.length - appliedCount} held back` : ''}`
+                                    : 'Transcript corrections · none'}
+                            </Text>
+                            <View style={{ flex: 1 }} />
+                            {fixes.length ? <Icon name={showFixes ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textMuted} /> : null}
+                        </TouchableOpacity>
+                        {showFixes && fixes.map((f, i) => (
+                            <TouchableOpacity
+                                key={`${f.heard}-${i}`}
+                                style={[st.fixRow, f.applied === 0 && st.fixRowOff]}
+                                onPress={() => seekTo(f.first_ms)}
+                                activeOpacity={0.7}
+                                accessibilityRole='button'
+                                accessibilityLabel={`Play where "${f.heard}" was said`}
+                            >
+                                <View style={{ flex: 1, gap: 2 }}>
+                                    <Text style={st.fixLine}>
+                                        <Text style={st.fixHeard}>{f.heard}</Text>
+                                        <Text style={st.fixArrow}>  →  </Text>
+                                        <Text style={st.fixCorrect}>{f.correct}</Text>
+                                    </Text>
+                                    <Text style={st.fixMeta}>
+                                        {KIND_LABEL[f.kind] || 'word'} · {f.confidence || 'high'}{f.applied === 0 ? ' · not applied' : ''}{f.count > 1 ? ` · ×${f.count}` : ''}{f.first_ms != null ? ` · ${formatClock(f.first_ms)}` : ''}
+                                    </Text>
+                                    {!!f.context && <Text style={st.fixContext} numberOfLines={2}>{f.context}</Text>}
+                                </View>
                             </TouchableOpacity>
-                            {showFixes && fixes.map((f, i) => (
-                                <TouchableOpacity
-                                    key={`${f.heard}-${i}`}
-                                    style={[st.fixRow, f.applied === 0 && st.fixRowOff]}
-                                    onPress={() => seekTo(f.first_ms)}
-                                    activeOpacity={0.7}
-                                    accessibilityRole='button'
-                                    accessibilityLabel={`Play where "${f.heard}" was said`}
-                                >
-                                    <View style={{ flex: 1, gap: 2 }}>
-                                        <Text style={st.fixLine}>
-                                            <Text style={st.fixHeard}>{f.heard}</Text>
-                                            <Text style={st.fixArrow}>  →  </Text>
-                                            <Text style={st.fixCorrect}>{f.correct}</Text>
-                                        </Text>
-                                        <Text style={st.fixMeta}>
-                                            {KIND_LABEL[f.kind] || 'word'} · {f.confidence || 'high'}{f.applied === 0 ? ' · not applied' : ''}{f.count > 1 ? ` · ×${f.count}` : ''}{f.first_ms != null ? ` · ${formatClock(f.first_ms)}` : ''}
-                                        </Text>
-                                        {!!f.context && <Text style={st.fixContext} numberOfLines={2}>{f.context}</Text>}
-                                    </View>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    ) : null}
+                        ))}
+                    </View>
 
                     {!!caption && <Text style={st.caption}>{caption}</Text>}
                 </View>

@@ -2,7 +2,7 @@
 
 A podcast and audiobook player for learning English by listening. Every episode gets an on-device transcript that follows the audio word by word; any sentence can be translated, any word looked up in offline dictionaries, and an optional OpenAI assistant writes summaries, chapters and cards for the people, books, films and idioms an episode mentions.
 
-Android · React Native 0.83 · Expo 55 · current version **5.8.0** (versionCode 33). See [CHANGELOG.md](CHANGELOG.md) for the full history.
+Android · React Native 0.83 · Expo 55 · current version **5.9.0** (versionCode 35). See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
 ---
 
@@ -32,7 +32,8 @@ Android · React Native 0.83 · Expo 55 · current version **5.8.0** (versionCod
 - **Skip ad:** the assistant finds sponsor reads, inserted commercials and trailers for other shows. A *Skip ad* button appears while one plays, and ads are marked in the transcript.
 
 ### On-device transcription
-- Transcription runs fully offline with sherpa-onnx and NVIDIA Parakeet: **Parakeet 110M** (default, fast, 99 MB) or **Parakeet TDT 0.6B v2** (more accurate, 460 MB download / ~630 MB installed). Both add punctuation and capitals.
+- Transcription runs fully offline with sherpa-onnx and NVIDIA **Parakeet TDT 0.6B v2** (460 MB download / ~630 MB installed), which adds punctuation and capitals. The faster Parakeet 110M was dropped after 5.8.1: it made more mistakes and broke sentences worse.
+- **Second look:** a pause of 0.8–10 s between two words that still holds speech is decoded again on its own, which brings back the asides and second voices the model now and then jumps over (45 % fewer skipped words on ten podcasts, for about 10 % more decoding).
 - Episodes are transcribed one at a time in a queue in a foreground service, with progress per episode. Jobs can be cancelled, and a watchdog stops hung jobs. The model is unloaded from memory when nothing is transcribing.
 - Free space is checked before a model download.
 - **Enriching…:** after the transcript, the episode shows *Enriching…* while punctuation repair, the summary, names, books and tags finish.
@@ -70,6 +71,7 @@ Android · React Native 0.83 · Expo 55 · current version **5.8.0** (versionCod
   - Film and TV cards have a *Trailer* button.
   - Acronyms such as *CNN*, *MIT* and *BBC* are marked when the transcript writes them in capitals.
   - Tap a picture to see it uncropped.
+- **After every transcription:** with a key, punctuation repair, name corrections, summary, chapters and ads always run by themselves as soon as a transcript is done (about 0.7 ¢ an hour with Luna); there is no switch.
 - **Auto-tag:** a switch that tags every episode as soon as its transcript is done. *Look again* reruns the tagging.
 - **Models:** GPT-6 **Luna** (cheap) and **Sol** (flagship). All passes share one cached transcript prefix, so the hour is paid for once rather than once per pass.
 

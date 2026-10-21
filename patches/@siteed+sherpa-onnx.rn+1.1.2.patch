@@ -44,7 +44,7 @@ index c8532cf..2405030 100644
 +    @ReactMethod fun removeListeners(count: Double) {}
  }
 diff --git a/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt b/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
-index f5700be..68fe0ba 100644
+index f5700be..1e2ebe0 100644
 --- a/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
 +++ b/node_modules/@siteed/sherpa-onnx.rn/android/src/main/kotlin/net/siteed/sherpaonnx/handlers/ASRHandler.kt
 @@ -15,6 +15,7 @@ import net.siteed.sherpaonnx.utils.AssetUtils
@@ -74,7 +74,7 @@ index f5700be..68fe0ba 100644
      // Keep track of ASR configuration
      private var asrModelConfig: ReadableMap? = null
      
-@@ -68,11 +81,19 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -68,13 +81,44 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          private const val DEFAULT_FEATURE_DIM = 80
          private const val DEFAULT_DEBUG = false
          private const val DEFAULT_PROVIDER = "cpu"
@@ -92,10 +92,35 @@ index f5700be..68fe0ba 100644
 +        private const val SEAM_MIN_WINDOW_SECONDS = 20
 +        private const val SEAM_HOP_MS = 10
 +        private const val SEAM_QUIET_MS = 200
++        // Second look: Parakeet's greedy TDT decode now and then jumps over a
++        // short stretch of speech inside a 29 s window — a second voice, an
++        // aside, a clip — and which stretch depends on where the window happens
++        // to be cut. Decoded again on its own, with a few words either side, it
++        // is heard almost every time. A pause between two words that holds sound
++        // at speech level is that sign. Measured on ten podcasts against Apple's
++        // transcripts: 43 % fewer skipped words for ~12 % more decoding. Pauses
++        // of 10 s or more are left alone: there it wrote down song lyrics.
++        private const val SECOND_LOOK_MIN_PAUSE_MS = 800.0
++        private const val SECOND_LOOK_MAX_PAUSE_MS = 10_000.0
++        private const val SECOND_LOOK_FRAME_MS = 50
++        private const val SECOND_LOOK_LEVEL_DB = 15.0
++        private const val SECOND_LOOK_CONTEXT_WORDS = 3
++        private const val SECOND_LOOK_CONTEXT_MAX_MS = 5_000.0
++        private const val SECOND_LOOK_CONTEXT_MIN_MS = 1_500.0
++        private const val SECOND_LOOK_MARGIN_MS = 100.0
++        private val SECOND_LOOK_FILLER = Regex("^(um+|uh+|erm|er|hmm+|mm+)$")
++        private val SECOND_LOOK_SENTENCE_END = Regex("[.?!][\"”’)\\]]*$")
++        private val SECOND_LOOK_TRAILING_STOP = Regex("[.?!]+([\"”’)\\]]*)$")
      }
-     
+ 
++    /** A word of one decoded window: start, real end (last token + its TDT
++     *  duration) and text, in ms on the file's clock. */
++    private data class TimedWord(val startMs: Double, val endMs: Double, val text: String)
++    
      /**
-@@ -96,7 +117,10 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+      * Initialize ASR with the provided model configuration
+      */
+@@ -96,7 +140,10 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
                  val modelDir = AssetUtils.cleanFilePath(modelConfig.getString("modelDir") ?: "")
                  val modelType = modelConfig.getString("modelType") ?: "transducer"
                  val streaming = if (modelConfig.hasKey("streaming")) modelConfig.getBoolean("streaming") else false
@@ -107,7 +132,7 @@ index f5700be..68fe0ba 100644
                  val sampleRate = if (modelConfig.hasKey("sampleRate")) modelConfig.getInt("sampleRate") else DEFAULT_SAMPLE_RATE
                  val featureDim = if (modelConfig.hasKey("featureDim")) modelConfig.getInt("featureDim") else DEFAULT_FEATURE_DIM
                  val decodingMethod = modelConfig.getString("decodingMethod") ?: DEFAULT_DECODING_METHOD
-@@ -412,11 +436,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -412,11 +459,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
                  whisperConfig.decoder = decoderPath
                  whisperConfig.language = "en"
                  whisperConfig.task = "transcribe"
@@ -123,7 +148,7 @@ index f5700be..68fe0ba 100644
                  val modelFile = modelFiles["model"] ?: "model.onnx"
                  val modelPath = File(modelDir, modelFile).absolutePath
                  
-@@ -427,6 +453,28 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -427,6 +476,28 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
                  
                  modelConfig.nemo = nemoConfig
              }
@@ -152,7 +177,7 @@ index f5700be..68fe0ba 100644
              "moonshine" -> {
                  Log.i(TAG, "Setting up Moonshine model")
                  val preprocessorFile = modelFiles["preprocessor"] ?: "preprocess.onnx"
-@@ -512,9 +560,14 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -512,9 +583,14 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
                  files.add(modelConfig.whisper.encoder)
                  files.add(modelConfig.whisper.decoder)
              }
@@ -168,7 +193,7 @@ index f5700be..68fe0ba 100644
              "moonshine" -> {
                  files.add(modelConfig.moonshine.preprocessor)
                  files.add(modelConfig.moonshine.encoder)
-@@ -798,7 +851,7 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -798,7 +874,7 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
  
          val modelType = asrModelConfig?.getString("modelType") ?: return false
@@ -177,7 +202,7 @@ index f5700be..68fe0ba 100644
              return false
          }
  
-@@ -809,7 +862,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -809,7 +885,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          if (isStreaming) {
              return false
          }
@@ -192,7 +217,7 @@ index f5700be..68fe0ba 100644
      }
  
      private fun recognizeSingleOfflineWindow(sampleRate: Int, samples: FloatArray): WritableMap {
-@@ -856,6 +915,17 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -856,6 +938,24 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
              resultMap.putString("text", result?.text ?: "")
              resultMap.putInt("samplesLength", samples.size)
              resultMap.putInt("sampleRate", sampleRate)
@@ -205,12 +230,19 @@ index f5700be..68fe0ba 100644
 +                val tkArray = Arguments.createArray()
 +                for (t in result.tokens) tkArray.pushString(t)
 +                resultMap.putArray("tokens", tkArray)
++                // TDT only: how long each token lasts, which gives a word's real
++                // end (the second look needs the pauses between words).
++                if (result.durations.size == result.timestamps.size) {
++                    val duArray = Arguments.createArray()
++                    for (d in result.durations) duArray.pushDouble(d.toDouble())
++                    resultMap.putArray("durations", duArray)
++                }
 +            }
 +
              return resultMap
          } catch (e: Exception) {
              Log.e(TAG, "Error recognizing from samples (offline): ${e.message}")
-@@ -870,7 +940,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -870,7 +970,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
       * Whisper's offline recognizer only handles windows shorter than 30 seconds.
       * For longer buffers, decode sequential sub-30s windows and join the text.
       */
@@ -223,7 +255,7 @@ index f5700be..68fe0ba 100644
          if (!shouldChunkOfflineWhisper(samples.size, sampleRate)) {
              return recognizeSingleOfflineWindow(sampleRate, samples)
          }
-@@ -886,8 +960,16 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -886,8 +990,16 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          val transcriptParts = mutableListOf<String>()
          var offset = 0
          var windowIndex = 0
@@ -240,7 +272,7 @@ index f5700be..68fe0ba 100644
              val end = minOf(offset + samplesPerWindow, samples.size)
              val windowSamples = samples.copyOfRange(offset, end)
              windowIndex += 1
-@@ -908,10 +990,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -908,10 +1020,11 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
  
          val fullText = transcriptParts.joinToString(" ").trim()
@@ -254,7 +286,7 @@ index f5700be..68fe0ba 100644
          resultMap.putString("text", fullText)
          resultMap.putInt("samplesLength", samples.size)
          resultMap.putInt("sampleRate", sampleRate)
-@@ -919,63 +1002,221 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -919,63 +1032,381 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          return resultMap
      }
  
@@ -297,6 +329,140 @@ index f5700be..68fe0ba 100644
 +        return searchStart + bestStart * hop + (quietHops * hop) / 2
 +    }
 +
++    /** The words of a decoded window with their real ends, or null when the
++     *  model gives no token durations (only TDT does). */
++    private fun timedWords(result: WritableMap, offsetMs: Double): List<TimedWord>? {
++        val ts = result.getArray("timestamps") ?: return null
++        val tk = result.getArray("tokens") ?: return null
++        val du = result.getArray("durations") ?: return null
++        if (ts.size() == 0 || tk.size() != ts.size() || du.size() != ts.size()) return null
++        val words = mutableListOf<TimedWord>()
++        val sb = StringBuilder()
++        var start = 0.0
++        var end = 0.0
++        fun flush() {
++            val text = sb.toString().replace('▁', ' ').trim()
++            if (text.isNotEmpty()) words.add(TimedWord(start, end, text))
++            sb.setLength(0)
++        }
++        for (i in 0 until tk.size()) {
++            val raw = tk.getString(i) ?: ""
++            if (raw.isEmpty() || raw.startsWith("<|")) continue
++            if (sb.isEmpty() || raw.startsWith(" ") || raw.startsWith("▁")) {
++                flush()
++                start = offsetMs + ts.getDouble(i) * 1000.0
++            }
++            sb.append(raw)
++            end = offsetMs + (ts.getDouble(i) + du.getDouble(i)) * 1000.0
++        }
++        flush()
++        return words
++    }
++
++    /**
++     * Second look at one decoded window (see SECOND_LOOK_*): every pause of
++     * 0.8–10 s between two words where at least half the audio is within 15 dB
++     * of the window's speech level is decoded again with up to three words of
++     * context either side, and what the new decode heard inside the pause is
++     * kept. Returns only those words, on the file's clock.
++     */
++    private fun secondLookWords(
++        samples: FloatArray,
++        sampleRate: Int,
++        offsetMs: Double,
++        words: List<TimedWord>,
++        isCancelled: () -> Boolean,
++    ): List<TimedWord> {
++        if (words.size < 2) return emptyList()
++        val hop = sampleRate * SECOND_LOOK_FRAME_MS / 1000
++        val frames = if (hop > 0) samples.size / hop else 0
++        if (frames == 0) return emptyList()
++        val db = DoubleArray(frames) { f ->
++            var acc = 0.0
++            for (i in f * hop until (f + 1) * hop) {
++                val v = samples[i].toDouble()
++                acc += v * v
++            }
++            10.0 * Math.log10(acc / hop + 1e-12)
++        }
++        val frameOf = { ms: Double -> ((ms - offsetMs) / SECOND_LOOK_FRAME_MS).toInt() }
++        val inWord = BooleanArray(frames)
++        for (w in words) {
++            for (f in frameOf(w.startMs)..frameOf(maxOf(w.endMs, w.startMs + 100.0))) if (f in 0 until frames) inWord[f] = true
++        }
++        val voiced = db.filterIndexed { f, _ -> inWord[f] }.sorted()
++        if (voiced.isEmpty()) return emptyList()
++        val speechDb = if (voiced.size % 2 == 1) voiced[voiced.size / 2] else (voiced[voiced.size / 2 - 1] + voiced[voiced.size / 2]) / 2.0
++
++        val pauses = (1 until words.size).filter { k ->
++            val a = words[k - 1].endMs
++            val b = words[k].startMs
++            if (b - a < SECOND_LOOK_MIN_PAUSE_MS || b - a >= SECOND_LOOK_MAX_PAUSE_MS) return@filter false
++            val fa = frameOf(a).coerceAtLeast(0)
++            val fb = frameOf(b).coerceAtMost(frames)
++            if (fb <= fa) return@filter false
++            var loud = 0
++            for (f in fa until fb) if (db[f] > speechDb - SECOND_LOOK_LEVEL_DB) loud++
++            loud * 2 >= fb - fa
++        }
++        if (pauses.isEmpty()) return emptyList()
++
++        // One piece per pause — three words of context, 1.5–5 s either side —
++        // merged where pieces touch.
++        val windowEndMs = offsetMs + samples.size * 1000.0 / sampleRate
++        val pieces = mutableListOf<Triple<Double, Double, MutableList<Int>>>()
++        for (k in pauses) {
++            val left = words[k - 1].endMs
++            val right = words[k].startMs
++            var a = maxOf(words[maxOf(0, k - SECOND_LOOK_CONTEXT_WORDS)].startMs, left - SECOND_LOOK_CONTEXT_MAX_MS)
++            a = minOf(a, left - SECOND_LOOK_CONTEXT_MIN_MS)
++            var b = minOf(words[minOf(words.size - 1, k + SECOND_LOOK_CONTEXT_WORDS - 1)].endMs, right + SECOND_LOOK_CONTEXT_MAX_MS)
++            b = maxOf(b, right + SECOND_LOOK_CONTEXT_MIN_MS)
++            a = maxOf(offsetMs, a - 200.0)
++            b = minOf(windowEndMs, b + 200.0)
++            val last = pieces.lastOrNull()
++            if (last != null && a <= last.second) {
++                pieces[pieces.size - 1] = Triple(last.first, maxOf(last.second, b), last.third.apply { add(k) })
++            } else {
++                pieces.add(Triple(a, b, mutableListOf(k)))
++            }
++        }
++
++        val norm = { s: String -> s.lowercase().replace(Regex("[^\\p{L}\\p{N}']"), "") }
++        val added = mutableListOf<TimedWord>()
++        for ((a, b, ks) in pieces) {
++            if (isCancelled()) break
++            val i0 = ((a - offsetMs) * sampleRate / 1000.0).toInt().coerceIn(0, samples.size)
++            val i1 = ((b - offsetMs) * sampleRate / 1000.0).toInt().coerceIn(i0, samples.size)
++            if (i1 - i0 < sampleRate / 2) continue
++            val redo = timedWords(
++                recognizeSingleOfflineWindow(sampleRate, samples.copyOfRange(i0, i1)),
++                offsetMs + i0 * 1000.0 / sampleRate,
++            ) ?: continue
++            for (k in ks) {
++                // Only what starts inside the pause; a context word heard again
++                // at either edge is not new.
++                val from = words[k - 1].endMs - SECOND_LOOK_MARGIN_MS
++                val to = words[k].startMs - SECOND_LOOK_MARGIN_MS
++                val picked = redo.filter { it.startMs >= from && it.startMs < to && !SECOND_LOOK_FILLER.matches(norm(it.text)) }.toMutableList()
++                if (picked.isNotEmpty() && norm(picked.first().text) == norm(words[k - 1].text)) picked.removeAt(0)
++                if (picked.isNotEmpty() && norm(picked.last().text) == norm(words[k].text)) picked.removeAt(picked.size - 1)
++                if (picked.isEmpty()) continue
++                // Fit the piece into the sentence around it: a capital after a
++                // full stop, and no full stop before a word that carries on.
++                if (SECOND_LOOK_SENTENCE_END.containsMatchIn(words[k - 1].text) && picked[0].text.firstOrNull()?.isLowerCase() == true) {
++                    picked[0] = picked[0].copy(text = picked[0].text.replaceFirstChar { it.uppercase() })
++                }
++                val last = picked.size - 1
++                if (words[k].text.firstOrNull()?.isLowerCase() == true && SECOND_LOOK_SENTENCE_END.containsMatchIn(picked[last].text)) {
++                    picked[last] = picked[last].copy(text = picked[last].text.replace(SECOND_LOOK_TRAILING_STOP, "$1"))
++                }
++                added.addAll(picked)
++            }
++        }
++        return added
++    }
++
      private fun recognizeOfflineWhisperFileInWindows(
          file: File,
          durationUs: Long,
@@ -304,6 +470,7 @@ index f5700be..68fe0ba 100644
 +        jobId: String,
 +        emitWindowEvents: Boolean,
 +        isCancelled: () -> Boolean,
++        secondLook: Boolean = false,
      ): WritableMap {
          val windowDurationUs = OFFLINE_WHISPER_MAX_WINDOW_SECONDS * 1_000_000L
 -        val totalWindows = ((durationUs + windowDurationUs - 1) / windowDurationUs).toInt()
@@ -333,13 +500,8 @@ index f5700be..68fe0ba 100644
 +        var sampleRate = DEFAULT_SAMPLE_RATE
          var windowIndex = 0
 +        var cancelled = false
- 
--        while (offsetUs < durationUs) {
--            val audioData = AudioExtractor.extractAudioWindowFromFile(
--                file = file,
--                startTimeUs = offsetUs,
--                maxDurationUs = windowDurationUs,
--            ) ?: throw Exception("Failed to extract audio window starting at ${offsetUs}us")
++        var secondLookAdded = 0
++
 +        try {
 +            val samplesPerWindow = DEFAULT_SAMPLE_RATE * OFFLINE_WHISPER_MAX_WINDOW_SECONDS
 +            while (true) {
@@ -349,9 +511,12 @@ index f5700be..68fe0ba 100644
 +                    break
 +                }
  
--            if (audioData.samples.isEmpty()) {
--                throw Exception("Extracted empty audio window starting at ${offsetUs}us")
--            }
+-        while (offsetUs < durationUs) {
+-            val audioData = AudioExtractor.extractAudioWindowFromFile(
+-                file = file,
+-                startTimeUs = offsetUs,
+-                maxDurationUs = windowDurationUs,
+-            ) ?: throw Exception("Failed to extract audio window starting at ${offsetUs}us")
 +                val rawWindow = reader.readNextWindow(samplesPerWindow)
 +                if (rawWindow == null || rawWindow.isEmpty()) {
 +                    // Metadata duration can overestimate the real audio length; an
@@ -362,9 +527,9 @@ index f5700be..68fe0ba 100644
 +                    break
 +                }
  
--            sampleRate = audioData.sampleRate
--            totalSamples += audioData.samples.size
--            windowIndex += 1
+-            if (audioData.samples.isEmpty()) {
+-                throw Exception("Extracted empty audio window starting at ${offsetUs}us")
+-            }
 +                sampleRate = reader.outputSampleRate
 +                // Only a full window has a boundary to move; the tail of the file
 +                // ends where the audio ends. The cut-off samples go back to the
@@ -392,14 +557,14 @@ index f5700be..68fe0ba 100644
 +                        "(offsetUs=$offsetUs, samples=${windowSamples.size})",
 +                )
  
--            Log.i(
--                TAG,
--                "Decoding extracted offline Whisper window $windowIndex/$totalWindows " +
--                    "(offsetUs=$offsetUs, samples=${audioData.samples.size})",
--            )
+-            sampleRate = audioData.sampleRate
+-            totalSamples += audioData.samples.size
+-            windowIndex += 1
 +                val windowResult = recognizeSingleOfflineWindow(sampleRate, windowSamples)
 +                val windowText = windowResult.getString("text")?.trim().orEmpty()
 +                val windowSegs = mutableListOf<Triple<Double, Double, String>>()
++                var windowTextOut = windowText
++                var windowAdded = 0
 +                if (windowText.isNotEmpty()) {
 +                    transcriptParts.add(windowText)
 +
@@ -446,6 +611,31 @@ index f5700be..68fe0ba 100644
 +                        windowSegs.add(Triple(windowOffsetMs, windowEndMs, windowText))
 +                    }
  
+-            Log.i(
+-                TAG,
+-                "Decoding extracted offline Whisper window $windowIndex/$totalWindows " +
+-                    "(offsetUs=$offsetUs, samples=${audioData.samples.size})",
+-            )
++                    if (secondLook) {
++                        val timed = timedWords(windowResult, windowOffsetMs)
++                        val extra = if (timed != null) secondLookWords(windowSamples, sampleRate, windowOffsetMs, timed, isCancelled) else emptyList()
++                        if (extra.isNotEmpty()) {
++                            // Into place by start time; every word again ends where
++                            // the next begins, the window's last keeping its own end.
++                            val lastEnd = windowSegs.last().second
++                            val merged = (windowSegs.map { it.first to it.third } + extra.map { it.startMs to it.text }).sortedBy { it.first }
++                            windowSegs.clear()
++                            merged.forEachIndexed { i, (s, t) ->
++                                windowSegs.add(Triple(s, if (i + 1 < merged.size) merged[i + 1].first else lastEnd, t))
++                            }
++                            windowTextOut = merged.joinToString(" ") { it.second }
++                            transcriptParts[transcriptParts.size - 1] = windowTextOut
++                            windowAdded = extra.size
++                            secondLookAdded += extra.size
++                            Log.i(TAG, "Second look added ${extra.size} words to window $windowIndex")
++                        }
++                    }
+ 
 -            val windowResult = recognizeSingleOfflineWindow(audioData.sampleRate, audioData.samples)
 -            val windowText = windowResult.getString("text")?.trim().orEmpty()
 -            if (windowText.isNotEmpty()) {
@@ -475,8 +665,9 @@ index f5700be..68fe0ba 100644
 +                    ev.putInt("totalWindows", totalWindows)
 +                    ev.putDouble("startMs", windowOffsetMs)
 +                    ev.putDouble("endMs", windowEndMs)
-+                    ev.putString("text", windowText)
++                    ev.putString("text", windowTextOut)
 +                    ev.putArray("segments", evSegments)
++                    ev.putInt("secondLookWords", windowAdded)
 +                    reactContext.emitDeviceEvent("SherpaAsrWindowResult", ev)
 +                }
  
@@ -502,10 +693,11 @@ index f5700be..68fe0ba 100644
 +        resultMap.putDouble("startMs", effectiveStartUs / 1000.0)
 +        resultMap.putDouble("processedEndMs", offsetUs / 1000.0)
 +        resultMap.putArray("segments", segments)
++        resultMap.putInt("secondLookWords", secondLookAdded)
          return resultMap
      }
      
-@@ -1121,41 +1362,102 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -1121,41 +1552,106 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
       * Recognize speech from an audio file
       */
      fun recognizeFromFile(filePath: String, promise: Promise) {
@@ -520,12 +712,15 @@ index f5700be..68fe0ba 100644
 +     *   jobId             opaque tag echoed in every window event so stale
 +     *                     events from a superseded job can be dropped in JS
 +     *   emitWindowEvents  emit 'SherpaAsrWindowResult' device events per window
++     *   secondLook        decode speech-level pauses again (TDT models; off
++     *                     unless asked for — see SECOND_LOOK_*)
 +     */
 +    fun recognizeFromFileWithOptions(filePath: String, options: ReadableMap, promise: Promise) {
 +        val startMs = if (options.hasKey("startMs")) options.getDouble("startMs").toLong() else 0L
 +        val jobId = if (options.hasKey("jobId")) options.getString("jobId") ?: "" else ""
 +        val emitWindowEvents = if (options.hasKey("emitWindowEvents")) options.getBoolean("emitWindowEvents") else true
-+        recognizeFromFileInternal(filePath, startMs.coerceAtLeast(0L) * 1000L, jobId, emitWindowEvents, promise)
++        val secondLook = options.hasKey("secondLook") && options.getBoolean("secondLook")
++        recognizeFromFileInternal(filePath, startMs.coerceAtLeast(0L) * 1000L, jobId, emitWindowEvents, promise, secondLook)
 +    }
 +
 +    /**
@@ -548,8 +743,9 @@ index f5700be..68fe0ba 100644
 +        jobId: String,
 +        emitWindowEvents: Boolean,
 +        promise: Promise,
++        secondLook: Boolean = false,
 +    ) {
-+        Log.i(TAG, "Starting recognition from file: $filePath (startUs=$startUs, jobId=$jobId)")
++        Log.i(TAG, "Starting recognition from file: $filePath (startUs=$startUs, jobId=$jobId, secondLook=$secondLook)")
 +        // Claim this job's generation on the dispatch thread BEFORE it is queued,
 +        // so a stale cancel issued before this submission can't kill it and its
 +        // own later cancel still stops it. No reset needed inside the executor.
@@ -603,7 +799,7 @@ index f5700be..68fe0ba 100644
 +                    // is clamped, so this only bounds the progress estimate.
 +                    val effDurationUs = durationUs ?: (fileObj.length() / 4 * 1_000_000L / DEFAULT_SAMPLE_RATE)
 +                    Log.i(TAG, "Long whisper-like file (${effDurationUs / 1_000_000}s, durKnown=${durationUs != null}) — windowed extraction, skipping full decode")
-+                    recognizeOfflineWhisperFileInWindows(fileObj, effDurationUs, startUs, jobId, emitWindowEvents, isCancelled)
++                    recognizeOfflineWhisperFileInWindows(fileObj, effDurationUs, startUs, jobId, emitWindowEvents, isCancelled, secondLook)
 +                } else {
 +                    Log.i(TAG, "Extracting full audio from file at ${DEFAULT_SAMPLE_RATE}Hz")
 +                    val audioData = AudioExtractor.extractAudioFromFile(fileObj, DEFAULT_SAMPLE_RATE)
@@ -626,7 +822,7 @@ index f5700be..68fe0ba 100644
                      }
                  }
  
-@@ -1173,6 +1475,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
+@@ -1173,6 +1669,13 @@ class ASRHandler(private val reactContext: ReactApplicationContext) {
          }
      }
      
@@ -1108,10 +1304,10 @@ index 829aecc..dc72fb2 100644
  
    // ASR online streaming primitives
 diff --git a/node_modules/@siteed/sherpa-onnx.rn/src/types/interfaces.ts b/node_modules/@siteed/sherpa-onnx.rn/src/types/interfaces.ts
-index 1944564..796b5ea 100644
+index 1944564..0ce27fa 100644
 --- a/node_modules/@siteed/sherpa-onnx.rn/src/types/interfaces.ts
 +++ b/node_modules/@siteed/sherpa-onnx.rn/src/types/interfaces.ts
-@@ -615,6 +615,46 @@ export interface AsrRecognizeResult {
+@@ -615,6 +615,48 @@ export interface AsrRecognizeResult {
     * Whether an endpoint was detected (streaming mode only)
     */
    isEndpoint?: boolean;
@@ -1155,6 +1351,8 @@ index 1944564..796b5ea 100644
 +  jobId?: string;
 +  /** Emit a 'SherpaAsrWindowResult' device event per decoded window */
 +  emitWindowEvents?: boolean;
++  /** Decode speech-level pauses again and keep what they hold (TDT models) */
++  secondLook?: boolean;
  }
  
  // ----------------------------------------------------------------------------------

@@ -19,7 +19,7 @@ import {
 } from '../services/dictionaryService';
 import { onLibraryChange } from '../services/libraryEvents';
 import {
-    AI_AUTO_KEY, AI_AUTO_TAG_KEY, AI_FIX_KEY, AI_MODEL_KEY, AI_MODELS, DEFAULT_AI_MODEL, OPENAI_KEY_KEY, estimateEpisodeCost, resolveAIModel,
+    AI_AUTO_TAG_KEY, AI_MODEL_KEY, AI_MODELS, DEFAULT_AI_MODEL, OPENAI_KEY_KEY, estimateEpisodeCost, resolveAIModel,
 } from '../services/aiService';
 import { showAlert } from '../components/AppAlert';
 import { OPENROUTER_KEY } from '../services/maiTranscriptionService';
@@ -28,11 +28,10 @@ import { useTheme, useStyles, withAlpha, type, THEMES, THEME_OPTIONS } from '../
 
 // Learning-focused copy overrides for the model picker.
 const MODEL_COPY = {
-    parakeet_110m_en: 'Default · fast · punctuation · word-by-word highlighting · NVIDIA Parakeet 110M (CC BY 4.0)',
-    parakeet_tdt_0_6b_v2_en: 'High accuracy · ~5× slower · 460 MB download, ~630 MB installed · NVIDIA Parakeet TDT 0.6B v2 (CC BY 4.0)',
+    parakeet_tdt_0_6b_v2_en: 'High accuracy · punctuation · word-by-word highlighting · 460 MB download, ~630 MB installed · NVIDIA Parakeet TDT 0.6B v2 (CC BY 4.0)',
 };
 
-const DEFAULT_MODEL_KEY = SHERPA_MODELS.parakeet_110m_en ? 'parakeet_110m_en' : Object.keys(SHERPA_MODELS)[0];
+const DEFAULT_MODEL_KEY = SHERPA_MODELS.parakeet_tdt_0_6b_v2_en ? 'parakeet_tdt_0_6b_v2_en' : Object.keys(SHERPA_MODELS)[0];
 
 const MODELS = Object.entries(SHERPA_MODELS).map(([id, m]) => ({
     id,
@@ -101,8 +100,6 @@ const SettingsScreen = () => {
     const [aiKeyDraft, setAiKeyDraft] = useState('');
     const [aiKeyEditing, setAiKeyEditing] = useState(false);
     const [aiModel, setAiModel] = useState(DEFAULT_AI_MODEL);
-    const [aiAuto, setAiAuto] = useState(false);
-    const [aiFix, setAiFix] = useState(true);
     const [aiTag, setAiTag] = useState(false);
     const [tmdbKey, setTmdbKey] = useState('');
     const [tmdbDraft, setTmdbDraft] = useState('');
@@ -236,17 +233,13 @@ const SettingsScreen = () => {
 
     const loadAssistantPrefs = async () => {
         try {
-            const [key, model, auto, fix, tag] = await Promise.all([
+            const [key, model, tag] = await Promise.all([
                 AsyncStorage.getItem(OPENAI_KEY_KEY),
                 AsyncStorage.getItem(AI_MODEL_KEY),
-                AsyncStorage.getItem(AI_AUTO_KEY),
-                AsyncStorage.getItem(AI_FIX_KEY),
                 AsyncStorage.getItem(AI_AUTO_TAG_KEY),
             ]);
             setAiKey((key || '').trim());
             setAiModel(resolveAIModel(model));
-            setAiAuto(auto === '1');
-            setAiFix(fix !== '0');
             setAiTag(tag === '1');
         } catch (e) {}
     };
@@ -263,14 +256,6 @@ const SettingsScreen = () => {
     const saveAiModel = async (id) => {
         setAiModel(id);
         try { await AsyncStorage.setItem(AI_MODEL_KEY, id); } catch (e) {}
-    };
-    const saveAiAuto = async (on) => {
-        setAiAuto(on);
-        try { await AsyncStorage.setItem(AI_AUTO_KEY, on ? '1' : '0'); } catch (e) {}
-    };
-    const saveAiFix = async (on) => {
-        setAiFix(on);
-        try { await AsyncStorage.setItem(AI_FIX_KEY, on ? '1' : '0'); } catch (e) {}
     };
     const saveAiTag = async (on) => {
         setAiTag(on);
@@ -813,7 +798,7 @@ const SettingsScreen = () => {
             <View style={styles.infoBanner}>
                 <Icon name="info" size={13} color={colors.warning} style={{ marginTop: 1 }} />
                 <Text style={styles.infoText}>
-                    A summary, chapters, transcript corrections and repaired punctuation written by a model at OpenAI, and — when a translation reads wrong — a second reading of that sentence with the lines before it, from the translation card. Text is sent there, with your own key, only when you ask. Audio leaves the phone only for a MAI test you start below.
+                    A summary, chapters, transcript corrections and repaired punctuation written by a model at OpenAI, and — when a translation reads wrong — a second reading of that sentence with the lines before it, from the translation card. With your own key saved, every transcript is sent there as soon as it is done — its punctuation repaired, misheard names corrected, the summary, chapters and ads written — and nothing else unless you ask. Audio leaves the phone only for a MAI test you start below.
                 </Text>
             </View>
 
@@ -824,7 +809,7 @@ const SettingsScreen = () => {
                         <Text style={styles.settingTitle}>OpenAI API key</Text>
                     </View>
                     <Text style={[styles.settingHint, styles.indent]}>
-                        Made at platform.openai.com under API keys, with a little prepaid credit on the account — a ChatGPT subscription does not include it. Usage is billed there per episode ({estimateEpisodeCost(aiModel, 3600, { fixes: aiFix, cached: true })} for an hour of audio with the model below). Stored only on this device.
+                        Made at platform.openai.com under API keys, with a little prepaid credit on the account — a ChatGPT subscription does not include it. Usage is billed there per episode ({estimateEpisodeCost(aiModel, 3600, { fixes: true, cached: true })} for an hour of audio with the model below). Stored only on this device.
                     </Text>
                     {aiKeyEditing || !aiKey ? (
                         <View style={[styles.tokenRow, styles.indent]}>
@@ -889,7 +874,7 @@ const SettingsScreen = () => {
                                         </View>
                                     )}
                                 </View>
-                                <Text style={styles.modelDesc}>{m.tier} · {m.id} · {estimateEpisodeCost(m.id, 3600, { fixes: aiFix, cached: true })} for an hour of audio</Text>
+                                <Text style={styles.modelDesc}>{m.tier} · {m.id} · {estimateEpisodeCost(m.id, 3600, { fixes: true, cached: true })} for an hour of audio</Text>
                             </View>
                             <View style={styles.modelMeta}>
                                 <View style={[styles.radio, selected && styles.radioOn]}>
@@ -900,45 +885,6 @@ const SettingsScreen = () => {
                     );
                 })}
 
-                <View style={[styles.settingRow, styles.rowBorder]}>
-                    <View style={{ flex: 1 }}>
-                        <View style={styles.settingHead}>
-                            <Icon name="zap" size={15} color={colors.accent} />
-                            <Text style={styles.settingTitle}>Summarise after every transcription</Text>
-                        </View>
-                        <Text style={[styles.settingHint, styles.indent]}>
-                            The summary and chapters are written as soon as a transcript finishes, after the stretches the recogniser ran into one long sentence have had their punctuation put back. Off, both happen when you ask from the Player.
-                        </Text>
-                    </View>
-                    <Switch
-                        value={aiAuto}
-                        onValueChange={saveAiAuto}
-                        disabled={!aiKey}
-                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.accent, 0.45) }}
-                        thumbColor={aiAuto && aiKey ? colors.accent : colors.textSecondary}
-                        ios_backgroundColor={colors.surfaceHigh}
-                        accessibilityLabel="Summarise every episode after it is transcribed"
-                    />
-                </View>
-                <View style={[styles.settingRow, styles.rowBorder]}>
-                    <View style={{ flex: 1 }}>
-                        <View style={styles.settingHead}>
-                            <Icon name="edit-3" size={15} color={colors.accent} />
-                            <Text style={styles.settingTitle}>Also correct the transcript</Text>
-                        </View>
-                        <Text style={[styles.settingHint, styles.indent]}>
-                            The model proposes fixes for misheard names, titles and homophones. They are written into the text you read and listed in the chapter sheet, where each one can be checked; the recogniser's words are kept underneath.
-                        </Text>
-                    </View>
-                    <Switch
-                        value={aiFix}
-                        onValueChange={saveAiFix}
-                        trackColor={{ false: colors.surfaceHigh, true: withAlpha(colors.accent, 0.45) }}
-                        thumbColor={aiFix ? colors.accent : colors.textSecondary}
-                        ios_backgroundColor={colors.surfaceHigh}
-                        accessibilityLabel="Also let the model correct the transcript"
-                    />
-                </View>
                 <View style={styles.settingRow}>
                     <View style={{ flex: 1 }}>
                         <View style={styles.settingHead}>

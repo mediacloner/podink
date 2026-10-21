@@ -43,8 +43,9 @@ import { log } from './logService';
 
 export const OPENAI_KEY_KEY = '@openai_api_key';
 export const AI_MODEL_KEY = '@ai_model';
-export const AI_AUTO_KEY = '@ai_auto_analyze';      // '1' | '0'; absent = off
-export const AI_FIX_KEY = '@ai_fix_transcript';     // '1' | '0'; absent = on
+// '@ai_auto_analyze' and '@ai_fix_transcript' (the switches for running after
+// every transcription and for the corrections) were dropped after 5.8.1: with
+// a key both always happen. A value left in storage is ignored.
 export const AI_AUTO_TAG_KEY = '@ai_auto_entities'; // '1' | '0'; absent = off
 
 // Prices per million tokens (OpenAI's page, 2026-09-23) — for the log line
@@ -76,12 +77,6 @@ export const getAIModel = async () => {
     try {
         return resolveAIModel(await AsyncStorage.getItem(AI_MODEL_KEY));
     } catch (_) { return DEFAULT_AI_MODEL; }
-};
-export const isAutoAnalyzeOn = async () => {
-    try { return (await AsyncStorage.getItem(AI_AUTO_KEY)) === '1'; } catch (_) { return false; }
-};
-export const isFixTranscriptOn = async () => {
-    try { return (await AsyncStorage.getItem(AI_FIX_KEY)) !== '0'; } catch (_) { return true; }
 };
 /** Whether what an episode names is looked up as soon as its transcript is
  *  done (services/entityIndex.tagIfAuto), instead of when asked in the Player. */
@@ -594,7 +589,6 @@ export const analyzeEpisode = (episodeId, { force = false, scanBooks = true, alo
         const rows = await getNameCorrectedTranscript(episodeId);
         if (!rows.length) throw tagged('notranscript', 'This episode has no transcript yet.');
         const notes = episodeNotes(ep);
-        const wantFixes = await isFixTranscriptOn();
         const prepared = preparePass(ep, rows, notes);
         const { sentences, parts, texts } = prepared;
         const usage = { input: 0, output: 0, cached: 0 };
@@ -609,7 +603,6 @@ export const analyzeEpisode = (episodeId, { force = false, scanBooks = true, alo
         // Fixes, per part, and the pass alongside — side by side, both on
         // the cached text.
         const askFixes = async () => {
-            if (!wantFixes) return { fixes: [], dropped: [] };
             const raw = [];
             for (let i = 0; i < parts.length; i++) {
                 const r = await request(readingRequest({
@@ -670,9 +663,9 @@ export const analyzeEpisode = (episodeId, { force = false, scanBooks = true, alo
 
 export const isAnalyzing = (episodeId) => _running.has(episodeId);
 
-/** After a transcription, when the listener asked for it in Settings. */
-export const analyzeIfAuto = async (episodeId, { alongside = null } = {}) => {
-    if (!(await isAutoAnalyzeOn())) return null;
+/** After every transcription, whenever there is a key: punctuation repair,
+ *  names, corrections, summary, chapters and ads, with no switch to ask. */
+export const analyzeAfterTranscription = async (episodeId, { alongside = null } = {}) => {
     if (!(await getOpenAIKey())) return null;
     try {
         return await analyzeEpisode(episodeId, { force: true, scanBooks: !(await isAutoTagOn()), alongside });
