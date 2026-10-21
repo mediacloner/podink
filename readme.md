@@ -71,6 +71,7 @@ Android · React Native 0.83 · Expo 55 · current version **5.9.0** (versionCod
   - Film and TV cards have a *Trailer* button.
   - Acronyms such as *CNN*, *MIT* and *BBC* are marked when the transcript writes them in capitals.
   - Tap a picture to see it uncropped.
+- **After every transcription:** with a key, punctuation repair, name corrections, summary, chapters and ads always run by themselves as soon as a transcript is done (about 0.7 ¢ an hour with Luna); there is no switch.
 - **Auto-tag:** a switch that tags every episode as soon as its transcript is done. *Look again* reruns the tagging.
 - **Models:** GPT-6 **Luna** (cheap) and **Sol** (flagship). All passes share one cached transcript prefix, so the hour is paid for once rather than once per pass.
 

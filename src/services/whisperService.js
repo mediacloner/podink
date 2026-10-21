@@ -39,7 +39,7 @@ import {
 import { notifyLibraryChange } from './libraryEvents';
 import { indexEpisodeBooks } from './bookIndex';
 import { indexEpisodeNames } from './nameIndex';
-import { analyzeIfAuto } from './aiService';
+import { analyzeAfterTranscription } from './aiService';
 import { askEntities, tagIfAuto, willTagAuto } from './entityIndex';
 import { whileEnriching } from './enrichment';
 import { log } from './logService';
@@ -727,12 +727,12 @@ const _process = async (entry) => {
         _startFg('Transcribing podcasts', 'Complete!', 0);
         // Books the episode talks about: scanned from the finished text
         // (force — a continued transcript has more text than its last scan).
-        // The episode assistant first, when the listener switched it on
-        // (aiService): its corrections change the names the book-and-people
-        // scan has to match, so that scan waits and aiService starts it once
-        // the corrections are written. analyzeIfAuto resolves null when the
-        // switch is off, there is no key, or the request failed — then the
-        // scan runs here instead, on the transcript as recognised.
+        // The episode assistant first, whenever there is a key (aiService):
+        // its corrections change the names the book-and-people scan has to
+        // match, so that scan waits and aiService starts it once the
+        // corrections are written. analyzeAfterTranscription resolves null
+        // when there is no key or the request failed — then the scan runs
+        // here instead, on the transcript as recognised.
         // Where the tag pass follows (the switch on, a key saved), it brings the
         // books itself, author and all — the title scan stands aside, and only
         // the names pass, which the scan would have run first, still goes
@@ -754,7 +754,7 @@ const _process = async (entry) => {
             // Book text needs no assistant pass (nothing was misheard); the books
             // it mentions are still worth finding.
             if (alignMode) return scanBooks().then(() => tag(null));
-            return analyzeIfAuto(entry.id, { alongside: willTag ? askEntities : null })
+            return analyzeAfterTranscription(entry.id, { alongside: willTag ? askEntities : null })
                 .then(async (done) => { if (!done) await scanBooks(); return tag(done); }, () => scanBooks().then(() => tag(null)));
         }).catch(() => {});
 
