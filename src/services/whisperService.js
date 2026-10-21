@@ -571,6 +571,7 @@ const _process = async (entry) => {
         // Saves are serialized through a promise chain so windows commit in
         // order; stale events (other jobs, post-abort) are dropped by jobId.
         let windowsReceived = 0;
+        let secondLookWords = 0;   // words the native second look put back (SECOND_LOOK_* in ASRHandler.kt)
         let hasWordTiming = true;
         let lastNotifAt = Date.now();
         let saveChain = Promise.resolve();
@@ -580,6 +581,7 @@ const _process = async (entry) => {
         windowSub = DeviceEventEmitter.addListener(WINDOW_EVENT, (ev) => {
             if (!ev || ev.jobId !== jobId || myAbort.current) return;
             windowsReceived += 1;
+            secondLookWords += ev.secondLookWords || 0;
             if (ev.text?.trim() && !ev.segments?.length) hasWordTiming = false;
             _lastProgressAt = Date.now();
             const segs = dropSeamDuplicate(_windowToSegments(ev), seamTail, ev);
@@ -634,8 +636,11 @@ const _process = async (entry) => {
             myAbort.resolve = resolve;
         });
 
+        // secondLook: speech-level pauses inside a window are decoded again, which
+        // brings back the stretches Parakeet's decoder now and then jumps over.
+        // Not for a book's own text being timed (alignMode): only times count there.
         const recognize = hasOptionsApi
-            ? SherpaNative.recognizeFromFileWithOptions(nativePath, { startMs: resumeMs, jobId, emitWindowEvents: true })
+            ? SherpaNative.recognizeFromFileWithOptions(nativePath, { startMs: resumeMs, jobId, emitWindowEvents: true, secondLook: !alignMode })
             : ASR.recognizeFromFile(nativePath);
 
         // Attach a no-op rejection handler to the losing recognize promise: when
@@ -753,7 +758,7 @@ const _process = async (entry) => {
                 .then(async (done) => { if (!done) await scanBooks(); return tag(done); }, () => scanBooks().then(() => tag(null)));
         }).catch(() => {});
 
-        log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length });
+        log('SERVICE', 'Transcription completed', { id: entry.id, windows: windowsReceived, segments: segments.length, secondLookWords });
         entry.resolve(segments);
 
     } catch (e) {
